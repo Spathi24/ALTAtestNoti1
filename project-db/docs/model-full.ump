@@ -34,6 +34,18 @@ enum InvoiceStatus {
   DRAFT, SENT, PARTIAL, PAID, OVERDUE, VOID
 }
 
+enum TaskStatus {
+  TODO, IN_PROGRESS, BLOCKED, DONE, CANCELLED
+}
+
+enum QuoteStatus {
+  DRAFT, SENT, ACCEPTED, REJECTED, EXPIRED
+}
+
+enum PurchaseOrderStatus {
+  OPEN, PARTIAL, RECEIVED, CLOSED
+}
+
 enum PaymentMethod {
   CHECK, ACH, WIRE, CARD, CASH, OTHER
 }
@@ -68,21 +80,23 @@ enum AiQueryKind {
 
 class CanonicalEntity {
   abstract;
-  autounique canonicalId;
-  Date createdAt;
-  Date updatedAt;
+  immutable UUID canonicalId;
+  immutable DateTime createdAt;
+  DateTime updatedAt;
   lazy String notes;
 }
 
 class ExternalId {
-  SourceSystem source;
-  String externalKey;
+  immutable SourceSystem source;
+  immutable String externalKey;
   lazy String externalUrl;
-  String entityType;
-  Date lastSyncedAt;
+  immutable String entityType;
+  DateTime lastSyncedAt;
   lazy String rawPayloadHash;   // detect upstream changes cheaply
 
-  * -- 1 CanonicalEntity;
+  * -<@> 1 CanonicalEntity;
+
+  key { source, externalKey, entityType }
 }
 
 // Mirror of Monday's workspace concept so we can scope things organizationally.
@@ -91,7 +105,7 @@ class Workspace {
   name;                          // "Admin", "Project Management", "CRM", ...
   lazy String description;
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 // -----------------------------------------------------------------------------
@@ -112,7 +126,7 @@ class User {
   lazy String role;
   lazy Boolean isActive;
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
   * -- * Workspace;              // user can be in multiple workspaces
 }
 
@@ -128,7 +142,7 @@ class Account {
   lazy String website;
   lazy String billingAddress;
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 class Contact {
@@ -140,7 +154,7 @@ class Contact {
   lazy String title;
 
   * -- 0..1 Account;
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 // "Client" stays as a convenience role — points to whichever (Account or Contact)
@@ -151,7 +165,7 @@ class Client {
 
   * -- 0..1 Account;
   * -- 0..1 Contact;
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 class Vendor {
@@ -162,7 +176,7 @@ class Vendor {
   lazy String taxId;
   lazy String paymentTerms;
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 class ProductOrService {
@@ -170,10 +184,10 @@ class ProductOrService {
   name;
   lazy String sku;
   lazy String description;
-  lazy Float unitPrice;
+  lazy Decimal unitPrice;
   lazy String unit;             // hour, sqft, each, ...
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 // -----------------------------------------------------------------------------
@@ -192,7 +206,7 @@ class Property {
   lazy Float lotSize;
   lazy Integer yearBuilt;
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 // -----------------------------------------------------------------------------
@@ -203,7 +217,7 @@ class Lead {
   isA CanonicalEntity;
   lazy String sourceChannel;
   LeadStage stage;
-  lazy Float estimatedValue;
+  lazy Decimal estimatedValue;
   lazy Date qualifiedAt;
 
   * -- 0..1 Account;
@@ -215,7 +229,7 @@ class Lead {
 class Deal {
   isA CanonicalEntity;
   name;
-  Float value;
+  Decimal value;
   LeadStage stage;
   lazy Date expectedCloseDate;
   lazy Date actualCloseDate;
@@ -233,8 +247,8 @@ class Activity {
   ActivityKind kind;
   String subject;
   lazy String body;
-  Date occurredAt;
-  lazy Date followUpAt;
+  DateTime occurredAt;
+  lazy DateTime followUpAt;
 
   * -- 0..1 Deal;
   * -- 0..1 Lead;
@@ -255,8 +269,8 @@ class Project {
   ProjectStatus status;
   lazy Date startDate;
   lazy Date endDate;
-  lazy Float budgetAmount;
-  lazy Float contractAmount;
+  lazy Decimal budgetAmount;
+  lazy Decimal contractAmount;
 
   * -- 1 Client;
   * -- 0..1 Deal;
@@ -268,12 +282,12 @@ class Project {
 class Task {
   isA CanonicalEntity;
   title;
-  String status;
+  TaskStatus status;
   lazy Date dueDate;
   lazy Date completedAt;
   lazy Integer priority;
 
-  * -- 1 Project;
+  * -<@> 1 Project;
   * -- 0..1 User assignee;
   * -- 0..1 Task parentTask;     // subtask hierarchy (reflexive)
 }
@@ -285,7 +299,7 @@ class DailyLog {
   lazy String weather;
   lazy Integer crewCount;
 
-  * -- 1 Project;
+  * -<@> 1 Project;
   * -- 0..1 User author;
 }
 
@@ -299,11 +313,11 @@ class Media {
   String url;
   lazy String thumbnailUrl;
   lazy String caption;
-  Date capturedAt;
+  DateTime capturedAt;
   lazy Float gpsLat;
   lazy Float gpsLon;
 
-  * -- 0..1 Project;
+  * -<@> 1 Project;
   * -- 0..1 DailyLog;
   * -- 0..1 Deficiency;
   * -- 0..1 User author;
@@ -319,7 +333,7 @@ class Deficiency {
   lazy Date raisedAt;
   lazy Date resolvedAt;
 
-  * deficiencies -- 1 Project project;
+  * deficiencies -<@> 1 Project project;
 
   * assignedDeficiencies -- 0..1 User assignee;
   * raisedDeficiencies -- 0..1 User raisedBy;
@@ -333,11 +347,11 @@ class Deficiency {
 
 class Quote {
   isA CanonicalEntity;
-  String number;
-  Float amount;
-  Date issueDate;
+  immutable String number;
+  Decimal amount;
+  immutable Date issueDate;
   lazy Date expiresAt;
-  String status;                 // draft, sent, accepted, rejected, expired
+  QuoteStatus status;
 
   * -- 0..1 Deal;
   * -- 0..1 Project;
@@ -346,9 +360,9 @@ class Quote {
 
 class Contract {
   isA CanonicalEntity;
-  String number;
-  Float value;
-  Date signedDate;
+  immutable String number;
+  Decimal value;
+  immutable Date signedDate;
   lazy Date effectiveDate;
   lazy Date terminationDate;
   String documentUrl;
@@ -359,10 +373,10 @@ class Contract {
 
 class PurchaseOrder {
   isA CanonicalEntity;
-  String number;
-  Float amount;
-  Date issueDate;
-  String status;                 // open, partial, received, closed
+  immutable String number;
+  Decimal amount;
+  immutable Date issueDate;
+  PurchaseOrderStatus status;
 
   * -- 1 Project;
   * -- 1 Vendor;
@@ -370,12 +384,12 @@ class PurchaseOrder {
 
 class Invoice {
   isA CanonicalEntity;
-  String number;
-  Float amount;
-  Date issueDate;
+  immutable String number;
+  Decimal amount;
+  immutable Date issueDate;
   lazy Date dueDate;
   InvoiceStatus status;
-  lazy Float taxAmount;
+  lazy Decimal taxAmount;
 
   * -- 1 Project;
   * -- 1 Client;
@@ -383,7 +397,7 @@ class Invoice {
 
 class Payment {
   isA CanonicalEntity;
-  Float amount;
+  Decimal amount;
   Date receivedAt;
   PaymentMethod method;
   lazy String reference;
@@ -394,7 +408,7 @@ class Payment {
 class Expense {
   isA CanonicalEntity;
   String description;
-  Float amount;
+  Decimal amount;
   Date incurredAt;
   lazy String category;
   lazy String receiptUrl;
@@ -430,33 +444,33 @@ class Document {
 // -----------------------------------------------------------------------------
 
 class ConnectorConfig {
-  SourceSystem source;
+  immutable SourceSystem source;
   String configKey;              // org-scoped config name
   lazy String encryptedCredentials;
   lazy Boolean isActive;
-  lazy Date lastSuccessfulSync;
+  lazy DateTime lastSuccessfulSync;
 
-  * -- 1 Organization;
+  * -<@> 1 Organization;
 }
 
 class SyncJob {
-  autounique jobId;
+  immutable UUID jobId;
   SourceSystem source;
   String entityType;
-  Date startedAt;
-  lazy Date completedAt;
+  DateTime startedAt;
+  lazy DateTime completedAt;
   SyncStatus status;
   lazy Integer recordsProcessed;
   lazy Integer recordsFailed;
 
-  * -- 1 Organization;
-  1 -- * SyncError;
+  * -<@> 1 Organization;
+  1 -<@> * SyncError;
 }
 
 class SyncError {
   String errorMessage;
   lazy String externalKey;       // which source record failed
-  Date occurredAt;
+  DateTime occurredAt;
   lazy String stackTrace;
 }
 
@@ -472,14 +486,14 @@ class AiConversation {
 }
 
 class AiQuery {
-  autounique queryId;
+  immutable UUID queryId;
   String question;
   AiQueryKind kind;
   lazy String generatedSql;
   lazy String responseText;
-  Date askedAt;
+  DateTime askedAt;
   lazy Integer latencyMs;
-  lazy Float estimatedCost;
+  lazy Decimal estimatedCost;
 
   * -- 1 AiConversation;
 }
@@ -487,7 +501,7 @@ class AiQuery {
 // For RAG: chunks of daily logs, contracts, docs etc. with vector embeddings.
 // The actual vector lives in pgvector; this is the metadata record.
 class EmbeddingChunk {
-  autounique chunkId;
+  immutable UUID chunkId;
   String sourceEntityType;       // "DailyLog", "Document", ...
   String sourceEntityId;
   String chunkText;
