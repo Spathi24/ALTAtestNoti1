@@ -1,0 +1,2 @@
+[console_scripts]
+project_db = project_db.cli:main

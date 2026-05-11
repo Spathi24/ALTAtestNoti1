@@ -1,0 +1,498 @@
+// =============================================================================
+// Project Database — Full Scope Model
+// =============================================================================
+// Extends v0.1 to cover the full target architecture:
+//   - Split Client → Account (company) + Contact (person), reflecting the
+//     Monday CRM structure (Accounts, Contacts, Deals, Activities, ...).
+//   - Real estate: Property as first-class entity with a history of Deals.
+//   - Full finance: PO → Invoice → Payment, Expense, Quote, Contract.
+//   - Field: Media, Deficiency / PunchListItem.
+//   - Sync infrastructure: SyncJob, SyncError, ConnectorConfig.
+//   - AI Assistant: Conversation, Query, Report, EmbeddingChunk.
+//   - Workspace concept (mirrors Monday's workspace organization).
+// =============================================================================
+
+namespace project_db.full;
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum SourceSystem {
+  MONDAY, COMPANYCAM, QUICKBOOKS, GOOGLE_DRIVE, INTERNAL
+}
+
+enum ProjectStatus {
+  PROPOSED, ACTIVE, ON_HOLD, COMPLETED, CANCELLED
+}
+
+enum LeadStage {
+  NEW, QUALIFIED, PROPOSAL, NEGOTIATION, WON, LOST
+}
+
+enum InvoiceStatus {
+  DRAFT, SENT, PARTIAL, PAID, OVERDUE, VOID
+}
+
+enum PaymentMethod {
+  CHECK, ACH, WIRE, CARD, CASH, OTHER
+}
+
+enum DeficiencySeverity {
+  INFO, LOW, MEDIUM, HIGH, CRITICAL
+}
+
+enum DeficiencyStatus {
+  OPEN, IN_PROGRESS, RESOLVED, WONT_FIX
+}
+
+enum MediaKind {
+  PHOTO, VIDEO, DOCUMENT_SCAN
+}
+
+enum ActivityKind {
+  CALL, EMAIL, MEETING, SITE_VISIT, NOTE, OTHER
+}
+
+enum SyncStatus {
+  PENDING, RUNNING, SUCCESS, FAILED, PARTIAL
+}
+
+enum AiQueryKind {
+  CANNED_REPORT, TEXT_TO_SQL, RAG, MIXED
+}
+
+// -----------------------------------------------------------------------------
+// Canonical base
+// -----------------------------------------------------------------------------
+
+class CanonicalEntity {
+  abstract;
+  autounique canonicalId;
+  Date createdAt;
+  Date updatedAt;
+  lazy String notes;
+}
+
+class ExternalId {
+  SourceSystem source;
+  String externalKey;
+  lazy String externalUrl;
+  String entityType;
+  Date lastSyncedAt;
+  lazy String rawPayloadHash;   // detect upstream changes cheaply
+
+  * -- 1 CanonicalEntity;
+}
+
+// Mirror of Monday's workspace concept so we can scope things organizationally.
+class Workspace {
+  isA CanonicalEntity;
+  name;                          // "Admin", "Project Management", "CRM", ...
+  lazy String description;
+
+  * -- 1 Organization;
+}
+
+// -----------------------------------------------------------------------------
+// Org / people
+// -----------------------------------------------------------------------------
+
+class Organization {
+  isA CanonicalEntity;
+  name;
+  lazy String legalName;
+  lazy String defaultCurrency;
+}
+
+class User {
+  isA CanonicalEntity;
+  email;
+  String displayName;
+  lazy String role;
+  lazy Boolean isActive;
+
+  * -- 1 Organization;
+  * -- * Workspace;              // user can be in multiple workspaces
+}
+
+// -----------------------------------------------------------------------------
+// CRM parties — Account is the company, Contact is a person.
+// A Contact may belong to an Account (or be an independent individual client).
+// -----------------------------------------------------------------------------
+
+class Account {
+  isA CanonicalEntity;
+  name;
+  lazy String industry;
+  lazy String website;
+  lazy String billingAddress;
+
+  * -- 1 Organization;
+}
+
+class Contact {
+  isA CanonicalEntity;
+  String firstName;
+  String lastName;
+  lazy String email;
+  lazy String phone;
+  lazy String title;
+
+  * -- 0..1 Account;
+  * -- 1 Organization;
+}
+
+// "Client" stays as a convenience role — points to whichever (Account or Contact)
+// is the billing party for a given Project / Invoice.
+class Client {
+  isA CanonicalEntity;
+  lazy String displayName;
+
+  * -- 0..1 Account;
+  * -- 0..1 Contact;
+  * -- 1 Organization;
+}
+
+class Vendor {
+  isA CanonicalEntity;
+  name;
+  lazy String email;
+  lazy String phone;
+  lazy String taxId;
+  lazy String paymentTerms;
+
+  * -- 1 Organization;
+}
+
+class ProductOrService {
+  isA CanonicalEntity;
+  name;
+  lazy String sku;
+  lazy String description;
+  lazy Float unitPrice;
+  lazy String unit;             // hour, sqft, each, ...
+
+  * -- 1 Organization;
+}
+
+// -----------------------------------------------------------------------------
+// Real estate
+// -----------------------------------------------------------------------------
+
+class Property {
+  isA CanonicalEntity;
+  String address;
+  lazy String shortLabel;
+  lazy String city;
+  lazy String region;
+  lazy String postalCode;
+  lazy String country;
+  lazy String propertyType;
+  lazy Float lotSize;
+  lazy Integer yearBuilt;
+
+  * -- 1 Organization;
+}
+
+// -----------------------------------------------------------------------------
+// Sales pipeline
+// -----------------------------------------------------------------------------
+
+class Lead {
+  isA CanonicalEntity;
+  lazy String sourceChannel;
+  LeadStage stage;
+  lazy Float estimatedValue;
+  lazy Date qualifiedAt;
+
+  * -- 0..1 Account;
+  * -- 0..1 Contact;
+  * -- 0..1 User owner;
+  * -- 0..1 Property;
+}
+
+class Deal {
+  isA CanonicalEntity;
+  name;
+  Float value;
+  LeadStage stage;
+  lazy Date expectedCloseDate;
+  lazy Date actualCloseDate;
+  lazy Float probability;
+
+  * -- 0..1 Lead;
+  * -- 1 Client;
+  * -- 0..1 Property;
+  * -- 0..1 User owner;
+  * -- * ProductOrService;
+}
+
+class Activity {
+  isA CanonicalEntity;
+  ActivityKind kind;
+  String subject;
+  lazy String body;
+  Date occurredAt;
+  lazy Date followUpAt;
+
+  * -- 0..1 Deal;
+  * -- 0..1 Lead;
+  * -- 0..1 Account;
+  * -- 0..1 Contact;
+  * -- 0..1 Project;
+  * -- 1 User author;
+}
+
+// -----------------------------------------------------------------------------
+// Delivery
+// -----------------------------------------------------------------------------
+
+class Project {
+  isA CanonicalEntity;
+  name;
+  lazy String code;
+  ProjectStatus status;
+  lazy Date startDate;
+  lazy Date endDate;
+  lazy Float budgetAmount;
+  lazy Float contractAmount;
+
+  * -- 1 Client;
+  * -- 0..1 Deal;
+  * -- 0..1 Property;
+  * -- 0..1 User projectManager;
+  * -- 0..1 Workspace;
+}
+
+class Task {
+  isA CanonicalEntity;
+  title;
+  String status;
+  lazy Date dueDate;
+  lazy Date completedAt;
+  lazy Integer priority;
+
+  * -- 1 Project;
+  * -- 0..1 User assignee;
+  * -- 0..1 Task parentTask;     // subtask hierarchy (reflexive)
+}
+
+class DailyLog {
+  isA CanonicalEntity;
+  Date logDate;
+  lazy String summary;
+  lazy String weather;
+  lazy Integer crewCount;
+
+  * -- 1 Project;
+  * -- 0..1 User author;
+}
+
+// -----------------------------------------------------------------------------
+// Field — media, deficiencies
+// -----------------------------------------------------------------------------
+
+class Media {
+  isA CanonicalEntity;
+  MediaKind kind;
+  String url;
+  lazy String thumbnailUrl;
+  lazy String caption;
+  Date capturedAt;
+  lazy Float gpsLat;
+  lazy Float gpsLon;
+
+  * -- 0..1 Project;
+  * -- 0..1 DailyLog;
+  * -- 0..1 Deficiency;
+  * -- 0..1 User author;
+}
+
+class Deficiency {
+  isA CanonicalEntity;
+
+  String title;
+  lazy String description;
+  DeficiencySeverity severity;
+  DeficiencyStatus status;
+  lazy Date raisedAt;
+  lazy Date resolvedAt;
+
+  * deficiencies -- 1 Project project;
+
+  * assignedDeficiencies -- 0..1 User assignee;
+  * raisedDeficiencies -- 0..1 User raisedBy;
+
+  * mirroredDeficiencies -- 0..1 Task mirroredTask;   // sometimes mirrored as a Monday task
+}
+
+// -----------------------------------------------------------------------------
+// Finance — full P&L flow
+// -----------------------------------------------------------------------------
+
+class Quote {
+  isA CanonicalEntity;
+  String number;
+  Float amount;
+  Date issueDate;
+  lazy Date expiresAt;
+  String status;                 // draft, sent, accepted, rejected, expired
+
+  * -- 0..1 Deal;
+  * -- 0..1 Project;
+  * -- 1 Client;
+}
+
+class Contract {
+  isA CanonicalEntity;
+  String number;
+  Float value;
+  Date signedDate;
+  lazy Date effectiveDate;
+  lazy Date terminationDate;
+  String documentUrl;
+
+  * -- 1 Project;
+  * -- 1 Client;
+}
+
+class PurchaseOrder {
+  isA CanonicalEntity;
+  String number;
+  Float amount;
+  Date issueDate;
+  String status;                 // open, partial, received, closed
+
+  * -- 1 Project;
+  * -- 1 Vendor;
+}
+
+class Invoice {
+  isA CanonicalEntity;
+  String number;
+  Float amount;
+  Date issueDate;
+  lazy Date dueDate;
+  InvoiceStatus status;
+  lazy Float taxAmount;
+
+  * -- 1 Project;
+  * -- 1 Client;
+}
+
+class Payment {
+  isA CanonicalEntity;
+  Float amount;
+  Date receivedAt;
+  PaymentMethod method;
+  lazy String reference;
+
+  * -- 1 Invoice;
+}
+
+class Expense {
+  isA CanonicalEntity;
+  String description;
+  Float amount;
+  Date incurredAt;
+  lazy String category;
+  lazy String receiptUrl;
+
+  * -- 0..1 Project;
+  * -- 0..1 Vendor;
+  * -- 0..1 PurchaseOrder;
+  * -- 0..1 User submittedBy;
+}
+
+// -----------------------------------------------------------------------------
+// Documents (file references)
+// -----------------------------------------------------------------------------
+
+class Document {
+  isA CanonicalEntity;
+  name;
+  lazy String mimeType;
+  String url;
+  lazy String storageRef;
+  lazy Integer sizeBytes;
+  lazy String contentHash;
+
+  * -- 0..1 Project;
+  * -- 0..1 Deal;
+  * -- 0..1 Client;
+  * -- 0..1 Contract;
+  * -- 0..1 Quote;
+}
+
+// -----------------------------------------------------------------------------
+// Sync infrastructure
+// -----------------------------------------------------------------------------
+
+class ConnectorConfig {
+  SourceSystem source;
+  String configKey;              // org-scoped config name
+  lazy String encryptedCredentials;
+  lazy Boolean isActive;
+  lazy Date lastSuccessfulSync;
+
+  * -- 1 Organization;
+}
+
+class SyncJob {
+  autounique jobId;
+  SourceSystem source;
+  String entityType;
+  Date startedAt;
+  lazy Date completedAt;
+  SyncStatus status;
+  lazy Integer recordsProcessed;
+  lazy Integer recordsFailed;
+
+  * -- 1 Organization;
+  1 -- * SyncError;
+}
+
+class SyncError {
+  String errorMessage;
+  lazy String externalKey;       // which source record failed
+  Date occurredAt;
+  lazy String stackTrace;
+}
+
+// -----------------------------------------------------------------------------
+// AI Assistant
+// -----------------------------------------------------------------------------
+
+class AiConversation {
+  isA CanonicalEntity;
+  String title;
+
+  * -- 1 User;
+}
+
+class AiQuery {
+  autounique queryId;
+  String question;
+  AiQueryKind kind;
+  lazy String generatedSql;
+  lazy String responseText;
+  Date askedAt;
+  lazy Integer latencyMs;
+  lazy Float estimatedCost;
+
+  * -- 1 AiConversation;
+}
+
+// For RAG: chunks of daily logs, contracts, docs etc. with vector embeddings.
+// The actual vector lives in pgvector; this is the metadata record.
+class EmbeddingChunk {
+  autounique chunkId;
+  String sourceEntityType;       // "DailyLog", "Document", ...
+  String sourceEntityId;
+  String chunkText;
+  Integer chunkIndex;
+  lazy String embeddingModel;
+
+  * -- 0..1 Project;             // denormalized for fast filtering
+}
