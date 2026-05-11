@@ -10,7 +10,7 @@ import java.sql.Date;
  * CRM-side parties
  * -----------------------------------------------------------------------------
  */
-// line 143 "../../model-v0.1.ump"
+// line 159 "../../model-v0.1.ump"
 public class Client extends CanonicalEntity
 {
 
@@ -369,9 +369,9 @@ public class Client extends CanonicalEntity
     return 0;
   }
   /* Code from template association_AddManyToOne */
-  public Deal addDeal(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, Decimal aValue, LeadStage aStage)
+  public Deal addDeal(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, Decimal aValue)
   {
-    return new Deal(aCanonicalId, aCreatedAt, aUpdatedAt, aName, aValue, aStage, this);
+    return new Deal(aCanonicalId, aCreatedAt, aUpdatedAt, aName, aValue, this);
   }
 
   public boolean addDeal(Deal aDeal)
@@ -441,9 +441,9 @@ public class Client extends CanonicalEntity
     return 0;
   }
   /* Code from template association_AddManyToOne */
-  public Project addProject(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, ProjectStatus aStatus)
+  public Project addProject(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName)
   {
-    return new Project(aCanonicalId, aCreatedAt, aUpdatedAt, aName, aStatus, this);
+    return new Project(aCanonicalId, aCreatedAt, aUpdatedAt, aName, this);
   }
 
   public boolean addProject(Project aProject)
@@ -512,21 +512,20 @@ public class Client extends CanonicalEntity
   {
     return 0;
   }
-  /* Code from template association_AddManyToOne */
-  public Invoice addInvoice(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aNumber, Decimal aAmount, Date aIssueDate, InvoiceStatus aStatus, Project aProject)
-  {
-    return new Invoice(aCanonicalId, aCreatedAt, aUpdatedAt, aNumber, aAmount, aIssueDate, aStatus, aProject, this);
-  }
-
+  /* Code from template association_AddManyToOptionalOne */
   public boolean addInvoice(Invoice aInvoice)
   {
     boolean wasAdded = false;
     if (invoices.contains(aInvoice)) { return false; }
     Client existingClient = aInvoice.getClient();
-    boolean isNewClient = existingClient != null && !this.equals(existingClient);
-    if (isNewClient)
+    if (existingClient == null)
     {
       aInvoice.setClient(this);
+    }
+    else if (!this.equals(existingClient))
+    {
+      existingClient.removeInvoice(aInvoice);
+      addInvoice(aInvoice);
     }
     else
     {
@@ -539,10 +538,10 @@ public class Client extends CanonicalEntity
   public boolean removeInvoice(Invoice aInvoice)
   {
     boolean wasRemoved = false;
-    //Unable to remove aInvoice, as it must always have a client
-    if (!this.equals(aInvoice.getClient()))
+    if (invoices.contains(aInvoice))
     {
       invoices.remove(aInvoice);
+      aInvoice.setClient(null);
       wasRemoved = true;
     }
     return wasRemoved;
@@ -673,10 +672,9 @@ public class Client extends CanonicalEntity
       Project aProject = projects.get(i - 1);
       aProject.delete();
     }
-    for(int i=invoices.size(); i > 0; i--)
+    while( !invoices.isEmpty() )
     {
-      Invoice aInvoice = invoices.get(i - 1);
-      aInvoice.delete();
+      invoices.get(0).setClient(null);
     }
     while( !documents.isEmpty() )
     {

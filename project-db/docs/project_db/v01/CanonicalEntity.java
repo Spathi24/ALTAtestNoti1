@@ -9,15 +9,9 @@ import java.util.*;
  * Canonical base — every multi-source entity inherits from this
  * -----------------------------------------------------------------------------
  */
-// line 84 "../../model-v0.1.ump"
+// line 98 "../../model-v0.1.ump"
 public abstract class CanonicalEntity
 {
-
-  //------------------------
-  // ENUMERATIONS
-  //------------------------
-
-  public enum SourceSystem { MONDAY, COMPANYCAM, QUICKBOOKS, GOOGLE_DRIVE, INTERNAL }
 
   //------------------------
   // MEMBER VARIABLES
@@ -32,12 +26,16 @@ public abstract class CanonicalEntity
   //CanonicalEntity Associations
   private List<ExternalId> externalIds;
 
+  //Helper Variables
+  private int cachedHashCode;
+
   //------------------------
   // CONSTRUCTOR
   //------------------------
 
   public CanonicalEntity(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt)
   {
+    cachedHashCode = -1;
     canonicalId = aCanonicalId;
     createdAt = aCreatedAt;
     updatedAt = aUpdatedAt;
@@ -191,6 +189,45 @@ public abstract class CanonicalEntity
       wasAdded = addExternalIdAt(aExternalId, index);
     }
     return wasAdded;
+  }
+
+  public boolean equals(Object obj)
+  {
+    if (obj == null) { return false; }
+    if (!getClass().equals(obj.getClass())) { return false; }
+
+    CanonicalEntity compareTo = (CanonicalEntity)obj;
+  
+    if (getCanonicalId() == null && compareTo.getCanonicalId() != null)
+    {
+      return false;
+    }
+    else if (getCanonicalId() != null && !getCanonicalId().equals(compareTo.getCanonicalId()))
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  public int hashCode()
+  {
+    if (cachedHashCode != -1)
+    {
+      return cachedHashCode;
+    }
+    cachedHashCode = 17;
+    if (getCanonicalId() != null)
+    {
+      cachedHashCode = cachedHashCode * 23 + getCanonicalId().hashCode();
+    }
+    else
+    {
+      cachedHashCode = cachedHashCode * 23;
+    }
+
+    
+    return cachedHashCode;
   }
 
   public void delete()

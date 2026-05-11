@@ -32,14 +32,6 @@ namespace project_db.v01;
 // Enums
 // -----------------------------------------------------------------------------
 
-enum SourceSystem {
-  MONDAY,
-  COMPANYCAM,
-  QUICKBOOKS,
-  GOOGLE_DRIVE,
-  INTERNAL
-}
-
 enum ProjectStatus {
   PROPOSED,
   ACTIVE,
@@ -78,6 +70,28 @@ enum TaskStatus {
 }
 
 // -----------------------------------------------------------------------------
+// Value objects / reference data (compile-safe Java types)
+// -----------------------------------------------------------------------------
+
+// ISO-8601 timestamp wrapper (avoids DateTime missing-type issues in Java).
+class DateTime {
+  immutable String value;
+}
+
+// Exact decimal wrapper (avoid floating-point for money).
+class Decimal {
+  immutable String value;
+}
+
+// Reference data instead of enum to avoid duplicated nested enums in Java.
+class SourceSystem {
+  immutable String code;
+  lazy String displayName;
+
+  key { code }
+}
+
+// -----------------------------------------------------------------------------
 // Canonical base — every multi-source entity inherits from this
 // -----------------------------------------------------------------------------
 
@@ -87,6 +101,8 @@ class CanonicalEntity {
   immutable DateTime createdAt;      // never changes after construction
   DateTime updatedAt;
   lazy String notes;
+
+  key { canonicalId }
 }
 
 // One canonical entity owns many external IDs (one per source system it lives
@@ -187,7 +203,7 @@ class Property {
 class Lead {
   isA CanonicalEntity;
   lazy String sourceChannel;         // referral, website, walk-in
-  LeadStage stage;
+  lazy LeadStage stage;
   lazy Decimal estimatedValue;
   lazy Date qualifiedAt;
 
@@ -202,7 +218,7 @@ class Deal {
   isA CanonicalEntity;
   name;
   Decimal value;
-  LeadStage stage;
+  lazy LeadStage stage;
   lazy Date expectedCloseDate;
   lazy Date actualCloseDate;
   lazy Float probability;
@@ -223,7 +239,7 @@ class Project {
   isA CanonicalEntity;
   name;
   lazy String code;                  // human-readable e.g. "923-ROCK-001"
-  ProjectStatus status;
+  lazy ProjectStatus status;
   lazy Date startDate;
   lazy Date endDate;
   lazy Decimal budgetAmount;
@@ -241,7 +257,7 @@ class Project {
 class Task {
   isA CanonicalEntity;
   title;
-  TaskStatus status;
+  lazy TaskStatus status;
   lazy Date dueDate;
   lazy Date completedAt;
 
@@ -270,10 +286,10 @@ class Invoice {
   Decimal amount;
   immutable Date issueDate;
   lazy Date dueDate;
-  InvoiceStatus status;
+  lazy InvoiceStatus status;
 
-  * -- 1 Project;
-  * -- 1 Client;
+  * -- 0..1 Project;
+  * -- 0..1 Client;
 }
 
 // -----------------------------------------------------------------------------

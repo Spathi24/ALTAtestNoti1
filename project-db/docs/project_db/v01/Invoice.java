@@ -12,7 +12,7 @@ import java.util.*;
  * Note: Invoice is intentionally NOT a composition of Project. Financial
  * records must survive operational deletions (compliance / audit).
  */
-// line 267 "../../model-v0.1.ump"
+// line 283 "../../model-v0.1.ump"
 public class Invoice extends CanonicalEntity
 {
 
@@ -41,24 +41,13 @@ public class Invoice extends CanonicalEntity
   // CONSTRUCTOR
   //------------------------
 
-  public Invoice(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aNumber, Decimal aAmount, Date aIssueDate, InvoiceStatus aStatus, Project aProject, Client aClient)
+  public Invoice(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aNumber, Decimal aAmount, Date aIssueDate)
   {
     super(aCanonicalId, aCreatedAt, aUpdatedAt);
     number = aNumber;
     amount = aAmount;
     issueDate = aIssueDate;
     dueDate = null;
-    status = aStatus;
-    boolean didAddProject = setProject(aProject);
-    if (!didAddProject)
-    {
-      throw new RuntimeException("Unable to create invoice due to project. See https://manual.umple.org?RE002ViolationofAssociationMultiplicity.html");
-    }
-    boolean didAddClient = setClient(aClient);
-    if (!didAddClient)
-    {
-      throw new RuntimeException("Unable to create invoice due to client. See https://manual.umple.org?RE002ViolationofAssociationMultiplicity.html");
-    }
   }
 
   //------------------------
@@ -118,62 +107,70 @@ public class Invoice extends CanonicalEntity
   {
     return project;
   }
+
+  public boolean hasProject()
+  {
+    boolean has = project != null;
+    return has;
+  }
   /* Code from template association_GetOne */
   public Client getClient()
   {
     return client;
   }
-  /* Code from template association_SetOneToMany */
+
+  public boolean hasClient()
+  {
+    boolean has = client != null;
+    return has;
+  }
+  /* Code from template association_SetOptionalOneToMany */
   public boolean setProject(Project aProject)
   {
     boolean wasSet = false;
-    if (aProject == null)
-    {
-      return wasSet;
-    }
-
     Project existingProject = project;
     project = aProject;
     if (existingProject != null && !existingProject.equals(aProject))
     {
       existingProject.removeInvoice(this);
     }
-    project.addInvoice(this);
+    if (aProject != null)
+    {
+      aProject.addInvoice(this);
+    }
     wasSet = true;
     return wasSet;
   }
-  /* Code from template association_SetOneToMany */
+  /* Code from template association_SetOptionalOneToMany */
   public boolean setClient(Client aClient)
   {
     boolean wasSet = false;
-    if (aClient == null)
-    {
-      return wasSet;
-    }
-
     Client existingClient = client;
     client = aClient;
     if (existingClient != null && !existingClient.equals(aClient))
     {
       existingClient.removeInvoice(this);
     }
-    client.addInvoice(this);
+    if (aClient != null)
+    {
+      aClient.addInvoice(this);
+    }
     wasSet = true;
     return wasSet;
   }
 
   public void delete()
   {
-    Project placeholderProject = project;
-    this.project = null;
-    if(placeholderProject != null)
+    if (project != null)
     {
+      Project placeholderProject = project;
+      this.project = null;
       placeholderProject.removeInvoice(this);
     }
-    Client placeholderClient = client;
-    this.client = null;
-    if(placeholderClient != null)
+    if (client != null)
     {
+      Client placeholderClient = client;
+      this.client = null;
       placeholderClient.removeInvoice(this);
     }
     super.delete();

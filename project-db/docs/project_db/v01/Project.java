@@ -12,7 +12,7 @@ import java.util.*;
  * A Deal can spawn multiple Projects (phased contracts), so Project — Deal
  * stays * -- 0..1 deliberately.
  */
-// line 222 "../../model-v0.1.ump"
+// line 238 "../../model-v0.1.ump"
 public class Project extends CanonicalEntity
 {
 
@@ -51,12 +51,11 @@ public class Project extends CanonicalEntity
   // CONSTRUCTOR
   //------------------------
 
-  public Project(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, ProjectStatus aStatus, Client aClient)
+  public Project(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, Client aClient)
   {
     super(aCanonicalId, aCreatedAt, aUpdatedAt);
     name = aName;
     code = null;
-    status = aStatus;
     startDate = null;
     endDate = null;
     boolean didAddClient = setClient(aClient);
@@ -401,9 +400,9 @@ public class Project extends CanonicalEntity
     return 0;
   }
   /* Code from template association_AddManyToOne */
-  public Task addTask(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aTitle, TaskStatus aStatus)
+  public Task addTask(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aTitle)
   {
-    return new Task(aCanonicalId, aCreatedAt, aUpdatedAt, aTitle, aStatus, this);
+    return new Task(aCanonicalId, aCreatedAt, aUpdatedAt, aTitle, this);
   }
 
   public boolean addTask(Task aTask)
@@ -544,21 +543,20 @@ public class Project extends CanonicalEntity
   {
     return 0;
   }
-  /* Code from template association_AddManyToOne */
-  public Invoice addInvoice(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aNumber, Decimal aAmount, Date aIssueDate, InvoiceStatus aStatus, Client aClient)
-  {
-    return new Invoice(aCanonicalId, aCreatedAt, aUpdatedAt, aNumber, aAmount, aIssueDate, aStatus, this, aClient);
-  }
-
+  /* Code from template association_AddManyToOptionalOne */
   public boolean addInvoice(Invoice aInvoice)
   {
     boolean wasAdded = false;
     if (invoices.contains(aInvoice)) { return false; }
     Project existingProject = aInvoice.getProject();
-    boolean isNewProject = existingProject != null && !this.equals(existingProject);
-    if (isNewProject)
+    if (existingProject == null)
     {
       aInvoice.setProject(this);
+    }
+    else if (!this.equals(existingProject))
+    {
+      existingProject.removeInvoice(aInvoice);
+      addInvoice(aInvoice);
     }
     else
     {
@@ -571,10 +569,10 @@ public class Project extends CanonicalEntity
   public boolean removeInvoice(Invoice aInvoice)
   {
     boolean wasRemoved = false;
-    //Unable to remove aInvoice, as it must always have a project
-    if (!this.equals(aInvoice.getProject()))
+    if (invoices.contains(aInvoice))
     {
       invoices.remove(aInvoice);
+      aInvoice.setProject(null);
       wasRemoved = true;
     }
     return wasRemoved;
@@ -723,10 +721,9 @@ public class Project extends CanonicalEntity
       dailyLogs.remove(aDailyLog);
     }
     
-    for(int i=invoices.size(); i > 0; i--)
+    while( !invoices.isEmpty() )
     {
-      Invoice aInvoice = invoices.get(i - 1);
-      aInvoice.delete();
+      invoices.get(0).setProject(null);
     }
     while( !documents.isEmpty() )
     {

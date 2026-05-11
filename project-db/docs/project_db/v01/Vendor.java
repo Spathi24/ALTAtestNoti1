@@ -4,7 +4,7 @@
 package project_db.v01;
 import java.util.*;
 
-// line 153 "../../model-v0.1.ump"
+// line 169 "../../model-v0.1.ump"
 public class Vendor extends CanonicalEntity
 {
 

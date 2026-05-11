@@ -10,7 +10,7 @@ import java.util.*;
  * from the canonical layer they go too. Compositions also make the
  * "every task has exactly one project" lifecycle invariant enforceable.
  */
-// line 241 "../../model-v0.1.ump"
+// line 257 "../../model-v0.1.ump"
 public class Task extends CanonicalEntity
 {
 
@@ -38,11 +38,10 @@ public class Task extends CanonicalEntity
   // CONSTRUCTOR
   //------------------------
 
-  public Task(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aTitle, TaskStatus aStatus, Project aProject)
+  public Task(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aTitle, Project aProject)
   {
     super(aCanonicalId, aCreatedAt, aUpdatedAt);
     title = aTitle;
-    status = aStatus;
     dueDate = null;
     completedAt = null;
     boolean didAddProject = setProject(aProject);

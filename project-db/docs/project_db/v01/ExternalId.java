@@ -14,15 +14,9 @@ package project_db.v01;
  * across different entity types — so all three columns must match for a
  * row to be a duplicate.
  */
-// line 101 "../../model-v0.1.ump"
+// line 117 "../../model-v0.1.ump"
 public class ExternalId
 {
-
-  //------------------------
-  // ENUMERATIONS
-  //------------------------
-
-  public enum SourceSystem { MONDAY, COMPANYCAM, QUICKBOOKS, GOOGLE_DRIVE, INTERNAL }
 
   //------------------------
   // MEMBER VARIABLES

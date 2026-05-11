@@ -9,7 +9,7 @@ import java.util.*;
  * A Lead converts to AT MOST one Deal, and a Deal originates from at most one
  * Lead — never many-from-one. Original `* -- 0..1 Lead` was a multiplicity bug.
  */
-// line 201 "../../model-v0.1.ump"
+// line 217 "../../model-v0.1.ump"
 public class Deal extends CanonicalEntity
 {
 
@@ -44,12 +44,11 @@ public class Deal extends CanonicalEntity
   // CONSTRUCTOR
   //------------------------
 
-  public Deal(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, Decimal aValue, LeadStage aStage, Client aClient)
+  public Deal(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, String aName, Decimal aValue, Client aClient)
   {
     super(aCanonicalId, aCreatedAt, aUpdatedAt);
     name = aName;
     value = aValue;
-    stage = aStage;
     expectedCloseDate = null;
     actualCloseDate = null;
     probability = 0.0f;

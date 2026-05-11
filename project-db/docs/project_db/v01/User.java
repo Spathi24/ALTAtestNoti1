@@ -10,7 +10,7 @@ import java.util.*;
  * boundary explicit and ensures clean tenant offboarding (drop the org → its
  * users/clients/vendors/properties go with it).
  */
-// line 129 "../../model-v0.1.ump"
+// line 145 "../../model-v0.1.ump"
 public class User extends CanonicalEntity
 {
 

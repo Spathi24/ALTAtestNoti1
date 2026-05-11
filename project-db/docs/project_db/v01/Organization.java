@@ -9,7 +9,7 @@ import java.util.*;
  * Org / people
  * -----------------------------------------------------------------------------
  */
-// line 118 "../../model-v0.1.ump"
+// line 134 "../../model-v0.1.ump"
 public class Organization extends CanonicalEntity
 {
 

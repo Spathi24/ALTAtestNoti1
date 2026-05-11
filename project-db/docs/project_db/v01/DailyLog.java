@@ -5,7 +5,7 @@ package project_db.v01;
 import java.sql.Date;
 import java.util.*;
 
-// line 252 "../../model-v0.1.ump"
+// line 268 "../../model-v0.1.ump"
 public class DailyLog extends CanonicalEntity
 {
 

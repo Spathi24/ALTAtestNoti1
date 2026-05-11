@@ -13,7 +13,7 @@ import java.util.*;
  * fan-out of optionals is more readable and translates 1:1 to SQL nullable
  * FKs.
  */
-// line 287 "../../model-v0.1.ump"
+// line 303 "../../model-v0.1.ump"
 public class Document extends CanonicalEntity
 {
 

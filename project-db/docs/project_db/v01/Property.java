@@ -9,7 +9,7 @@ import java.util.*;
  * Real estate
  * -----------------------------------------------------------------------------
  */
-// line 168 "../../model-v0.1.ump"
+// line 184 "../../model-v0.1.ump"
 public class Property extends CanonicalEntity
 {
 

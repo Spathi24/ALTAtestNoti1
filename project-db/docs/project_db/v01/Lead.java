@@ -10,7 +10,7 @@ import java.util.*;
  * Sales pipeline
  * -----------------------------------------------------------------------------
  */
-// line 187 "../../model-v0.1.ump"
+// line 203 "../../model-v0.1.ump"
 public class Lead extends CanonicalEntity
 {
 
@@ -40,11 +40,10 @@ public class Lead extends CanonicalEntity
   // CONSTRUCTOR
   //------------------------
 
-  public Lead(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt, LeadStage aStage)
+  public Lead(UUID aCanonicalId, DateTime aCreatedAt, DateTime aUpdatedAt)
   {
     super(aCanonicalId, aCreatedAt, aUpdatedAt);
     sourceChannel = null;
-    stage = aStage;
     qualifiedAt = null;
   }
 
