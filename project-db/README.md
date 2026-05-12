@@ -1,114 +1,370 @@
-# project_db — v0.1 skeleton
+# project_db — Centralized Operations Platform
 
-Unified project database that pulls data from Monday.com, CompanyCam, QuickBooks,
-and Google Drive into a single canonical schema, with an AI assistant layer
-on top for Q&A and reporting.
-
-This is a **skeleton**, not a finished product. The goal is to lock in the
-architecture (canonical IDs, modular connectors, pluggable matchers, pluggable
-AI modes) so the rest of the work can happen in parallel without rework.
+A unified data layer that pulls live data from all of the company's SaaS tools
+(Monday.com, QuickBooks, CompanyCam, Google Drive) into one database, and lets
+you query across all of them from a single command or — eventually — a plain
+English question to an AI assistant.
 
 ---
 
-## What's here
+## The Problem
+
+The company's operational data lives in four separate systems that don't talk to
+each other:
+
+| Tool | What lives there |
+|---|---|
+| **Monday.com** | Projects, tasks, CRM pipeline (leads, deals, contacts), team activity |
+| **QuickBooks** | Invoices, payments, purchase orders, financial reporting |
+| **CompanyCam** | Job-site photos, inspection reports, daily logs |
+| **Google Drive** | Contracts, scopes of work, drawings, documents |
+
+Answering a cross-tool question today means opening multiple tabs and stitching
+results together by hand. Questions like:
+
+- *"Which active projects are over budget?"*
+- *"What's the total value of open deals vs. invoiced revenue this quarter?"*
+- *"Show me everything related to 923 Rockland — tasks, photos, invoices, documents."*
+
+...currently have no single place to go.
+
+---
+
+## The Solution
+
+`project_db` solves this by acting as a **canonical data layer**:
+
+1. Every source system gets a **Connector** that knows how to pull its data via API.
+2. Every record from every source is mapped to a **canonical entity** with a single
+   UUID we own — a Client is one record regardless of whether it came from Monday,
+   QuickBooks, or both.
+3. All queries, reports, and AI interactions read from the canonical layer only —
+   they never need to know which source the data came from.
+
+```
+Monday.com  ──┐
+QuickBooks  ──┤  Connectors  →  Identity Resolver  →  Canonical DB  →  AI / Reports
+CompanyCam  ──┤
+Google Drive──┘
+```
+
+Adding a new data source = writing one new Connector class. Everything else
+(schema, deduplication, AI, reporting) stays the same.
+
+---
+
+## What Works Today (v0.1)
+
+The Monday.com connector is fully operational. Running a sync pulls your entire
+Monday workspace into a local database in about 20 seconds.
+
+### Setup
+
+```bash
+# Install (requires Python 3.10+)
+pip install -e ".[dev]"
+
+# Copy credentials template and fill in your Monday API token
+cp .env.example .env
+# Edit .env — MONDAY_API_TOKEN is required to sync
+
+# Create the database tables
+project_db init-db
+```
+
+### Daily use
+
+```bash
+# Pull all data from Monday into the local DB
+project_db sync monday
+
+# Ask what projects are currently active
+project_db ask "what active projects do we have?"
+
+# See the current deal pipeline value by stage
+project_db ask "what deals are in the pipeline?"
+
+# See accounts receivable aging
+project_db ask "show ar aging"
+```
+
+### Example output
+
+```
+$ project_db sync monday
+[MONDAY] processed=85 created=81 matched=4 failed=0 duration=19.8s
+
+$ project_db ask "what active projects do we have?"
+[mode=canned report=active_projects]
+[
+  { "name": "923 Rockland",        "code": "MONDAY-BOARD-18412002783", "start_date": null },
+  { "name": "5768-5770 St Laurent","code": "MONDAY-BOARD-18412200212", "start_date": null },
+  { "name": "1455 Saint Mathieu",  "code": "MONDAY-BOARD-18412776683", "start_date": null },
+  { "name": "Rockland",            "code": "MONDAY-BOARD-18412002814", "start_date": null },
+  ...
+]
+
+$ project_db ask "what deals are in the pipeline?"
+[mode=canned report=deal_pipeline_value]
+[
+  { "stage": "NEW",      "total_value": 125000.0, "count": 2 },
+  { "stage": "PROPOSAL", "total_value": 100000.0, "count": 1 }
+]
+```
+
+### What gets synced from Monday
+
+| Canonical entity | Where it comes from |
+|---|---|
+| **User** | Your Monday.com team members |
+| **Client** | Contacts board, Accounts board |
+| **Lead** | Leads board |
+| **Deal** | Deals board (with value, stage, close date, probability) |
+| **Project** | Client Projects board (CRM-linked projects) |
+| **Project + Tasks** | Property boards like "923 Rockland" — the board becomes a Project, every item becomes a Task with status and due date |
+
+The Monday connector automatically maps column values to the right canonical
+fields using the column titles — it recognizes columns named "Status", "Budget",
+"Timeline", "Owner", "Client", "Expected Close Date", etc. without any manual
+configuration.
+
+---
+
+## Exploration & Diagnostics
+
+Before syncing a board you haven't seen before, inspect it first:
+
+```bash
+# See all your Monday boards and their IDs
+project_db list-boards
+
+# See exactly what columns a board has and what the system will extract from them
+project_db inspect-board 18412002783
+```
+
+`inspect-board` output:
+
+```
+Column ID            Type               Title
+-----------------------------------------------------------------
+project_status       status             Status
+project_timeline     timeline           Timeline
+project_budget       numbers            Budget
+project_task_completion_date date       Completion Date
+project_owner        people             Owner
+
+Heuristic field assignments (auto-detected):
+  project_status       -> status_label  (title: 'Status')
+  project_timeline     -> timeline      (title: 'Timeline')
+  project_budget       -> budget_amount (title: 'Budget')
+  project_task_completion_date -> end_date (title: 'Completion Date')
+  project_owner        -> assigned_user (title: 'Owner')
+
+Sample items:
+  11941695903   Planning    Project Kickoff Meeting
+    task_status: TaskStatus.TODO
+  11941725666   Planning    Design Approval
+    task_status: TaskStatus.TODO
+```
+
+---
+
+## Architecture
+
+### Canonical schema (13 entities)
+
+```
+Organization
+├── User           (team members)
+├── Client         (customers / contacts)
+├── Vendor
+├── Property       (job-site address)
+├── Lead           (CRM pipeline entry)
+├── Deal           (qualified opportunity with value + stage)
+├── Project        (active or completed job)
+│   ├── Task       (individual work item with status + due date)
+│   └── DailyLog   (field notes / progress entries)
+├── Invoice
+└── Document       (reference to a file in Drive / CompanyCam)
+
+ExternalId         (maps any canonical UUID → source system record ID)
+```
+
+Every entity has a stable UUID (`canonical_id`) that is ours — independent of
+any source system. The `ExternalId` table records how each canonical entity
+maps to one or more source records:
+
+```
+Project "923 Rockland"  (canonical_id: abc-123)
+    ├── MONDAY board:18412002783
+    ├── QUICKBOOKS job:QBJ-9231     (once QB connector is built)
+    └── COMPANYCAM project:CC-4421  (once CompanyCam connector is built)
+```
+
+This means the same project in Monday and QuickBooks becomes **one record** in
+the canonical DB — no duplicates, no manual linking.
+
+### Identity resolution
+
+When a connector syncs a record, it goes through three steps:
+
+1. **Exact lookup** — has this `(source, external_id)` pair been seen before?
+   If yes, update the existing canonical entity.
+2. **Fuzzy match** — does a canonical entity with the same name / email /
+   address already exist? If yes, link to it (e.g. a QuickBooks customer named
+   "Smith Renovation" matches the Monday client "Smith Renovation").
+3. **Create** — if no match, create a new canonical entity and register the
+   external ID.
+
+Subsequent syncs are idempotent — re-running `sync monday` updates existing
+records without creating duplicates.
+
+### Connectors
+
+Each source system is a self-contained Python package under `connectors/`:
+
+```
+connectors/
+├── base.py          ← abstract BaseConnector + SyncReport
+├── registry.py      ← maps SourceSystem enum → connector class
+└── monday/
+    ├── client.py    ← Monday GraphQL API wrapper (auth, pagination)
+    ├── connector.py ← board classification + entity upsert logic
+    └── column_extractor.py ← maps Monday column types to canonical fields
+```
+
+Adding QuickBooks, CompanyCam, or Drive means adding a new folder following
+the same pattern. See `docs/adding-a-connector.md` for the step-by-step.
+
+---
+
+## Project Structure
 
 ```
 project-db/
-├── docs/
-│   ├── design-v0.1.md           ← the architectural design doc
-│   ├── model-v0.1.ump           ← Umple UML — v0.1 skeleton model
-│   ├── model-full.ump           ← Umple UML — full target model
-│   └── adding-a-connector.md    ← how to plug in a new source
+├── .env.example                    ← credentials template (copy to .env)
+├── pyproject.toml                  ← package metadata + dependencies
 ├── src/project_db/
-│   ├── db/                      ← SQLAlchemy models (canonical schema)
-│   ├── identity/                ← canonical-ID resolver + fuzzy matchers
-│   ├── connectors/              ← one subpackage per source system
-│   │   ├── base.py              ← abstract Connector class
-│   │   ├── registry.py          ← lookup by SourceSystem enum
-│   │   └── monday/              ← reference implementation
-│   ├── ai/                      ← AI assistant — canned reports, text-to-SQL stub
-│   ├── cli.py                   ← `project_db ...` command-line
-│   └── config.py                ← env-var loading
-├── tests/                       ← smoke tests for identity resolution
-├── scripts/init_db.py           ← one-shot DB init helper
-└── pyproject.toml
+│   ├── cli.py                      ← project_db command-line entry point
+│   ├── config.py                   ← loads credentials from .env / environment
+│   ├── db/
+│   │   ├── base.py                 ← SQLAlchemy base + canonical ID mixin
+│   │   ├── session.py              ← engine + session factory
+│   │   └── models/                 ← one file per domain area
+│   ├── identity/
+│   │   ├── resolver.py             ← resolve_or_create — the core logic
+│   │   └── matcher.py              ← pluggable fuzzy matchers
+│   ├── connectors/
+│   │   ├── base.py
+│   │   ├── registry.py
+│   │   └── monday/
+│   └── ai/
+│       ├── query.py                ← routes questions to canned report / text-to-SQL / RAG
+│       └── views.py                ← pre-built SQL report functions
+├── tests/
+│   └── test_identity.py            ← smoke tests for the resolver
+└── docs/
+    ├── design-v0.1.md              ← full architectural design document
+    ├── MONDAY_INTEGRATION_STRATEGY.md
+    ├── adding-a-connector.md       ← playbook for adding a new source
+    ├── model-v0.1.ump              ← UML model (Umple format) — current schema
+    └── model-full.ump              ← UML model — full target vision
 ```
 
 ---
 
-## Quick start
+## Roadmap
+
+### Now — Monday connector working end-to-end
+
+- [x] Canonical schema (13 entities)
+- [x] Identity resolver with exact + fuzzy matching
+- [x] Monday connector: boards, items, column extraction, user sync
+- [x] Board classification: CRM boards vs. property/job boards
+- [x] CLI: `init-db`, `sync`, `list-boards`, `inspect-board`, `ask`
+- [x] 3 canned AI reports: active projects, deal pipeline, AR aging
+- [x] Credentials loaded from `.env`
+
+### Next — data completeness
+
+- [ ] **QuickBooks connector** — invoices, payments, customers. Highest value
+  for cross-tool financial reporting. Once built, you can ask "what's invoiced
+  vs. budgeted on 923 Rockland?" and get a real answer.
+- [ ] **CompanyCam connector** — photo/report metadata per job. Links job-site
+  documentation to canonical Projects.
+- [ ] **Google Drive connector** — contract and document metadata. Associates
+  scope-of-work files with canonical Projects and Clients.
+- [ ] **Postgres + Alembic** — move off SQLite for multi-user access and safe
+  schema migrations.
+
+### After — AI layer
+
+- [ ] **Text-to-SQL** — wire the `ask` command to Claude to turn any natural
+  language question into a SQL query against the canonical schema. The schema
+  and reports are already designed for this.
+- [ ] **Webhooks** — real-time sync instead of manual `project_db sync monday`.
+  Monday, QuickBooks, and CompanyCam all support webhooks.
+- [ ] **Web dashboard** — a simple read-only UI over the canonical DB for
+  non-technical users.
+- [ ] **RAG / document Q&A** — embed daily logs and documents into a vector
+  store so you can ask "what issues came up on the Rockland job last month?"
+
+---
+
+## Configuration
+
+All credentials go in `.env` (copy from `.env.example`):
 
 ```bash
-# 1. Install (editable, with dev deps)
-pip install -e ".[dev]"
+# Database — SQLite for local dev, Postgres for production
+PROJECT_DB_URL=sqlite:///./project_db.sqlite
+# PROJECT_DB_URL=postgresql+psycopg://user:pass@host:5432/project_db
 
-# 2. Initialize the DB (uses sqlite by default — see .env.example for Postgres)
-python -m project_db.cli init-db
+# Monday.com — required for sync monday
+MONDAY_API_TOKEN=...
 
-# 3. Run tests to confirm the identity layer works
-pytest -q
+# QuickBooks (v0.2)
+QUICKBOOKS_CLIENT_ID=
+QUICKBOOKS_CLIENT_SECRET=
 
-# 4. List available connectors
-python -m project_db.cli list-sources
+# CompanyCam (v0.2)
+COMPANYCAM_API_TOKEN=
 
-# 5. With a Monday API token in your env, run a sync
-export MONDAY_API_TOKEN=...
-python -m project_db.cli sync monday
+# Google Drive — path to service-account JSON (v0.2)
+GOOGLE_CREDENTIALS_PATH=
 
-# 6. Ask the AI assistant something
-python -m project_db.cli ask "what active projects do we have"
+# Anthropic — for AI text-to-SQL mode (v0.2)
+ANTHROPIC_API_KEY=
 ```
 
----
-
-## Architecture in one paragraph
-
-Each source system has a **Connector** that knows how to talk to its API. As
-records come in, the connector calls the **IdentityResolver**, which either
-finds an existing canonical entity (via the `ExternalId` mapping table or a
-**Matcher**) or creates a new one. Every canonical entity has a UUID that's
-ours, plus zero-or-more `ExternalId` rows linking it to its representations
-in Monday / QuickBooks / etc. The **AI Assistant** layer reads from canonical
-entities only and never touches source APIs directly.
-
-The whole point of this structure: **adding a new source = subclass
-`BaseConnector` + register it**. Everything else (schema, identity, AI) is
-unchanged.
+The `.env` file is gitignored and never committed. `project_db` finds it
+automatically from the package directory, so the command works from anywhere.
 
 ---
 
-## Status / what's done vs TODO
+## Tuning the Monday column mapping
 
-| Component | v0.1 status | Notes |
-|---|---|---|
-| Canonical schema | ✅ Implemented | Org, User, Client, Vendor, Property, Lead, Deal, Project, Task, DailyLog, Invoice, Document |
-| ExternalId mapping | ✅ Implemented | Composite uniqueness, mutable last_synced_at |
-| IdentityResolver | ✅ Implemented | resolve_or_create, lookup_external, get_external_ids |
-| Fuzzy matcher | ✅ Pluggable | NoMatcher default + ExactFieldMatcher |
-| BaseConnector | ✅ Implemented | SyncReport, success/failure tracking |
-| Monday connector | 🟡 Partial | Auth + board/item fetch works; column-value mapping for Client/Property linkage is stubbed |
-| CompanyCam connector | ⬜ TODO | |
-| QuickBooks connector | ⬜ TODO | |
-| Google Drive connector | ⬜ TODO | |
-| AI canned reports | ✅ 3 reports | active_projects, deal_pipeline_value, ar_aging |
-| AI text-to-SQL | ⬜ Stubbed | hook to Anthropic API |
-| AI RAG / embeddings | ⬜ Stubbed | needs pgvector + chunking pipeline |
-| Migrations (Alembic) | ⬜ TODO | currently using `Base.metadata.create_all` |
+If the auto-detected field assignments aren't right for a board, you can
+override them explicitly in `connector.py` under `DEFAULT_COLUMN_MAPPING`:
+
+```python
+DEFAULT_COLUMN_MAPPING = {
+    "Project": {
+        "text7": "client_name",       # force column text7 → client_name
+        "status8": "status_label",    # force column status8 → status
+    },
+}
+```
+
+Use `project_db inspect-board <board_id>` to find the exact column IDs.
 
 ---
 
-## Where to go from here
+## Development
 
-The next concrete steps, in order of value:
+```bash
+pip install -e ".[dev]"
+pytest -q                  # run identity resolver smoke tests
+```
 
-1. **Decide the open questions** in `docs/design-v0.1.md` — especially "who
-   creates a Project first" and "permissions model".
-2. **Finish Monday column-value mapping** so Projects link to real Clients
-   instead of an "Unknown Client" placeholder.
-3. **Add the QuickBooks connector.** Most leverage for finance reporting.
-4. **Swap sqlite for Postgres** on Supabase or Neon. Five-minute change.
-5. **Wire Alembic** for migrations before the schema starts drifting.
-6. **Stand up the AI text-to-SQL mode** once you have a few weeks of real
-   data and trust the schema.
-
-See `docs/adding-a-connector.md` for the playbook on step 3.
+See `docs/adding-a-connector.md` for how to add a new source system connector.
