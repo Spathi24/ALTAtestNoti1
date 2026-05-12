@@ -407,4 +407,3 @@ class MondayClient:
             logger.info(f"Deleted item {item_id} from board {board_id}")
             return True
         return False
-

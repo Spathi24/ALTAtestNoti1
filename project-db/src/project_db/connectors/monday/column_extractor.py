@@ -393,3 +393,5 @@ def _map_task_status(label: str) -> TaskStatus:
 def _map_lead_stage(label: str) -> LeadStage:
     key = label.strip().lower()
     return _LEAD_STAGE_MAP.get(key, LeadStage.NEW)
+
+

@@ -61,7 +61,7 @@ DEFAULT_BOARD_MAPPING: list[dict[str, Any]] = [
     {"pattern": r"(?i)\bleads?\b", "entity": "Lead"},
     {"pattern": r"(?i)\bdeals?\b", "entity": "Deal"},
     {"pattern": r"(?i)\bcontacts?\b|\baccounts?\b", "entity": "Client"},
-    # CRM "Client Projects" board: each item = one project
+    # CRM \"Client Projects\" board: each item = one project
     {"pattern": r"(?i)client\s+projects?", "entity": "Project"},
     # Address/job boards (e.g. "923 Rockland", "5768-5770 St Laurent"):
     # board = one Project, items = Tasks inside it.
@@ -72,6 +72,7 @@ DEFAULT_BOARD_MAPPING: list[dict[str, Any]] = [
 # even if their name doesn't match the address pattern above.
 PROJECT_MANAGEMENT_WORKSPACES: set[str] = {"Project Management"}
 
+
 # ---------------------------------------------------------------------------
 # Explicit column-id overrides per entity type (optional — heuristics usually
 # work, but you can force a mapping here if column titles are non-standard).
@@ -79,6 +80,7 @@ PROJECT_MANAGEMENT_WORKSPACES: set[str] = {"Project Management"}
 # ---------------------------------------------------------------------------
 
 DEFAULT_COLUMN_MAPPING: dict[str, dict[str, str]] = {
+
     "Project": {},
     "Lead": {},
     "Deal": {},
@@ -101,6 +103,7 @@ class MondayConnector(BaseConnector):
         self.column_mapping: dict[str, dict[str, str]] = self.config.get(
             "column_mapping", DEFAULT_COLUMN_MAPPING
         )
+
 
     # ------------------------------------------------------------------
     # Entry point
@@ -211,6 +214,7 @@ class MondayConnector(BaseConnector):
         # Boards in the Project Management workspace that don't match CRM patterns
         # are job/property boards — board itself is the project.
         if workspace_name in PROJECT_MANAGEMENT_WORKSPACES:
+
             for rule in self.board_mapping:
                 if re.search(rule["pattern"], name):
                     return rule["entity"]
@@ -577,4 +581,3 @@ class MondayConnector(BaseConnector):
         except Exception as exc:  # noqa: BLE001
             logger.error(f"sync_back failed: {exc}")
             return False
-
