@@ -1,14 +1,51 @@
-"""Centralized config — environment variable lookups in one place."""
+"""Centralized config — loads from .env then environment variables.
+
+Place a .env file in the project-db/ directory (next to pyproject.toml).
+A .env.example with all supported keys is checked in alongside it.
+
+Lookup order for .env:
+  1. Directory containing this file's package root (project-db/)
+  2. Current working directory
+  3. Each parent of cwd up to filesystem root
+"""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def _find_env_file() -> Path | None:
+    """Search for a .env file starting from the package root, then cwd upwards."""
+    # Package root = project-db/ (3 levels up from src/project_db/config.py)
+    pkg_root = Path(__file__).parent.parent.parent
+    candidate = pkg_root / ".env"
+    if candidate.exists():
+        return candidate
+
+    # Walk up from cwd
+    for directory in [Path.cwd(), *Path.cwd().parents]:
+        candidate = directory / ".env"
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+try:
+    from dotenv import load_dotenv
+
+    _env_file = _find_env_file()
+    if _env_file:
+        load_dotenv(_env_file, override=False)  # real env vars take precedence
+except ImportError:
+    pass  # python-dotenv not installed — rely purely on environment variables
 
 
 @dataclass(frozen=True)
 class Settings:
     db_url: str = os.environ.get("PROJECT_DB_URL", "sqlite:///./project_db.sqlite")
-    monday_api_token: str | None = os.environ.get("MONDAY_API_TOKEN", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjY1Njk1MDg3MSwiYWFpIjoxMSwidWlkIjoxMDM0NDExMTYsImlhZCI6IjIwMjYtMDUtMTFUMTg6MjI6NTEuMDAwWiIsInBlciI6Im1lOndyaXRlIiwiYWN0aWQiOjM0NzYzMjU2LCJyZ24iOiJ1c2UxIn0.Kiy50kVenGIEFLonMuY1JAIxaHQDFnvruCCgC7IGDAA")
+    monday_api_token: str | None = os.environ.get("MONDAY_API_TOKEN")
     companycam_api_token: str | None = os.environ.get("COMPANYCAM_API_TOKEN")
     quickbooks_client_id: str | None = os.environ.get("QUICKBOOKS_CLIENT_ID")
     quickbooks_client_secret: str | None = os.environ.get("QUICKBOOKS_CLIENT_SECRET")

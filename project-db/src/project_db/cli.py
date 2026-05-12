@@ -3,6 +3,8 @@
 Usage:
     python -m project_db.cli init-db
     python -m project_db.cli sync monday
+    python -m project_db.cli inspect-board <board_id>
+    python -m project_db.cli list-boards
     python -m project_db.cli ask "what active projects do we have?"
     python -m project_db.cli list-external Project <canonical-id>
 """
@@ -46,6 +48,9 @@ def cmd_init_db(_: argparse.Namespace) -> int:
             s.add(org)
             s.flush()
             print(f"Seeded default organization: {org.canonical_id}")
+        else:
+            org = s.query(Organization).first()
+            print(f"Organization already exists: {org.canonical_id}")
     return 0
 
 
@@ -74,6 +79,84 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("Errors:")
             for e in report.errors:
                 print(f"  - {e}")
+    return 0
+
+
+def cmd_list_boards(_: argparse.Namespace) -> int:
+    """List all Monday boards with their IDs — useful before running inspect-board."""
+    from project_db.config import settings
+    from project_db.connectors.monday.client import MondayClient
+
+    client = MondayClient(token=settings.monday_api_token)
+    boards = client.list_boards()
+    if not boards:
+        print("No boards found.")
+        return 0
+
+    print(f"{'ID':<15} {'Workspace':<25} {'State':<10} Name")
+    print("-" * 80)
+    for b in boards:
+        ws_name = (b.get("workspace") or {}).get("name", "—")
+        print(f"{b['id']:<15} {ws_name:<25} {b.get('state',''):<10} {b['name']}")
+    return 0
+
+
+def cmd_inspect_board(args: argparse.Namespace) -> int:
+    """Show a board's columns and sample items — use this to tune column mapping."""
+    from project_db.config import settings
+    from project_db.connectors.monday.client import MondayClient
+    from project_db.connectors.monday.column_extractor import ColumnExtractor
+
+    board_id = int(args.board_id)
+    client = MondayClient(token=settings.monday_api_token)
+
+    print(f"\nFetching board {board_id} …\n")
+
+    columns = client.list_board_columns(board_id)
+    if not columns:
+        print("No columns returned. Check the board ID.")
+        return 1
+
+    print(f"{'Column ID':<20} {'Type':<18} Title")
+    print("-" * 65)
+    for col in columns:
+        print(f"{col['id']:<20} {col['type']:<18} {col['title']}")
+
+    # Show what the heuristic extractor would assign each column
+    extractor = ColumnExtractor(columns)
+    assignments = {**extractor._heuristic}
+    if assignments:
+        print("\nHeuristic field assignments (auto-detected):")
+        for col_id, field_name in assignments.items():
+            title = extractor._col_meta[col_id]["title"]
+            print(f"  {col_id:<20} -> {field_name}  (title: {title!r})")
+    else:
+        print("\nNo columns matched heuristics — add explicit_mapping in connector config.")
+
+    # Sample items
+    print(f"\nFetching up to 5 sample items …")
+    items = client.list_items(board_id, limit=5)
+    if not items:
+        print("Board is empty.")
+        return 0
+
+    print(f"\n{'Item ID':<15} {'Group':<20} Name")
+    print("-" * 65)
+    for item in items[:5]:
+        group_title = (item.get("group") or {}).get("title", "—")
+        print(f"{item['id']:<15} {group_title:<20} {item['name']}")
+        # Show extracted fields
+        fields = extractor.extract(item.get("column_values") or [])
+        field_dict = {
+            k: v for k, v in vars(fields).items()
+            if v and v != [] and k != "unmatched"
+        }
+        if field_dict:
+            for k, v in field_dict.items():
+                print(f"    {k}: {v}")
+        if fields.unmatched:
+            print(f"    unmatched columns: {fields.unmatched}")
+
     return 0
 
 
@@ -115,10 +198,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("init-db", help="Create tables").set_defaults(func=cmd_init_db)
+    sub.add_parser("init-db", help="Create tables + seed org").set_defaults(func=cmd_init_db)
     sub.add_parser("list-sources", help="Show registered connectors").set_defaults(
         func=cmd_list_sources
     )
+    sub.add_parser("list-boards", help="List Monday boards with IDs").set_defaults(
+        func=cmd_list_boards
+    )
+
+    inspect = sub.add_parser(
+        "inspect-board",
+        help="Show board columns + sample item extraction (use before sync to tune mapping)",
+    )
+    inspect.add_argument("board_id", help="Monday board ID (from list-boards)")
+    inspect.set_defaults(func=cmd_inspect_board)
 
     sync = sub.add_parser("sync", help="Run a connector sync")
     sync.add_argument("source", help="e.g. monday")
