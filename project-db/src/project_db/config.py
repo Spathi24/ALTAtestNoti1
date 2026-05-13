@@ -49,8 +49,26 @@ class Settings:
     companycam_api_token: str | None = os.environ.get("COMPANYCAM_API_TOKEN")
     quickbooks_client_id: str | None = os.environ.get("QUICKBOOKS_CLIENT_ID")
     quickbooks_client_secret: str | None = os.environ.get("QUICKBOOKS_CLIENT_SECRET")
+    quickbooks_realm_id: str | None = os.environ.get("QUICKBOOKS_REALM_ID")
+    quickbooks_access_token: str | None = os.environ.get("QUICKBOOKS_ACCESS_TOKEN")
     google_credentials_path: str | None = os.environ.get("GOOGLE_CREDENTIALS_PATH")
     anthropic_api_key: str | None = os.environ.get("ANTHROPIC_API_KEY")
+
+    @property
+    def qb_client_id(self) -> str | None:
+        return self.quickbooks_client_id
+
+    @property
+    def qb_client_secret(self) -> str | None:
+        return self.quickbooks_client_secret
+
+    @property
+    def qb_realm_id(self) -> str | None:
+        return self.quickbooks_realm_id
+
+    @property
+    def qb_access_token(self) -> str | None:
+        return self.quickbooks_access_token
 
 
 settings = Settings()

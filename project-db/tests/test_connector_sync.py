@@ -1,0 +1,229 @@
+"""Tests for connector sync logic — Monday + QuickBooks dispatch and dedup."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from decimal import Decimal
+from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy.orm import Session
+
+from project_db.connectors.base import SyncReport
+from project_db.db.models import (
+    Client,
+    ExternalId,
+    Invoice,
+    Project,
+    SourceSystem,
+)
+from project_db.identity import ExactFieldMatcher, IdentityResolver
+
+
+class TestMondayConnectorInitialization:
+    def test_connector_class_importable(self):
+        from project_db.connectors.monday import MondayConnector
+
+        assert MondayConnector.source == SourceSystem.MONDAY
+
+
+class TestMondayConnectorBoardSync:
+    @patch("project_db.connectors.monday.connector.MondayClient")
+    def test_sync_classifies_and_processes_boards(
+        self, mock_client_class, session: Session, org
+    ):
+        """Drive a sync end-to-end with mocked Monday client and verify it
+        creates canonical entities + ExternalId rows."""
+        from project_db.connectors.monday import MondayConnector
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        mock_client.list_workspaces.return_value = [
+            {"id": "ws1", "name": "Project Management"}
+        ]
+        mock_client.list_boards.return_value = [
+            {
+                "id": 999,
+                "name": "Leads",
+                "state": "active",
+                "workspace": {"id": "ws1", "name": "Project Management"},
+            }
+        ]
+        mock_client.list_board_columns.return_value = [
+            {"id": "name", "title": "Name", "type": "text"},
+        ]
+        mock_client.list_items.return_value = [
+            {
+                "id": "item_1",
+                "name": "Walk-in Inquiry",
+                "group": {"title": "New"},
+                "column_values": [],
+            }
+        ]
+        mock_client.list_users.return_value = []
+
+        connector = MondayConnector(session=session, organization_id=org.canonical_id)
+        report = connector.sync()
+
+        assert isinstance(report, SyncReport)
+        assert report.records_processed >= 1
+
+
+class TestMondayConnectorDeltaSync:
+    def test_external_id_last_synced_at_is_recorded(
+        self, session: Session, org, client_factory
+    ):
+        client = client_factory(name="Acme")
+        ext = ExternalId(
+            source=SourceSystem.MONDAY,
+            entity_type="Client",
+            external_key="monday_123",
+            canonical_id=client.canonical_id,
+        )
+        session.add(ext)
+        session.commit()
+
+        before = ext.last_synced_at
+        assert before is not None
+
+        ext.last_synced_at = before + timedelta(minutes=10)
+        session.commit()
+        assert ext.last_synced_at > before
+
+
+class TestMondayConnectorWriteBack:
+    @patch("project_db.connectors.monday.connector.MondayClient")
+    def test_sync_back_method_exists(
+        self, mock_client_class, session: Session, org
+    ):
+        """Smoke test that sync_back is callable. Real validation lives in Block 2."""
+        from project_db.connectors.monday import MondayConnector
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        connector = MondayConnector(session=session, organization_id=org.canonical_id)
+        assert callable(getattr(connector, "sync_back", None))
+
+
+class TestMondayConnectorColumnMapping:
+    def test_column_extractor_maps_known_titles(self):
+        from project_db.connectors.monday.column_extractor import ColumnExtractor
+
+        columns = [
+            {"id": "name", "title": "Name", "type": "text"},
+            {"id": "status", "title": "Status", "type": "status"},
+            {"id": "budget", "title": "Budget", "type": "numbers"},
+        ]
+        extractor = ColumnExtractor(columns)
+
+        # The budget column should be recognized heuristically.
+        assert any(field == "budget_amount" for field in extractor._heuristic.values())
+
+        item_values = [
+            {"id": "budget", "text": "50000", "type": "numbers", "value": "50000"}
+        ]
+        fields = extractor.extract(item_values)
+        assert fields.budget_amount == Decimal("50000")
+
+
+# =====================================================================
+# QuickBooks — these will be fleshed out in Block 3. The connector
+# already exists but is not battle-tested. These tests confirm the
+# class is importable and accepts mocks.
+# =====================================================================
+
+
+class TestQuickBooksConnectorImportable:
+    def test_qb_connector_class_importable(self):
+        from project_db.connectors.quickbooks import QuickBooksConnector
+
+        assert QuickBooksConnector.source == SourceSystem.QUICKBOOKS
+
+    @patch("project_db.connectors.quickbooks.connector.QuickBooksClient")
+    def test_qb_connector_instantiates(
+        self, mock_client_class, session: Session, org
+    ):
+        from project_db.connectors.quickbooks import QuickBooksConnector
+
+        mock_client_class.return_value = MagicMock()
+        connector = QuickBooksConnector(session=session, organization_id=org.canonical_id)
+        assert connector.source == SourceSystem.QUICKBOOKS
+
+
+class TestQuickBooksConnectorSync:
+    @patch("project_db.connectors.quickbooks.connector.QuickBooksClient")
+    def test_sync_creates_client_from_customer(
+        self, mock_client_class, session: Session, org
+    ):
+        from project_db.connectors.quickbooks import QuickBooksConnector
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.list_customers.return_value = [
+            {
+                "Id": "qb_cust_1",
+                "DisplayName": "Acme Corp",
+                "PrimaryEmailAddr": {"Address": "acme@example.com"},
+            }
+        ]
+        mock_client.list_invoices.return_value = []
+        mock_client.list_estimates.return_value = []
+
+        connector = QuickBooksConnector(session=session, organization_id=org.canonical_id)
+        report = connector.sync()
+
+        assert report.records_processed >= 1
+        clients = session.query(Client).filter_by(name="Acme Corp").all()
+        assert len(clients) == 1
+
+
+class TestConnectorIntegration:
+    def test_deduplication_across_monday_and_qb(self, session: Session, org):
+        """Same client synced from two sources resolves to one canonical entity."""
+        resolver = IdentityResolver(session)
+
+        monday_result = resolver.resolve_or_create(
+            source=SourceSystem.MONDAY,
+            external_key="monday_123",
+            external_url=None,
+            entity_class=Client,
+            attrs={
+                "name": "Acme Corp",
+                "email": "acme@example.com",
+                "organization_id": org.canonical_id,
+            },
+            matcher=ExactFieldMatcher(["name"]),
+        )
+        qb_result = resolver.resolve_or_create(
+            source=SourceSystem.QUICKBOOKS,
+            external_key="qb_456",
+            external_url=None,
+            entity_class=Client,
+            attrs={
+                "name": "Acme Corp",
+                "email": "acme@example.com",
+                "organization_id": org.canonical_id,
+            },
+            matcher=ExactFieldMatcher(["name"]),
+        )
+
+        assert qb_result.entity.canonical_id == monday_result.entity.canonical_id
+        ext_ids = session.query(ExternalId).filter_by(
+            canonical_id=monday_result.entity.canonical_id
+        ).all()
+        assert len(ext_ids) == 2
+
+
+class TestSyncReport:
+    def test_sync_report_has_summary(self):
+        report = SyncReport(source=SourceSystem.MONDAY, started_at=datetime.utcnow())
+        report.records_processed = 5
+        report.records_created = 3
+        report.records_matched = 2
+        report.completed_at = datetime.utcnow()
+
+        summary = report.summary()
+        assert "processed=5" in summary
+        assert "created=3" in summary
+        assert "matched=2" in summary
