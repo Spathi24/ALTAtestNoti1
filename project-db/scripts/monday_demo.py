@@ -282,35 +282,10 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
             return
 
         print(f"\nMonday item: key={ext.external_key}  url={ext.external_url}")
-
-        # Resolve logical column names to actual Monday column IDs.
-        # "status" is a logical name; real column ID varies per board.
-        if "status" in field_updates:
-            from project_db.config import settings as _settings
-            from project_db.connectors.monday.client import MondayClient
-            item_id_for_lookup = int(ext.external_key)
-            client_tmp = MondayClient(token=_settings.monday_api_token)
-            board_id_tmp = None
-            try:
-                gql = "query ($ids: [ID!]!) { items(ids: $ids) { board { id } } }"
-                d = client_tmp.query(gql, {"ids": [item_id_for_lookup]})
-                items_tmp = d.get("items") or []
-                if items_tmp:
-                    board_id_tmp = int(items_tmp[0]["board"]["id"])
-            except Exception:
-                pass
-            if board_id_tmp:
-                cols = client_tmp.list_board_columns(board_id_tmp)
-                status_col = next(
-                    (c["id"] for c in cols if c.get("type") == "status" and "status" in c.get("title", "").lower()),
-                    None,
-                )
-                if status_col and status_col != "status":
-                    field_updates[status_col] = field_updates.pop("status")
-                    print(f"  Resolved 'status' -> column id '{status_col}'")
-
         print(f"Pushing column_values: {json.dumps(field_updates, indent=2)}")
 
+        # sync_back handles logical-name -> real-column-id resolution and
+        # parses board_id straight from the stored URL (no extra API call).
         connector = MondayConnector(session=session, organization_id=org.canonical_id)
         ok = connector.sync_back(entity, field_updates)
 

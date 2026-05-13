@@ -145,6 +145,22 @@ configuration.
 
 ---
 
+## Monday.com push / pull / add workflows
+
+For the full end-to-end workflow (pulling Monday data into the canonical DB,
+pushing changes back to Monday, creating new Monday items from the canonical
+side, troubleshooting), see **[docs/MONDAY_USAGE.md](docs/MONDAY_USAGE.md)**.
+
+Quick reference:
+
+```bash
+python scripts/monday_demo.py list-boards
+python scripts/monday_demo.py pull
+python scripts/monday_demo.py inspect
+python scripts/monday_demo.py push <canonical_uuid> status="Working on it"
+python scripts/monday_demo.py add-item <board_id> "New Item Name"
+```
+
 ## Exploration & Diagnostics
 
 Before syncing a board you haven't seen before, inspect it first:
@@ -385,9 +401,71 @@ Use `project_db inspect-board <board_id>` to find the exact column IDs.
 
 ## Development
 
+### Setup
+
 ```bash
+# Install with dev dependencies (includes pytest, coverage tools, etc)
 pip install -e ".[dev]"
-pytest -q                  # run identity resolver smoke tests
+
+# Install dev-only requirements
+pip install -r requirements-dev.txt
 ```
 
-See [adding-a-connector.md](docs/adding-a-connector.md) for how to add a new source system connector.
+### Running Tests
+
+The project includes a comprehensive test suite covering all features.
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage report
+pytest tests/ --cov=project_db --cov-report=html
+
+# Run specific test file
+pytest tests/test_db_models.py -v
+
+# Run specific test
+pytest tests/test_db_models.py::TestClientModel::test_create_client -v
+
+# Run tests and display print statements
+pytest tests/ -v -s
+```
+
+**Test coverage includes:**
+- ✅ All 17 database models and relationships
+- ✅ Monday.com client (queries, mutations, delta sync, complexity tracking)
+- ✅ QuickBooks client (queries, entity mapping, delta sync)
+- ✅ Sync logic (identity resolution, deduplication, sync workflows)
+- ✅ Identity resolution and fuzzy matching
+- ✅ AI assistant and report generation
+- ✅ CLI commands (init-db, sync, list-boards, inspect-board, ask, etc.)
+- ✅ Database sessions and transaction management
+
+See [tests/README.md](tests/README.md) for detailed testing documentation, fixtures, and examples.
+
+### Code Quality
+
+```bash
+# Format code
+black src/ tests/
+
+# Sort imports
+isort src/ tests/
+
+# Lint
+flake8 src/ tests/
+
+# Type checking
+mypy src/
+```
+
+### Development Workflow
+
+1. **Add a feature** in `src/project_db/`
+2. **Add tests** in `tests/test_*.py` (use fixtures from `conftest.py`)
+3. **Run tests** — `pytest tests/ -v`
+4. **Check coverage** — `pytest tests/ --cov=project_db`
+5. **Commit** with test-passing code
+
+See [docs/adding-a-connector.md](docs/adding-a-connector.md) for how to add a new source system connector.

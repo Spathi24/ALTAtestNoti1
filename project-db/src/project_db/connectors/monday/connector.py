@@ -311,7 +311,7 @@ class MondayConnector(BaseConnector):
         result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=str(item["id"]),
-            external_url=f"https://view.monday.com/{item['id']}",
+            external_url=f"https://view.monday.com/boards/{board['id']}/pulses/{item['id']}",
             entity_class=Project,
             attrs=attrs,
             matcher=ExactFieldMatcher(["name"]),
@@ -338,7 +338,7 @@ class MondayConnector(BaseConnector):
         result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=str(item["id"]),
-            external_url=f"https://view.monday.com/{item['id']}",
+            external_url=f"https://view.monday.com/boards/{board['id']}/pulses/{item['id']}",
             entity_class=Lead,
             attrs=attrs,
         )
@@ -365,7 +365,7 @@ class MondayConnector(BaseConnector):
         result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=str(item["id"]),
-            external_url=f"https://view.monday.com/{item['id']}",
+            external_url=f"https://view.monday.com/boards/{board['id']}/pulses/{item['id']}",
             entity_class=Deal,
             attrs=attrs,
             matcher=ExactFieldMatcher(["name"]),
@@ -392,7 +392,7 @@ class MondayConnector(BaseConnector):
         result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=str(item["id"]),
-            external_url=f"https://view.monday.com/{item['id']}",
+            external_url=f"https://view.monday.com/boards/{board['id']}/pulses/{item['id']}",
             entity_class=Client,
             attrs=attrs,
             matcher=ExactFieldMatcher(["name"]),
@@ -419,7 +419,7 @@ class MondayConnector(BaseConnector):
         project_result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=f"board:{board['id']}",
-            external_url=f"https://view.monday.com/{board['id']}",
+            external_url=f"https://view.monday.com/boards/{board['id']}",
             entity_class=Project,
             attrs=project_attrs,
             matcher=ExactFieldMatcher(["name"]),
@@ -433,7 +433,7 @@ class MondayConnector(BaseConnector):
                 continue
             try:
                 fields = extractor.extract(item.get("column_values") or [])
-                self._upsert_task(item, fields, project_id)
+                self._upsert_task(board, item, fields, project_id)
             except Exception as exc:  # noqa: BLE001
                 self._record_failure(
                     f"task item {item.get('id')} on board {board['name']!r}: {exc}"
@@ -441,6 +441,7 @@ class MondayConnector(BaseConnector):
 
     def _upsert_task(
         self,
+        board: dict[str, Any],
         item: dict[str, Any],
         fields: Any,
         project_id: Any,
@@ -456,7 +457,7 @@ class MondayConnector(BaseConnector):
         result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=str(item["id"]),
-            external_url=f"https://view.monday.com/{item['id']}",
+            external_url=f"https://view.monday.com/boards/{board['id']}/pulses/{item['id']}",
             entity_class=Task,
             attrs=attrs,
         )
@@ -486,16 +487,56 @@ class MondayConnector(BaseConnector):
     # Write-back: sync canonical changes back to Monday
     # ------------------------------------------------------------------
 
-    def _get_board_id_for_item(self, item_id: int) -> int | None:
-        """Ask Monday which board an item lives on."""
-        gql = "query ($ids: [ID!]!) { items(ids: $ids) { board { id } } }"
-        try:
-            data = self.client.query(gql, {"ids": [item_id]})
-            items = data.get("items") or []
-            if items:
-                return int(items[0]["board"]["id"])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("_get_board_id_for_item(%s) failed: %s", item_id, exc)
+    _URL_BOARD_RE = re.compile(r"/boards/(\d+)")
+
+    def _board_id_from_url(self, url: str | None) -> int | None:
+        """Extract board_id from a stored external_url. No API call."""
+        if not url:
+            return None
+        m = self._URL_BOARD_RE.search(url)
+        return int(m.group(1)) if m else None
+
+    def _resolve_column_id(self, board_id: int, logical_name: str) -> str | None:
+        """Map a logical field name like 'status' to the real Monday column id
+        for this specific board (cached in MondayClient).
+
+        Rules:
+          - If a real column with this exact id exists, use it as-is.
+          - Otherwise look for a column whose type/title hints at the role:
+              status   -> first column of type 'status' whose title contains 'status'
+              priority -> first column of type 'status' whose title contains 'priority'
+              date / due_date / timeline -> matching column types
+              budget   -> first 'numbers' column whose title contains 'budget'
+        """
+        cols = self.client.list_board_columns(board_id)  # cached
+        by_id = {c["id"]: c for c in cols}
+        if logical_name in by_id:
+            return logical_name
+
+        wanted = logical_name.lower()
+
+        def find(col_type: str, title_hint: str | None = None) -> str | None:
+            for c in cols:
+                if c.get("type") != col_type:
+                    continue
+                if title_hint and title_hint not in (c.get("title") or "").lower():
+                    continue
+                return c["id"]
+            return None
+
+        if wanted == "status":
+            return find("status", "status") or find("status")
+        if wanted == "priority":
+            return find("status", "priority")
+        if wanted in ("date", "due_date"):
+            return find("date")
+        if wanted == "timeline":
+            return find("timeline")
+        if wanted == "budget":
+            return find("numbers", "budget") or find("numbers")
+        if wanted == "name":
+            # 'name' isn't a column_value in Monday — caller should use a name mutation
+            return None
         return None
 
     def sync_back(
@@ -504,26 +545,16 @@ class MondayConnector(BaseConnector):
         field_updates: dict[str, Any],
     ) -> bool:
         """Push changes from canonical entity back to Monday.
-        
-        This enables ripple effects: when data changes in canonical DB (e.g., 
-        QB invoice created, CompanyCam deficiency added), we can update the 
-        corresponding Monday item.
-        
-        Args:
-            canonical_entity: The canonical entity object (Project, Lead, Deal, etc.)
-            field_updates: Dict mapping Monday column_id -> new value
-                          e.g., {"status": {"index": 1}, "text_column_id": "Updated"}
-        
-        Returns:
-            True if successful, False otherwise
-        
-        Example:
-            >>> project = session.query(Project).first()
-            >>> connector.sync_back(project, {"status": {"index": 2}})
-            True
+
+        ``field_updates`` keys may be EITHER real Monday column ids
+        (``project_status``) OR logical names (``status``, ``priority``,
+        ``budget``, ``date``, ``timeline``). Logical names get resolved to
+        the real per-board column id automatically.
+
+        Reads board_id from the stored ExternalId.external_url — no extra
+        Monday API call to find which board an item lives on.
         """
         try:
-            # Look up the Monday external key for this entity
             entity_type = canonical_entity.__class__.__name__
             ext_id = (
                 self.session.query(ExternalId)
@@ -534,56 +565,79 @@ class MondayConnector(BaseConnector):
                 )
                 .one_or_none()
             )
-            
             if not ext_id:
                 logger.warning(
-                    f"No Monday mapping for {entity_type} {canonical_entity.canonical_id}"
+                    "No Monday mapping for %s %s", entity_type, canonical_entity.canonical_id
                 )
                 return False
-            
-            # Extract board_id and item_id from external_key
-            # For ProjectBoard items, external_key is "board:{board_id}"
-            # For other items, it's just the item ID
-            try:
-                if ext_id.external_key.startswith("board:"):
-                    logger.debug(
-                        f"Cannot sync_back ProjectBoard items directly; "
-                        f"update tasks instead"
-                    )
-                    return False
-                item_id = int(ext_id.external_key)
-            except (ValueError, AttributeError):
+
+            # Parse item_id from external_key
+            if (ext_id.external_key or "").startswith("board:"):
                 logger.warning(
-                    f"Invalid external_key format: {ext_id.external_key}"
+                    "Cannot sync_back a ProjectBoard wrapper item; update its tasks instead"
                 )
                 return False
-            
-            # Look up board_id via API — view.monday.com URLs only carry the item_id
-            board_id = self._get_board_id_for_item(item_id)
-            if board_id is None:
-                logger.warning("Cannot find board_id for item %s via Monday API", item_id)
+            try:
+                item_id = int(ext_id.external_key)
+            except (ValueError, TypeError):
+                logger.warning("Invalid external_key format: %r", ext_id.external_key)
                 return False
-            
-            # Perform the update
+
+            # Parse board_id from URL (no API call!) — fallback to API only if
+            # we have a legacy row from before we embedded board_id in URL.
+            board_id = self._board_id_from_url(ext_id.external_url)
+            if board_id is None:
+                logger.info(
+                    "external_url has no board_id for item %s — falling back to API lookup. "
+                    "Re-run sync to update the URL.",
+                    item_id,
+                )
+                gql = "query ($ids: [ID!]!) { items(ids: $ids) { board { id } } }"
+                try:
+                    data = self.client.query(gql, {"ids": [item_id]})
+                    items = data.get("items") or []
+                    if items:
+                        board_id = int(items[0]["board"]["id"])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("API fallback to find board_id failed: %s", exc)
+                if board_id is None:
+                    return False
+
+            # Resolve logical column names to real per-board column ids.
+            resolved: dict[str, Any] = {}
+            for key, value in field_updates.items():
+                col_id = self._resolve_column_id(board_id, key)
+                if col_id is None:
+                    logger.warning(
+                        "Cannot resolve column %r on board %s — skipping", key, board_id
+                    )
+                    continue
+                resolved[col_id] = value
+
+            if not resolved:
+                logger.warning("sync_back: no resolvable column updates for item %s", item_id)
+                return False
+
             logger.info(
-                f"Syncing back {entity_type} {canonical_entity.canonical_id} "
-                f"to Monday item {item_id} on board {board_id}"
+                "Syncing back %s %s -> Monday item %s on board %s: %s",
+                entity_type,
+                canonical_entity.canonical_id,
+                item_id,
+                board_id,
+                list(resolved.keys()),
             )
-            
+
             result = self.client.change_multiple_column_values(
                 board_id=board_id,
                 item_id=item_id,
-                column_values=field_updates,
+                column_values=resolved,
             )
-            
             if result:
-                logger.info(f"Successfully synced back to Monday item {item_id}")
-                # Update the last_synced_at timestamp
                 ext_id.last_synced_at = datetime.utcnow()
                 self.session.commit()
                 return True
             return False
-            
+
         except Exception as exc:  # noqa: BLE001
-            logger.error(f"sync_back failed: {exc}")
+            logger.error("sync_back failed: %s", exc)
             return False

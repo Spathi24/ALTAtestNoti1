@@ -80,6 +80,10 @@ class IdentityResolver:
             existing.last_synced_at = datetime.utcnow()
             if payload_hash is not None:
                 existing.raw_payload_hash = payload_hash
+            # Refresh URL — connectors occasionally change URL format
+            # (e.g. v0.2 added board_id to Monday URLs).
+            if external_url is not None and existing.external_url != external_url:
+                existing.external_url = external_url
             # Update mutable attributes
             for key, value in attrs.items():
                 if hasattr(entity, key):

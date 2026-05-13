@@ -59,6 +59,11 @@ class MondayClient:
         )
         self.complexity_before: int | None = None
         self.complexity_after: int | None = None
+        # Per-instance cache so we don't re-fetch board columns on every push.
+        # Board columns change rarely (when someone edits a board) so caching
+        # for the life of the client is safe; if you need a refresh, make a
+        # new MondayClient or clear self._columns_cache.
+        self._columns_cache: dict[int, list[dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # Low-level runner with complexity tracking
@@ -138,11 +143,13 @@ class MondayClient:
     # ------------------------------------------------------------------
 
     def list_board_columns(self, board_id: int) -> list[dict[str, Any]]:
-        """Return every column definition for a board.
+        """Return every column definition for a board (cached per instance).
 
         Each dict: id, title, type, settings_str (JSON with label maps for
         status/dropdown columns).
         """
+        if board_id in self._columns_cache:
+            return self._columns_cache[board_id]
         gql = """
         query ($board_id: [ID!]!) {
           boards(ids: $board_id) {
@@ -152,7 +159,9 @@ class MondayClient:
         """
         data = self.query(gql, {"board_id": [board_id]})
         boards = data.get("boards") or []
-        return boards[0].get("columns") or [] if boards else []
+        cols = boards[0].get("columns") or [] if boards else []
+        self._columns_cache[board_id] = cols
+        return cols
 
     # ------------------------------------------------------------------
     # Items — full cursor pagination with delta sync support

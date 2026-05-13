@@ -132,15 +132,15 @@ def cmd_inspect_board(args: argparse.Namespace) -> int:
     else:
         print("\nNo columns matched heuristics — add explicit_mapping in connector config.")
 
-    print(f"\nFetching up to 5 sample items ...")
-    items = client.list_items(board_id, limit=5)
+    print(f"\nFetching all items on board {board_id} ...")
+    items = client.list_items(board_id)
     if not items:
         print("Board is empty.")
         return 0
 
-    print(f"\n{'Item ID':<15} {'Group':<20} Name")
+    print(f"\n{'Item ID':<15} {'Group':<20} Name  ({len(items)} items total)")
     print("-" * 65)
-    for item in items[:5]:
+    for item in items:
         group_title = (item.get("group") or {}).get("title", "-")
         print(f"{item['id']:<15} {group_title:<20} {item['name']}")
         fields = extractor.extract(item.get("column_values") or [])
