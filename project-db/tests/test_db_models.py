@@ -159,6 +159,17 @@ class TestTaskModel:
             title="Send proposal",
             status=TaskStatus.TODO,
             project_id=project.canonical_id,
+            group_title="Planning",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 3),
+            duration_days=Decimal("2.00"),
+            planned_effort=Decimal("8.00"),
+            effort_spent=Decimal("3.50"),
+            subcontractor="Raul",
+            supplier="BMR",
+            priority="High",
+            monday_status_label="Working on it",
+            source_columns_json="[]",
         )
         session.add(task)
         session.commit()
@@ -166,6 +177,9 @@ class TestTaskModel:
         assert task.canonical_id is not None
         assert task.title == "Send proposal"
         assert task.status == TaskStatus.TODO
+        assert task.group_title == "Planning"
+        assert task.subcontractor == "Raul"
+        assert task.planned_effort == Decimal("8.00")
 
 
 class TestUserModel:

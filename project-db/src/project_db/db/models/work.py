@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Column, Date, Enum as SAEnum, ForeignKey, Numeric, String
+from sqlalchemy import Boolean, Column, Date, Enum as SAEnum, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
@@ -63,8 +63,20 @@ class Task(Base, CanonicalMixin):
     status = Column(
         SAEnum(TaskStatus), nullable=False, default=TaskStatus.TODO
     )
+    monday_status_label = Column(String, nullable=True)
+    priority = Column(String, nullable=True)
+    group_title = Column(String, nullable=True)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
     due_date = Column(Date, nullable=True)
+    duration_days = Column(Numeric(10, 2), nullable=True)
+    planned_effort = Column(Numeric(10, 2), nullable=True)
+    effort_spent = Column(Numeric(10, 2), nullable=True)
+    subcontractor = Column(String, nullable=True)
+    supplier = Column(String, nullable=True)
     completed_at = Column(Date, nullable=True)
+    is_subitem = Column(Boolean, nullable=False, default=False)
+    source_columns_json = Column(Text, nullable=True)
 
     project_id = Column(
         UUID(as_uuid=True),
@@ -74,6 +86,11 @@ class Task(Base, CanonicalMixin):
     assignee_id = Column(
         UUID(as_uuid=True),
         ForeignKey("user.canonical_id"),
+        nullable=True,
+    )
+    parent_task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("task.canonical_id"),
         nullable=True,
     )
 

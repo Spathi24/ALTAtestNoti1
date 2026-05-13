@@ -172,48 +172,98 @@ class MondayClient:
         board_id: int,
         limit: int = PAGE_LIMIT,
         updated_since: datetime | None = None,
+        include_subitems: bool = False,
     ) -> list[dict[str, Any]]:
-        """Fetch items on a board, optionally filtering by updated_at timestamp.
-        
-        If updated_since is provided, only returns items updated after that time
-        (delta sync). This dramatically reduces API cost for large boards.
-        
-        Always follows cursor pages automatically.
+        """Fetch items on a board with explicit board-column values.
+
+        Monday's API can return an incomplete/default set of column_values when
+        the query does not name the columns. We first fetch the board schema,
+        then request column_values(ids: $column_ids) so Status, Timeline,
+        Duration, Priority, etc. are actually included when present on the board.
+
+        updated_since is intentionally not pushed into items_page because
+        API-Version 2026-07 does not support an updated_after argument there.
         """
         if updated_since:
             logger.debug(
                 "list_items board=%s: updated_since noted, doing full fetch "
-                "(items_page has no updated_after arg in API-Version 2026-07)",
+                "(items_page has no updated_after arg in API-Version %s)",
                 board_id,
+                API_VERSION,
             )
 
+        columns = self.list_board_columns(board_id)
+        column_ids = [c["id"] for c in columns if c.get("id")]
+        if not column_ids:
+            logger.warning("list_items board=%s: no board columns returned", board_id)
+
+        column_value_fields = """
+                id type text value
+                column { id title type }
+                ... on StatusValue { label index is_done }
+                ... on TimelineValue { from to visualization_type }
+                ... on NumbersValue { number symbol }
+                ... on PeopleValue { persons_and_teams { id kind } }
+                ... on BoardRelationValue { display_value linked_item_ids }
+                ... on DependencyValue { display_value linked_item_ids }
+                ... on MirrorValue { display_value }
+                ... on SubtasksValue { display_value subitems_ids }
+        """
+
+        # Do NOT filter subitem column_values by the parent board's column_ids.
+        # Subitems can have their own hidden subitem-board schema, so parent ids
+        # would incorrectly suppress subitem values.
+        subitem_fields = ""
+        if include_subitems:
+            subitem_fields = """
+                subitems {
+                  id name state created_at updated_at
+                  parent_item { id name }
+                  column_values {
+                    __COLUMN_VALUE_FIELDS__
+                  }
+                }
+            """.replace("__COLUMN_VALUE_FIELDS__", column_value_fields)
+
         first_page_gql = """
-        query ($board_id: [ID!]!, $limit: Int!) {
+        query ($board_id: [ID!]!, $limit: Int!, $column_ids: [String!]) {
           boards(ids: $board_id) {
             items_page(limit: $limit) {
               cursor
               items {
                 id name state created_at updated_at
                 group { id title }
-                column_values { id type text value }
+                column_values(ids: $column_ids) {
+                  __COLUMN_VALUE_FIELDS__
+                }
+                __SUBITEM_FIELDS__
               }
             }
           }
         }
-        """
+        """.replace("__COLUMN_VALUE_FIELDS__", column_value_fields).replace(
+            "__SUBITEM_FIELDS__", subitem_fields
+        )
         next_page_gql = """
-        query ($cursor: String!, $limit: Int!) {
+        query ($cursor: String!, $limit: Int!, $column_ids: [String!]) {
           next_items_page(cursor: $cursor, limit: $limit) {
             cursor
             items {
               id name state created_at updated_at
               group { id title }
-              column_values { id type text value }
+              column_values(ids: $column_ids) {
+                __COLUMN_VALUE_FIELDS__
+              }
+              __SUBITEM_FIELDS__
             }
           }
         }
-        """
-        data = self.query(first_page_gql, {"board_id": [board_id], "limit": limit})
+        """.replace("__COLUMN_VALUE_FIELDS__", column_value_fields).replace(
+            "__SUBITEM_FIELDS__", subitem_fields
+        )
+
+        variables = {"board_id": [board_id], "limit": limit, "column_ids": column_ids}
+        data = self.query(first_page_gql, variables)
         boards = data.get("boards") or []
         if not boards:
             return []
@@ -223,7 +273,10 @@ class MondayClient:
         cursor = page.get("cursor")
 
         while cursor:
-            data = self.query(next_page_gql, {"cursor": cursor, "limit": limit})
+            data = self.query(
+                next_page_gql,
+                {"cursor": cursor, "limit": limit, "column_ids": column_ids},
+            )
             page = data.get("next_items_page") or {}
             batch = page.get("items") or []
             all_items.extend(batch)
@@ -232,12 +285,104 @@ class MondayClient:
                 break
 
         logger.debug(
-            "list_items board=%s%s -> %d items total",
+            "list_items board=%s%s -> %d items total; requested %d columns",
             board_id,
-            " (delta)" if updated_since else "",
+            " (delta/full-fetch fallback)" if updated_since else "",
             len(all_items),
+            len(column_ids),
         )
         return all_items
+
+    # ------------------------------------------------------------------
+    # Mirror-aware item fetch
+    #
+    # In a portfolio/sub-board setup, the task board exposes columns named
+    # `project_status`, `project_timeline`, etc. but those columns are
+    # EMPTY at the row level -- their values live on the linked portfolio
+    # item as `mirror` columns containing per-task `mirrored_items`.
+    #
+    # `get_items_with_mirror_values` follows the link the other way: feed
+    # in a list of portfolio item IDs and Monday returns each one's mirror
+    # columns with the mirrored task values inline.
+    # ------------------------------------------------------------------
+
+    # Monday caps `items(ids: [...])` at 100 per request. Anything larger
+    # has to be chunked.
+    _ITEMS_BY_ID_CHUNK = 100
+
+    def get_items_with_mirror_values(
+        self,
+        item_ids: list[int | str],
+    ) -> list[dict[str, Any]]:
+        """Fetch items by id, including MirrorValue.mirrored_items.
+
+        Used to read mirror columns on a portfolio board where each mirror
+        column proxies a real value from a linked task board. Automatically
+        chunks the request to stay under Monday's 100-id cap on
+        `items(ids: [...])`.
+        """
+        if not item_ids:
+            return []
+
+        column_value_fields = """
+            id
+            type
+            text
+            value
+            column { id title type }
+
+            ... on StatusValue   { label index is_done }
+            ... on TimelineValue { from to visualization_type }
+            ... on NumbersValue  { number symbol }
+            ... on DateValue     { date time }
+
+            ... on BoardRelationValue { display_value linked_item_ids }
+            ... on DependencyValue   { display_value linked_item_ids }
+
+            ... on MirrorValue {
+              display_value
+              mirrored_items {
+                linked_item {
+                  id
+                  name
+                  board { id name }
+                }
+                mirrored_value {
+                  ... on StatusValue   { label index is_done }
+                  ... on TimelineValue { from to visualization_type }
+                  ... on NumbersValue  { number symbol }
+                  ... on DateValue     { date time }
+                  ... on BoardRelationValue { display_value linked_item_ids }
+                  ... on MirrorValue       { display_value }
+                }
+              }
+            }
+        """
+
+        gql = f"""
+        query ($item_ids: [ID!]!) {{
+          items(ids: $item_ids) {{
+            id
+            name
+            board {{ id name }}
+            group {{ id title }}
+            column_values {{
+              {column_value_fields}
+            }}
+          }}
+        }}
+        """
+
+        all_ids = [str(i) for i in item_ids]
+        chunks = [
+            all_ids[i : i + self._ITEMS_BY_ID_CHUNK]
+            for i in range(0, len(all_ids), self._ITEMS_BY_ID_CHUNK)
+        ]
+        out: list[dict[str, Any]] = []
+        for chunk in chunks:
+            data = self.query(gql, {"item_ids": chunk})
+            out.extend(data.get("items") or [])
+        return out
 
     # ------------------------------------------------------------------
     # Users

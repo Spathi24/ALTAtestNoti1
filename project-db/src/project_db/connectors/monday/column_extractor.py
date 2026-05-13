@@ -40,12 +40,18 @@ logger = logging.getLogger(__name__)
 _TITLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # client / account -- check before "value" so "Account Value" goes here first
     (re.compile(r"\bclient\b|\bcustomer\b|\baccounts?\b|\bcontacts?\b", re.I), "client_name"),
+    (re.compile(r"\bpriority\b", re.I), "priority"),
     # status (stage, phase -- but NOT "priority" which is a separate concern)
     (re.compile(r"\bstatus\b|\bstage\b|\bphase\b|\bpipeline\b", re.I), "status_label"),
     # dates -- more specific patterns first
     (re.compile(r"start\s*date|kick.?off|\bbegin\b", re.I), "start_date"),
     (re.compile(r"end\s*date|due\s*date|deadline|completion\s*date|close\s*date|expected.*close", re.I), "end_date"),
     (re.compile(r"\btimeline\b", re.I), "timeline"),
+    (re.compile(r"\bduration\b", re.I), "duration_days"),
+    (re.compile(r"planned\s*effort|estimated\s*effort|estimate\s*hours?", re.I), "planned_effort"),
+    (re.compile(r"effort\s*spent|actual\s*effort|time\s*spent|hours?\s*spent", re.I), "effort_spent"),
+    (re.compile(r"\bsubcontractors?\b|\bsub[-\s]?contractors?\b", re.I), "subcontractor"),
+    (re.compile(r"\bsuppliers?\b", re.I), "supplier"),
     # money -- word boundaries prevent "subcontractor" matching "contract"
     (re.compile(r"\bbudget\b|\bestimate\b", re.I), "budget_amount"),
     (re.compile(r"\bcontract\b|\bquote\b|\bprice\b|\bdeal\s+value\b|\bcontract\s+value\b", re.I), "contract_amount"),
@@ -87,6 +93,7 @@ _PROJECT_STATUS_MAP: dict[str, ProjectStatus] = {
     "new": ProjectStatus.PROPOSED,
     "not started": ProjectStatus.PROPOSED,
     "pending": ProjectStatus.PROPOSED,
+    "upcoming": ProjectStatus.PROPOSED,
 }
 
 # Monday status label -> TaskStatus (for task items within a ProjectBoard)
@@ -105,6 +112,7 @@ _TASK_STATUS_MAP: dict[str, TaskStatus] = {
     "not started": TaskStatus.TODO,
     "pending": TaskStatus.TODO,
     "new": TaskStatus.TODO,
+    "upcoming": TaskStatus.TODO,
     "to do": TaskStatus.TODO,
     "todo": TaskStatus.TODO,
 }
@@ -143,6 +151,13 @@ class ExtractedFields:
     email: str | None = None
     phone: str | None = None
     notes: str | None = None
+    status_label: str | None = None
+    priority: str | None = None
+    duration_days: float | None = None
+    planned_effort: float | None = None
+    effort_spent: float | None = None
+    subcontractor: str | None = None
+    supplier: str | None = None
     # Monday user IDs of assigned people (resolved to User later)
     assigned_monday_user_ids: list[str] = field(default_factory=list)
     # Everything that didn't match a known field (for debugging)
@@ -202,7 +217,7 @@ class ColumnExtractor:
                     result.unmatched[col_id] = text
                 continue
 
-            parsed_value = _parse_value(col_type, text, raw_value)
+            parsed_value = _parse_value(col_type, text, raw_value, cv)
 
             if target_field == "client_name":
                 result.client_name = _as_str(parsed_value) or None
@@ -210,9 +225,13 @@ class ColumnExtractor:
             elif target_field == "status_label":
                 label = _as_str(parsed_value)
                 if label:
+                    result.status_label = label
                     result.status = _map_project_status(label)
                     result.task_status = _map_task_status(label)
                     result.lead_stage = _map_lead_stage(label)
+
+            elif target_field == "priority":
+                result.priority = _as_str(parsed_value) or None
 
             elif target_field == "probability":
                 result.probability = _as_float(parsed_value)
@@ -227,6 +246,21 @@ class ColumnExtractor:
                 if isinstance(parsed_value, dict):
                     result.start_date = result.start_date or parsed_value.get("from_date")
                     result.end_date = result.end_date or parsed_value.get("to_date")
+
+            elif target_field == "duration_days":
+                result.duration_days = _as_float(parsed_value)
+
+            elif target_field == "planned_effort":
+                result.planned_effort = _as_float(parsed_value)
+
+            elif target_field == "effort_spent":
+                result.effort_spent = _as_float(parsed_value)
+
+            elif target_field == "subcontractor":
+                result.subcontractor = _as_str(parsed_value) or None
+
+            elif target_field == "supplier":
+                result.supplier = _as_str(parsed_value) or None
 
             elif target_field == "budget_amount":
                 result.budget_amount = _as_decimal(parsed_value)
@@ -257,8 +291,14 @@ class ColumnExtractor:
 # Per-type value parsers
 # ---------------------------------------------------------------------------
 
-def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
+def _parse_value(
+    col_type: str,
+    text: str,
+    raw_value: Any,
+    column_value: dict[str, Any] | None = None,
+) -> Any:
     """Parse a column value into a Python-native type based on col_type."""
+    column_value = column_value or {}
     value_str = raw_value if isinstance(raw_value, str) else None
     parsed: Any = None
     if value_str:
@@ -273,9 +313,13 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
         return text
 
     if col_type == "numbers":
+        if column_value.get("number") is not None:
+            return str(column_value["number"])
         return _coerce_number(text) or _coerce_number(str(parsed))
 
     if col_type == "status":
+        if column_value.get("label"):
+            return column_value["label"]
         if isinstance(parsed, dict):
             return parsed.get("label") or text
         return text
@@ -292,6 +336,11 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
         return _parse_date_str(text)
 
     if col_type == "timeline":
+        if column_value.get("from") or column_value.get("to"):
+            return {
+                "from_date": _parse_date_str(column_value.get("from", "")),
+                "to_date": _parse_date_str(column_value.get("to", "")),
+            }
         if isinstance(parsed, dict):
             return {
                 "from_date": _parse_date_str(parsed.get("from", "")),
@@ -315,10 +364,19 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
         return text
 
     if col_type == "people":
+        if column_value.get("persons_and_teams"):
+            return [
+                str(p["id"])
+                for p in column_value["persons_and_teams"]
+                if p.get("kind") == "person"
+            ]
         if isinstance(parsed, dict):
             persons = parsed.get("personsAndTeams") or []
             return [str(p["id"]) for p in persons if p.get("kind") == "person"]
         return []
+
+    if col_type in ("mirror", "board_relation", "dependency", "subtasks"):
+        return column_value.get("display_value") or text or parsed
 
     if col_type == "link":
         if isinstance(parsed, dict):

@@ -18,7 +18,7 @@ import uuid
 
 from project_db.ai import AiAssistant
 from project_db.connectors import available_sources, get_connector_class
-from project_db.db import Base, get_engine, session_scope
+from project_db.db import Base, ensure_sqlite_schema, get_engine, session_scope
 from project_db.db.models import (  # noqa: F401 — needed for metadata to know about tables
     Client,
     DailyLog,
@@ -41,6 +41,7 @@ def cmd_init_db(_: argparse.Namespace) -> int:
     """Create all tables and seed one Organization row if empty."""
     engine = get_engine()
     Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
     print("Tables created.")
     with session_scope() as s:
         if s.query(Organization).count() == 0:
@@ -66,6 +67,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
     except NotImplementedError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
 
     with session_scope() as s:
         org = s.query(Organization).first()

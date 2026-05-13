@@ -25,8 +25,10 @@ Write-back capability:
 from __future__ import annotations
 
 import logging
+import json
 import re
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import desc, func
@@ -86,6 +88,234 @@ DEFAULT_COLUMN_MAPPING: dict[str, dict[str, str]] = {
     "Deal": {},
     "Client": {},
 }
+
+
+# ---------------------------------------------------------------------------
+# Portfolio mirror overlay
+#
+# Construction-side task boards (e.g. "923 Rockland") often store the real
+# status / timeline for each task as MIRROR columns on a separate PORTFOLIO
+# item that the task is linked to via a board_relation column. Those mirror
+# columns contain `mirrored_items` keyed by task id.
+#
+# `apply_portfolio_mirror_overlay` walks the link in reverse, fetches the
+# portfolio items, and merges their mirrored values back into each source
+# task as synthetic column_values so the existing ColumnExtractor sees them
+# the same way it sees native columns.
+# ---------------------------------------------------------------------------
+
+# portfolio column id -> (synthetic task-board column id, title, type)
+MIRROR_COLUMN_MAP: dict[str, tuple[str, str, str]] = {
+    "portfolio_project_progress":         ("project_status",   "Status",   "status"),
+    "portfolio_project_actual_timeline":  ("project_timeline", "Timeline", "timeline"),
+}
+# Fallback when column ids differ across portfolios.
+MIRROR_TITLE_MAP: dict[str, tuple[str, str, str]] = {
+    "project progress": ("project_status",   "Status",   "status"),
+    "progress":         ("project_status",   "Status",   "status"),
+    "actual timeline":  ("project_timeline", "Timeline", "timeline"),
+}
+
+
+def _collect_linked_item_ids(items: list[dict[str, Any]]) -> list[str]:
+    """De-duplicated, ordered list of board_relation linked_item_ids."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        for cv in item.get("column_values") or []:
+            if cv.get("type") not in ("board_relation", "dependency"):
+                continue
+            for raw_id in cv.get("linked_item_ids") or []:
+                sid = str(raw_id)
+                if sid not in seen:
+                    seen.add(sid)
+                    ordered.append(sid)
+    return ordered
+
+
+def _synthetic_column_value(
+    *,
+    synthetic_id: str,
+    synthetic_title: str,
+    synthetic_type: str,
+    mirrored_value: dict[str, Any],
+    portfolio_item_id: Any,
+    portfolio_column_id: str,
+) -> dict[str, Any] | None:
+    """Shape a mirrored value into a normal Monday column_value dict."""
+    source = {
+        "kind": "mirror",
+        "linked_item_id": portfolio_item_id,
+        "mirror_column_id": portfolio_column_id,
+    }
+
+    if synthetic_type == "status":
+        label = mirrored_value.get("label")
+        if not label:
+            return None
+        return {
+            "id": synthetic_id,
+            "type": "status",
+            "text": label,
+            "value": None,
+            "column": {"id": synthetic_id, "title": synthetic_title, "type": "status"},
+            "label": label,
+            "index": mirrored_value.get("index"),
+            "is_done": mirrored_value.get("is_done"),
+            "_source": source,
+        }
+
+    if synthetic_type == "timeline":
+        start = mirrored_value.get("from")
+        end = mirrored_value.get("to")
+        if not start and not end:
+            return None
+        start_date = (start or "")[:10] or None
+        end_date = (end or "")[:10] or None
+        if start_date and end_date:
+            text = f"{start_date} - {end_date}"
+        else:
+            text = start_date or end_date or ""
+        return {
+            "id": synthetic_id,
+            "type": "timeline",
+            "text": text,
+            "value": None,
+            "column": {"id": synthetic_id, "title": synthetic_title, "type": "timeline"},
+            "from": start_date,
+            "to": end_date,
+            "visualization_type": mirrored_value.get("visualization_type"),
+            "_source": source,
+        }
+
+    return None
+
+
+def build_task_mirror_overlay(
+    linked_items: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Return {task_item_id: [synthetic column_values]} from mirror columns."""
+    overlay: dict[str, list[dict[str, Any]]] = {}
+
+    for linked_item in linked_items:
+        linked_id = linked_item.get("id")
+        for cv in linked_item.get("column_values") or []:
+            if cv.get("type") != "mirror":
+                continue
+            col_id = cv.get("id") or ""
+            column_meta = cv.get("column") or {}
+            title = (column_meta.get("title") or "").strip().lower()
+
+            mapping = MIRROR_COLUMN_MAP.get(col_id) or MIRROR_TITLE_MAP.get(title)
+            if mapping is None:
+                continue
+            synthetic_id, synthetic_title, synthetic_type = mapping
+
+            for mirrored in cv.get("mirrored_items") or []:
+                task = mirrored.get("linked_item") or {}
+                task_id = str(task.get("id") or "")
+                if not task_id:
+                    continue
+                synthetic = _synthetic_column_value(
+                    synthetic_id=synthetic_id,
+                    synthetic_title=synthetic_title,
+                    synthetic_type=synthetic_type,
+                    mirrored_value=mirrored.get("mirrored_value") or {},
+                    portfolio_item_id=linked_id,
+                    portfolio_column_id=col_id,
+                )
+                if synthetic is None:
+                    continue
+                overlay.setdefault(task_id, []).append(synthetic)
+
+    return overlay
+
+
+def apply_portfolio_mirror_overlay(
+    client: MondayClient,
+    items: list[dict[str, Any]],
+    *,
+    board: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Enrich task items with mirror-column values from linked portfolio items.
+
+    For each task, follow its board_relation links, fetch those portfolio
+    items, and append synthetic column_values (status, timeline, etc.) for
+    each mirror column on the portfolio item that points back to this task.
+
+    Returns a NEW list. Original items are not mutated. If no tasks link
+    anywhere, returns the input list unchanged.
+    """
+    linked_ids = _collect_linked_item_ids(items)
+    if not linked_ids:
+        return items
+
+    try:
+        linked_items = client.get_items_with_mirror_values(linked_ids)
+    except Exception as exc:  # noqa: BLE001
+        board_label = (board or {}).get("name") or (board or {}).get("id")
+        logger.warning(
+            "Mirror overlay fetch failed (board=%s): %s -- continuing without",
+            board_label,
+            exc,
+        )
+        return items
+
+    overlay = build_task_mirror_overlay(linked_items)
+    if not overlay:
+        return items
+
+    enriched: list[dict[str, Any]] = []
+    injected = 0
+    for item in items:
+        task_id = str(item.get("id") or "")
+        extra = overlay.get(task_id) or []
+        if not extra:
+            enriched.append(item)
+            continue
+        existing_cvs = list(item.get("column_values") or [])
+        existing_ids = {cv.get("id") for cv in existing_cvs}
+        # Only inject for ids the row doesn't already populate. Native data
+        # always wins; the overlay is just a backfill.
+        additions = [cv for cv in extra if cv.get("id") not in existing_ids]
+        if not additions:
+            enriched.append(item)
+            continue
+        new_item = dict(item)
+        new_item["column_values"] = existing_cvs + additions
+        enriched.append(new_item)
+        injected += 1
+
+    if injected:
+        board_label = (board or {}).get("name") or (board or {}).get("id") or "<unknown>"
+        logger.info(
+            "Mirror overlay: enriched %d/%d tasks on board %r from %d portfolio item(s)",
+            injected,
+            len(items),
+            board_label,
+            len(linked_items),
+        )
+    return enriched
+
+
+def _column_values_json(column_values: list[dict[str, Any]]) -> str:
+    """Compact JSON snapshot of Monday column values for diagnostics."""
+    keep: list[dict[str, Any]] = []
+    for cv in column_values:
+        column = cv.get("column") or {}
+        keep.append({
+            "id": cv.get("id"),
+            "title": column.get("title"),
+            "type": cv.get("type"),
+            "text": cv.get("text"),
+            "value": cv.get("value"),
+            "label": cv.get("label"),
+            "number": cv.get("number"),
+            "from": cv.get("from"),
+            "to": cv.get("to"),
+            "display_value": cv.get("display_value"),
+        })
+    return json.dumps(keep, default=str, separators=(",", ":"))
 
 
 class MondayConnector(BaseConnector):
@@ -249,7 +479,11 @@ class MondayConnector(BaseConnector):
                 last_sync.isoformat(),
             )
         
-        items = self.client.list_items(board_id, updated_since=last_sync)
+        items = self.client.list_items(
+            board_id,
+            updated_since=last_sync,
+            include_subitems=(entity_type == "ProjectBoard"),
+        )
         
         logger.info(
             "  board %r -> %s -- %d items%s, %d columns",
@@ -409,7 +643,14 @@ class MondayConnector(BaseConnector):
         column_defs: list[dict[str, Any]],
         items: list[dict[str, Any]],
     ) -> None:
-        """Create/update one Project from the board, then sync items as Tasks."""
+        """Create/update one Project from the board, then sync items as Tasks.
+
+        Many tasks on these boards have their real status/timeline stored
+        as mirror columns on a linked PORTFOLIO item (typically on a parent
+        "portfolio" board like Rockland). Before extracting fields, we
+        follow each task's board_relation links, fetch those portfolio
+        items, and overlay the mirrored values back onto the source tasks.
+        """
         project_attrs: dict[str, Any] = {
             "name": board["name"],
             "code": f"MONDAY-BOARD-{board['id']}",
@@ -427,17 +668,45 @@ class MondayConnector(BaseConnector):
         self._record_result(project_result.was_created, project_result.was_matched)
         project_id = project_result.entity.canonical_id
 
+        # Overlay mirror-column values from any linked portfolio items.
+        items = self._apply_portfolio_mirror_overlay(board, items)
+
         extractor = ColumnExtractor(column_defs)
         for item in items:
             if item.get("state") == "deleted":
                 continue
             try:
                 fields = extractor.extract(item.get("column_values") or [])
-                self._upsert_task(board, item, fields, project_id)
+                parent_task_id = self._upsert_task(board, item, fields, project_id)
+                for subitem in item.get("subitems") or []:
+                    if subitem.get("state") == "deleted":
+                        continue
+                    sub_fields = extractor.extract(subitem.get("column_values") or [])
+                    self._upsert_task(
+                        board,
+                        subitem,
+                        sub_fields,
+                        project_id,
+                        parent_task_id=parent_task_id,
+                        parent_group_title=(item.get("group") or {}).get("title", ""),
+                    )
             except Exception as exc:  # noqa: BLE001
                 self._record_failure(
                     f"task item {item.get('id')} on board {board['name']!r}: {exc}"
                 )
+
+    # ------------------------------------------------------------------
+    # Portfolio mirror overlay (thin wrappers around module-level helpers
+    # so the optimizer / debug scripts can reuse the logic without going
+    # through a connector instance + DB session).
+    # ------------------------------------------------------------------
+
+    def _apply_portfolio_mirror_overlay(
+        self,
+        board: dict[str, Any],
+        items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return apply_portfolio_mirror_overlay(self.client, items, board=board)
 
     def _upsert_task(
         self,
@@ -445,14 +714,42 @@ class MondayConnector(BaseConnector):
         item: dict[str, Any],
         fields: Any,
         project_id: Any,
-    ) -> None:
+        parent_task_id: Any | None = None,
+        parent_group_title: str | None = None,
+    ) -> Any:
+        group_title = (item.get("group") or {}).get("title") or parent_group_title
         attrs: dict[str, Any] = {
             "title": item["name"],
             "status": fields.task_status or TaskStatus.TODO,
             "project_id": project_id,
+            "group_title": group_title,
+            "is_subitem": parent_task_id is not None,
+            "parent_task_id": parent_task_id,
+            "source_columns_json": _column_values_json(item.get("column_values") or []),
         }
+        if fields.status_label:
+            attrs["monday_status_label"] = fields.status_label
+        if fields.priority:
+            attrs["priority"] = fields.priority
+        if fields.start_date:
+            attrs["start_date"] = fields.start_date
+        if fields.end_date:
+            attrs["end_date"] = fields.end_date
         if fields.end_date:
             attrs["due_date"] = fields.end_date
+        duration_days = fields.duration_days
+        if duration_days is None and fields.start_date and fields.end_date:
+            duration_days = float((fields.end_date - fields.start_date).days) or 1.0
+        if duration_days is not None:
+            attrs["duration_days"] = Decimal(str(duration_days))
+        if fields.planned_effort is not None:
+            attrs["planned_effort"] = Decimal(str(fields.planned_effort))
+        if fields.effort_spent is not None:
+            attrs["effort_spent"] = Decimal(str(fields.effort_spent))
+        if fields.subcontractor:
+            attrs["subcontractor"] = fields.subcontractor
+        if fields.supplier:
+            attrs["supplier"] = fields.supplier
 
         result = self.resolver.resolve_or_create(
             source=self.source,
@@ -462,6 +759,7 @@ class MondayConnector(BaseConnector):
             attrs=attrs,
         )
         self._record_result(result.was_created, result.was_matched)
+        return result.entity.canonical_id
 
     # ------------------------------------------------------------------
     # Helpers

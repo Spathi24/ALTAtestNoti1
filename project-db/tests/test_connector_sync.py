@@ -15,7 +15,9 @@ from project_db.db.models import (
     Invoice,
     Project,
     SourceSystem,
+    Task,
 )
+from project_db.db.models.work import TaskStatus
 from project_db.identity import ExactFieldMatcher, IdentityResolver
 
 
@@ -67,6 +69,82 @@ class TestMondayConnectorBoardSync:
 
         assert isinstance(report, SyncReport)
         assert report.records_processed >= 1
+
+    @patch("project_db.connectors.monday.connector.MondayClient")
+    def test_project_board_sync_preserves_task_details_and_subitems(
+        self, mock_client_class, session: Session, org
+    ):
+        from project_db.connectors.monday import MondayConnector
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.list_workspaces.return_value = [
+            {"id": "ws1", "name": "Project Management"}
+        ]
+        mock_client.list_boards.return_value = [
+            {
+                "id": 923,
+                "name": "923 Rockland",
+                "state": "active",
+                "workspace": {"id": "ws1", "name": "Project Management"},
+            }
+        ]
+        mock_client.list_board_columns.return_value = [
+            {"id": "project_status", "title": "Status", "type": "status"},
+            {"id": "project_timeline", "title": "Timeline", "type": "timeline"},
+            {"id": "project_duration", "title": "Duration", "type": "numbers"},
+            {"id": "project_planned_effort", "title": "Planned Effort", "type": "numbers"},
+            {"id": "project_effort_spent", "title": "Effort Spent", "type": "numbers"},
+            {"id": "text_sub", "title": "Subcontractor", "type": "text"},
+            {"id": "text_supplier", "title": "Supplier", "type": "text"},
+        ]
+        mock_client.list_items.return_value = [
+            {
+                "id": "parent1",
+                "name": "Selective Demolition",
+                "state": "active",
+                "group": {"title": "Scope of Work"},
+                "column_values": [
+                    {"id": "project_status", "type": "status", "text": "Working on it", "value": None, "label": "Working on it"},
+                    {"id": "project_timeline", "type": "timeline", "text": "", "value": None, "from": "2026-05-01", "to": "2026-05-03"},
+                    {"id": "project_duration", "type": "numbers", "text": "2", "value": None, "number": 2},
+                    {"id": "project_planned_effort", "type": "numbers", "text": "8", "value": None, "number": 8},
+                    {"id": "project_effort_spent", "type": "numbers", "text": "1.5", "value": None, "number": 1.5},
+                    {"id": "text_sub", "type": "text", "text": "Raul", "value": '"Raul"'},
+                    {"id": "text_supplier", "type": "text", "text": "BMR", "value": '"BMR"'},
+                ],
+                "subitems": [
+                    {
+                        "id": "sub1",
+                        "name": "Bathroom removal",
+                        "state": "active",
+                        "column_values": [
+                            {"id": "text_sub", "type": "text", "text": "Lucas", "value": '"Lucas"'},
+                        ],
+                    }
+                ],
+            }
+        ]
+        mock_client.list_users.return_value = []
+
+        connector = MondayConnector(session=session, organization_id=org.canonical_id)
+        report = connector.sync()
+
+        assert report.records_failed == 0
+        parent = session.query(Task).filter_by(title="Selective Demolition").one()
+        child = session.query(Task).filter_by(title="Bathroom removal").one()
+        assert parent.status == TaskStatus.IN_PROGRESS
+        assert parent.group_title == "Scope of Work"
+        assert parent.start_date.isoformat() == "2026-05-01"
+        assert parent.end_date.isoformat() == "2026-05-03"
+        assert parent.duration_days == 2
+        assert parent.planned_effort == 8
+        assert parent.effort_spent == Decimal("1.50")
+        assert parent.subcontractor == "Raul"
+        assert parent.supplier == "BMR"
+        assert child.is_subitem is True
+        assert child.parent_task_id == parent.canonical_id
+        assert child.subcontractor == "Lucas"
 
 
 class TestMondayConnectorDeltaSync:

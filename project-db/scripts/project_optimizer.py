@@ -70,6 +70,7 @@ if str(_SRC) not in sys.path:
 from project_db.config import settings
 from project_db.connectors.monday.client import MondayClient
 from project_db.connectors.monday.column_extractor import ColumnExtractor
+from project_db.connectors.monday.connector import apply_portfolio_mirror_overlay
 
 PROJECT_WORKSPACE_NAMES = {"Project Management"}
 NON_PROJECT_WORKSPACE_NAMES = {"CRM"}
@@ -132,9 +133,18 @@ class Activity:
 # ===========================================================================
 
 def fetch_board_tasks(client: MondayClient, board_id: int) -> list[dict[str, Any]]:
-    """Pull items from a board plus column metadata, return raw dicts."""
+    """Pull items from a board (with mirror-column overlay) and return raw dicts.
+
+    Many construction-side task boards store the real status/timeline as MIRROR
+    columns on a linked portfolio item, not on the task row itself. We follow
+    those links and merge the mirrored values back onto each task before
+    extracting fields -- see connector.apply_portfolio_mirror_overlay.
+    """
     cols = client.list_board_columns(board_id)
     items = client.list_items(board_id)
+    items = apply_portfolio_mirror_overlay(
+        client, items, board={"id": board_id, "name": f"board:{board_id}"}
+    )
     extractor = ColumnExtractor(cols)
     result = []
     for item in items:
@@ -144,19 +154,26 @@ def fetch_board_tasks(client: MondayClient, board_id: int) -> list[dict[str, Any
         fields = extractor.extract(cv)
         group = (item.get("group") or {}).get("title", "")
 
-        # Determine duration in days
+        # Determine duration in days: prefer the explicit Duration column,
+        # then fall back to (end - start) on the timeline, then 1 day.
         start = fields.start_date
         end = fields.end_date
-        if start and end and end >= start:
+        if fields.duration_days is not None and fields.duration_days > 0:
+            duration = float(fields.duration_days)
+        elif start and end and end >= start:
             duration = float((end - start).days) or 1.0
         else:
-            duration = 1.0   # unknown duration -- assume 1 day
+            duration = 1.0
 
-        status_raw = ""
-        for v in cv:
-            if v.get("type") == "status" and v.get("text"):
-                status_raw = v["text"]
-                break
+        # Prefer the heuristic-extracted status label; fall back to the raw
+        # column text (matches both native status columns and the mirror
+        # overlay's synthetic "label" field).
+        status_raw = fields.status_label or ""
+        if not status_raw:
+            for v in cv:
+                if v.get("type") == "status" and (v.get("text") or v.get("label")):
+                    status_raw = v.get("text") or v.get("label") or ""
+                    break
 
         result.append({
             "id": item["id"],
