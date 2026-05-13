@@ -11,8 +11,8 @@ Usage
 -----
     extractor = ColumnExtractor(column_defs, explicit_mapping={"text7": "client_name"})
     fields = extractor.extract(item["column_values"])
-    # fields["client_name"] == "Smith Renovation"
-    # fields["status"]      == ProjectStatus.ACTIVE
+    # fields.client_name == "Smith Renovation"
+    # fields.status      == ProjectStatus.ACTIVE
 
 The extractor is intentionally lenient: unrecognised columns are silently
 skipped, and missing/empty values stay as None so callers can decide what
@@ -33,20 +33,20 @@ from project_db.db.models import LeadStage, ProjectStatus, TaskStatus
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Title → canonical field heuristics
+# Title -> canonical field heuristics
 # Order matters: first match wins per column.
 # ---------------------------------------------------------------------------
 
 _TITLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # client / account — check before "value" so "Account Value" goes here first
+    # client / account -- check before "value" so "Account Value" goes here first
     (re.compile(r"\bclient\b|\bcustomer\b|\baccounts?\b|\bcontacts?\b", re.I), "client_name"),
-    # status (stage, phase — but NOT "priority" which is a separate concern)
+    # status (stage, phase -- but NOT "priority" which is a separate concern)
     (re.compile(r"\bstatus\b|\bstage\b|\bphase\b|\bpipeline\b", re.I), "status_label"),
-    # dates — more specific patterns first
+    # dates -- more specific patterns first
     (re.compile(r"start\s*date|kick.?off|\bbegin\b", re.I), "start_date"),
     (re.compile(r"end\s*date|due\s*date|deadline|completion\s*date|close\s*date|expected.*close", re.I), "end_date"),
     (re.compile(r"\btimeline\b", re.I), "timeline"),
-    # money — word boundaries prevent "subcontractor" matching "contract"
+    # money -- word boundaries prevent "subcontractor" matching "contract"
     (re.compile(r"\bbudget\b|\bestimate\b", re.I), "budget_amount"),
     (re.compile(r"\bcontract\b|\bquote\b|\bprice\b|\bdeal\s+value\b|\bcontract\s+value\b", re.I), "contract_amount"),
     # contact info
@@ -62,11 +62,10 @@ _TITLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Monday status label → ProjectStatus
+# Monday status label -> ProjectStatus
 # ---------------------------------------------------------------------------
 
 _PROJECT_STATUS_MAP: dict[str, ProjectStatus] = {
-    # common default labels
     "done": ProjectStatus.COMPLETED,
     "completed": ProjectStatus.COMPLETED,
     "complete": ProjectStatus.COMPLETED,
@@ -90,7 +89,7 @@ _PROJECT_STATUS_MAP: dict[str, ProjectStatus] = {
     "pending": ProjectStatus.PROPOSED,
 }
 
-# Monday status label → TaskStatus (for task items within a ProjectBoard)
+# Monday status label -> TaskStatus (for task items within a ProjectBoard)
 _TASK_STATUS_MAP: dict[str, TaskStatus] = {
     "done": TaskStatus.DONE,
     "completed": TaskStatus.DONE,
@@ -110,7 +109,7 @@ _TASK_STATUS_MAP: dict[str, TaskStatus] = {
     "todo": TaskStatus.TODO,
 }
 
-# Monday status label → LeadStage (for Deal / Lead boards)
+# Monday status label -> LeadStage (for Deal / Lead boards)
 _LEAD_STAGE_MAP: dict[str, LeadStage] = {
     "new": LeadStage.NEW,
     "new lead": LeadStage.NEW,
@@ -156,14 +155,14 @@ class ColumnExtractor:
     Parameters
     ----------
     column_defs:
-        Output of ``MondayClient.list_board_columns(board_id)`` —
+        Output of ``MondayClient.list_board_columns(board_id)`` --
         list of {id, title, type, settings_str}.
     explicit_mapping:
         Optional override dict {column_id: canonical_field_name}.
         Takes precedence over heuristic title matching.
         Valid field names: client_name, status_label, start_date, end_date,
         timeline, budget_amount, contract_amount, address, email, phone,
-        assigned_user, notes.
+        assigned_user, probability, notes.
     """
 
     def __init__(
@@ -172,16 +171,15 @@ class ColumnExtractor:
         explicit_mapping: dict[str, str] | None = None,
     ) -> None:
         self._explicit = explicit_mapping or {}
-        # Build id → {title, type} lookup
         self._col_meta: dict[str, dict[str, str]] = {
             col["id"]: {"title": col.get("title", ""), "type": col.get("type", "")}
             for col in column_defs
         }
-        # Pre-compute heuristic assignments: col_id → canonical_field
+        # Pre-compute heuristic assignments: col_id -> canonical_field
         self._heuristic: dict[str, str] = {}
         for col_id, meta in self._col_meta.items():
             if col_id in self._explicit:
-                continue  # explicit wins
+                continue
             title = meta["title"]
             for pattern, field_name in _TITLE_PATTERNS:
                 if pattern.search(title):
@@ -226,7 +224,6 @@ class ColumnExtractor:
                 result.end_date = _as_date(parsed_value)
 
             elif target_field == "timeline":
-                # timeline returns {"from_date": date, "to_date": date}
                 if isinstance(parsed_value, dict):
                     result.start_date = result.start_date or parsed_value.get("from_date")
                     result.end_date = result.end_date or parsed_value.get("to_date")
@@ -250,7 +247,6 @@ class ColumnExtractor:
                 result.notes = _as_str(parsed_value) or None
 
             elif target_field == "assigned_user":
-                # people columns return list of Monday user IDs
                 if isinstance(parsed_value, list):
                     result.assigned_monday_user_ids = parsed_value
 
@@ -271,7 +267,7 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
         except (json.JSONDecodeError, TypeError):
             parsed = value_str
 
-    if col_type == "text" or col_type == "long_text":
+    if col_type in ("text", "long_text"):
         if isinstance(parsed, dict):
             return parsed.get("text", text)
         return text
@@ -280,7 +276,6 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
         return _coerce_number(text) or _coerce_number(str(parsed))
 
     if col_type == "status":
-        # parsed == {"label": "...", "index": N}
         if isinstance(parsed, dict):
             return parsed.get("label") or text
         return text
@@ -292,13 +287,11 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
         return text
 
     if col_type == "date":
-        # parsed == {"date": "2026-05-30", "time": "..."}
         if isinstance(parsed, dict) and "date" in parsed:
             return _parse_date_str(parsed["date"])
         return _parse_date_str(text)
 
     if col_type == "timeline":
-        # parsed == {"from": "2026-05-01", "to": "2026-06-30"}
         if isinstance(parsed, dict):
             return {
                 "from_date": _parse_date_str(parsed.get("from", "")),
@@ -332,7 +325,6 @@ def _parse_value(col_type: str, text: str, raw_value: Any) -> Any:
             return parsed.get("url") or text
         return text
 
-    # Fallback: use the human-readable text field
     return text or None
 
 
@@ -401,3 +393,5 @@ def _map_task_status(label: str) -> TaskStatus:
 def _map_lead_stage(label: str) -> LeadStage:
     key = label.strip().lower()
     return _LEAD_STAGE_MAP.get(key, LeadStage.NEW)
+
+

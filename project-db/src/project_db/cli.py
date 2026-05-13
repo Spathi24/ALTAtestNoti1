@@ -1,12 +1,12 @@
 """Command-line entry point for the project DB.
 
 Usage:
-    python -m project_db.cli init-db
-    python -m project_db.cli sync monday
-    python -m project_db.cli inspect-board <board_id>
-    python -m project_db.cli list-boards
-    python -m project_db.cli ask "what active projects do we have?"
-    python -m project_db.cli list-external Project <canonical-id>
+    project_db init-db
+    project_db sync monday
+    project_db list-boards
+    project_db inspect-board <board_id>
+    project_db ask "what active projects do we have?"
+    project_db list-external Project <canonical-id>
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_list_boards(_: argparse.Namespace) -> int:
-    """List all Monday boards with their IDs — useful before running inspect-board."""
+    """List all Monday boards with their IDs."""
     from project_db.config import settings
     from project_db.connectors.monday.client import MondayClient
 
@@ -96,7 +96,7 @@ def cmd_list_boards(_: argparse.Namespace) -> int:
     print(f"{'ID':<15} {'Workspace':<25} {'State':<10} Name")
     print("-" * 80)
     for b in boards:
-        ws_name = (b.get("workspace") or {}).get("name", "—")
+        ws_name = (b.get("workspace") or {}).get("name", "-")
         print(f"{b['id']:<15} {ws_name:<25} {b.get('state',''):<10} {b['name']}")
     return 0
 
@@ -110,7 +110,7 @@ def cmd_inspect_board(args: argparse.Namespace) -> int:
     board_id = int(args.board_id)
     client = MondayClient(token=settings.monday_api_token)
 
-    print(f"\nFetching board {board_id} …\n")
+    print(f"\nFetching board {board_id} ...\n")
 
     columns = client.list_board_columns(board_id)
     if not columns:
@@ -122,7 +122,6 @@ def cmd_inspect_board(args: argparse.Namespace) -> int:
     for col in columns:
         print(f"{col['id']:<20} {col['type']:<18} {col['title']}")
 
-    # Show what the heuristic extractor would assign each column
     extractor = ColumnExtractor(columns)
     assignments = {**extractor._heuristic}
     if assignments:
@@ -133,8 +132,7 @@ def cmd_inspect_board(args: argparse.Namespace) -> int:
     else:
         print("\nNo columns matched heuristics — add explicit_mapping in connector config.")
 
-    # Sample items
-    print(f"\nFetching up to 5 sample items …")
+    print(f"\nFetching up to 5 sample items ...")
     items = client.list_items(board_id, limit=5)
     if not items:
         print("Board is empty.")
@@ -143,19 +141,17 @@ def cmd_inspect_board(args: argparse.Namespace) -> int:
     print(f"\n{'Item ID':<15} {'Group':<20} Name")
     print("-" * 65)
     for item in items[:5]:
-        group_title = (item.get("group") or {}).get("title", "—")
+        group_title = (item.get("group") or {}).get("title", "-")
         print(f"{item['id']:<15} {group_title:<20} {item['name']}")
-        # Show extracted fields
         fields = extractor.extract(item.get("column_values") or [])
         field_dict = {
             k: v for k, v in vars(fields).items()
             if v and v != [] and k != "unmatched"
         }
-        if field_dict:
-            for k, v in field_dict.items():
-                print(f"    {k}: {v}")
+        for k, v in field_dict.items():
+            print(f"    {k}: {v}")
         if fields.unmatched:
-            print(f"    unmatched columns: {fields.unmatched}")
+            print(f"    unmatched: {fields.unmatched}")
 
     return 0
 

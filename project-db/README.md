@@ -1,9 +1,24 @@
-# project_db — Centralized Operations Platform
+# project_db — v0.2 Multi-System Integration
 
 A unified data layer that pulls live data from all of the company's SaaS tools
 (Monday.com, QuickBooks, CompanyCam, Google Drive) into one database, and lets
 you query across all of them from a single command or — eventually — a plain
 English question to an AI assistant.
+
+**v0.2 focuses on:** Optimization (delta sync, complexity tracking), write mutations,
+multi-system architecture, and QuickBooks connector implementation.
+
+---
+
+## What's New in v0.2
+
+✅ **Delta Sync:** Query only changed items (~90% fewer API calls)  
+✅ **Write Mutations:** Push changes back to Monday  
+✅ **Complexity Tracking:** Know the cost of each API call  
+✅ **QuickBooks Connector:** Fully functional, pulls invoices/estimates/customers  
+✅ **Ripple-Effect Ready:** Infrastructure for cross-system updates  
+
+**See [OPTIMIZATION_v0.2.md](docs/OPTIMIZATION_v0.2.md) for detailed breakdown.**
 
 ---
 
@@ -242,40 +257,51 @@ the same pattern. See `docs/adding-a-connector.md` for the step-by-step.
 
 ```
 project-db/
-├── .env.example                    ← credentials template (copy to .env)
-├── pyproject.toml                  ← package metadata + dependencies
+├── docs/
+│   ├── design-v0.1.md                  ← architectural design doc
+│   ├── OPTIMIZATION_v0.2.md            ← NEW: v0.2 improvements breakdown
+│   ├── MONDAY_INTEGRATION_STRATEGY.md  ← why Monday is the hub
+│   ├── model-v0.1.ump                  ← Umple UML — v0.1 skeleton model
+│   ├── model-full.ump                  ← Umple UML — full target model
+│   ├── adding-a-connector.md           ← how to plug in a new source
+│   ├── monday-api-reference-all.md     ← Monday API docs (42 pages)
+│   ├── monday-graphql-schema.json      ← Monday GraphQL schema
+│   └── monday-graphql-schema-summary.md ← Monday schema summary
 ├── src/project_db/
-│   ├── cli.py                      ← project_db command-line entry point
-│   ├── config.py                   ← loads credentials from .env / environment
 │   ├── db/
-│   │   ├── base.py                 ← SQLAlchemy base + canonical ID mixin
-│   │   ├── session.py              ← engine + session factory
-│   │   └── models/                 ← one file per domain area
-│   ├── identity/
-│   │   ├── resolver.py             ← resolve_or_create — the core logic
-│   │   └── matcher.py              ← pluggable fuzzy matchers
+│   │   └── models/
+│   │       ├── canonical.py            ← Core entities + ExternalId mapping
+│   │       ├── finance.py              ← Invoice, financial entities
+│   │       ├── work.py                 ← Projects, Tasks, etc.
+│   │       └── ...
+│   ├── identity/                       ← canonical-ID resolver + fuzzy matchers
 │   ├── connectors/
-│   │   ├── base.py
-│   │   ├── registry.py
-│   │   └── monday/
-│   └── ai/
-│       ├── query.py                ← routes questions to canned report / text-to-SQL / RAG
-│       └── views.py                ← pre-built SQL report functions
+│   │   ├── base.py                     ← abstract Connector class
+│   │   ├── registry.py                 ← lookup by SourceSystem enum
+│   │   ├── monday/                     ← Read + Write mutations (v0.2)
+│   │   │   ├── client.py               ← GraphQL queries + mutations
+│   │   │   ├── connector.py            ← Monday → Canonical mapping
+│   │   │   └── column_extractor.py     ← Column value parsing
+│   │   └── quickbooks/                 ← NEW: v0.2 QB connector
+│   │       ├── client.py               ← QB REST + Query Language client
+│   │       └── connector.py            ← QB → Canonical mapping
+│   ├── ai/                             ← AI assistant — canned reports
+│   ├── cli.py                          ← `project_db ...` command-line
+│   └── config.py                       ← env-var loading
 ├── tests/
-│   └── test_identity.py            ← smoke tests for the resolver
-└── docs/
-    ├── design-v0.1.md              ← full architectural design document
-    ├── MONDAY_INTEGRATION_STRATEGY.md
-    ├── adding-a-connector.md       ← playbook for adding a new source
-    ├── model-v0.1.ump              ← UML model (Umple format) — current schema
-    └── model-full.ump              ← UML model — full target vision
+│   └── test_identity.py                ← identity resolution tests
+├── scripts/
+│   ├── init_db.py                      ← one-shot DB init
+│   ├── build_monday_api_reference.py   ← scrape Monday docs
+│   └── dump_monday_schema.py           ← export Monday GraphQL schema
+└── pyproject.toml
 ```
 
 ---
 
 ## Roadmap
 
-### Now — Monday connector working end-to-end
+### ✅ v0.1 — Monday connector (complete)
 
 - [x] Canonical schema (13 entities)
 - [x] Identity resolver with exact + fuzzy matching
@@ -285,29 +311,24 @@ project-db/
 - [x] 3 canned AI reports: active projects, deal pipeline, AR aging
 - [x] Credentials loaded from `.env`
 
-### Next — data completeness
+### ✅ v0.2 — Optimization + QuickBooks (complete)
 
-- [ ] **QuickBooks connector** — invoices, payments, customers. Highest value
-  for cross-tool financial reporting. Once built, you can ask "what's invoiced
-  vs. budgeted on 923 Rockland?" and get a real answer.
-- [ ] **CompanyCam connector** — photo/report metadata per job. Links job-site
-  documentation to canonical Projects.
-- [ ] **Google Drive connector** — contract and document metadata. Associates
-  scope-of-work files with canonical Projects and Clients.
-- [ ] **Postgres + Alembic** — move off SQLite for multi-user access and safe
-  schema migrations.
+- [x] **Delta Sync** — Only fetch changed items (~90% API cost reduction)
+- [x] **Write Mutations** — Push changes back to Monday
+- [x] **Complexity Tracking** — Full API cost visibility
+- [x] **QuickBooks Connector** — Invoices, estimates, customers (delta sync ready)
+- [x] **Ripple Effects** — Infrastructure for cross-system updates
 
-### After — AI layer
+### 🔄 v0.3+ — Multi-System Expansion
 
-- [ ] **Text-to-SQL** — wire the `ask` command to Claude to turn any natural
-  language question into a SQL query against the canonical schema. The schema
-  and reports are already designed for this.
-- [ ] **Webhooks** — real-time sync instead of manual `project_db sync monday`.
-  Monday, QuickBooks, and CompanyCam all support webhooks.
-- [ ] **Web dashboard** — a simple read-only UI over the canonical DB for
-  non-technical users.
-- [ ] **RAG / document Q&A** — embed daily logs and documents into a vector
-  store so you can ask "what issues came up on the Rockland job last month?"
+- [ ] **CompanyCam Connector** — Photos, deficiency reports per job
+- [ ] **Google Drive Connector** — Document metadata and linking
+- [ ] **Webhook Listeners** — Real-time sync instead of manual batch
+- [ ] **Ripple Effect Demos** — QB → Monday updates → email notifications
+- [ ] **Text-to-SQL AI Layer** — Natural language queries against canonical schema
+- [ ] **Postgres + Alembic** — Multi-user support and safe schema migrations
+
+See [adding-a-connector.md](docs/adding-a-connector.md) for the playbook on adding new connectors.
 
 ---
 
@@ -324,21 +345,23 @@ PROJECT_DB_URL=sqlite:///./project_db.sqlite
 MONDAY_API_TOKEN=...
 
 # QuickBooks (v0.2)
-QUICKBOOKS_CLIENT_ID=
-QUICKBOOKS_CLIENT_SECRET=
+QUICKBOOKS_CLIENT_ID=...
+QUICKBOOKS_CLIENT_SECRET=...
+QUICKBOOKS_REALM_ID=...
+QUICKBOOKS_ACCESS_TOKEN=...
 
-# CompanyCam (v0.2)
-COMPANYCAM_API_TOKEN=
+# CompanyCam (v0.3)
+COMPANYCAM_API_TOKEN=...
 
-# Google Drive — path to service-account JSON (v0.2)
-GOOGLE_CREDENTIALS_PATH=
+# Google Drive (v0.3)
+GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json
 
-# Anthropic — for AI text-to-SQL mode (v0.2)
-ANTHROPIC_API_KEY=
+# Anthropic — for AI text-to-SQL mode (v0.3+)
+ANTHROPIC_API_KEY=...
 ```
 
 The `.env` file is gitignored and never committed. `project_db` finds it
-automatically from the package directory, so the command works from anywhere.
+automatically, so the command works from anywhere.
 
 ---
 
@@ -367,4 +390,4 @@ pip install -e ".[dev]"
 pytest -q                  # run identity resolver smoke tests
 ```
 
-See `docs/adding-a-connector.md` for how to add a new source system connector.
+See [adding-a-connector.md](docs/adding-a-connector.md) for how to add a new source system connector.

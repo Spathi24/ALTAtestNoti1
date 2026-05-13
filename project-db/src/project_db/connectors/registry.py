@@ -9,12 +9,13 @@ from typing import Type
 
 from project_db.connectors.base import BaseConnector
 from project_db.connectors.monday.connector import MondayConnector
+from project_db.connectors.quickbooks.connector import QuickBooksConnector
 from project_db.db.models import SourceSystem
 
 _REGISTRY: dict[SourceSystem, Type[BaseConnector]] = {
     SourceSystem.MONDAY: MondayConnector,
+    SourceSystem.QUICKBOOKS: QuickBooksConnector,
     # SourceSystem.COMPANYCAM: CompanyCamConnector,   # TODO v0.2
-    # SourceSystem.QUICKBOOKS: QuickBooksConnector,   # TODO v0.2
     # SourceSystem.GOOGLE_DRIVE: GoogleDriveConnector,# TODO v0.2
 }
 

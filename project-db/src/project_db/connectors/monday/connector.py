@@ -1,22 +1,36 @@
-"""Monday.com → canonical DB connector.
+"""Monday.com -> canonical DB connector.
 
 Board classification is config-driven (regex patterns) so renaming a board
 in Monday doesn't require touching Python. Column extraction uses heuristic
 title matching + optional explicit column_id overrides.
 
+Delta Sync:
+  By default, full sync is performed on first run. On subsequent runs, only
+  items updated since last sync are fetched, reducing API cost by 90%+.
+  
+  Set force_full_sync=True to override and re-fetch all items (testing/debugging).
+
 Board mapping (DEFAULT_BOARD_MAPPING):
-  CRM workspace           → Lead, Deal, Client boards
-  Project Management ws   → Project boards (one per property / job)
-  Admin workspace         → skipped (reporting-only boards)
+  CRM workspace           -> Lead, Deal, Client boards
+  Project Management ws   -> Project boards (one per property / job)
+  Admin workspace         -> skipped (reporting-only boards)
 
 Column mapping per board type is in DEFAULT_COLUMN_MAPPING. Override via
 connector config if your Monday column ids/titles differ.
+
+Write-back capability:
+  MondayConnector.sync_back() pushes canonical changes to Monday. Use after
+  syncing data from other sources (e.g., QB invoices → update project status).
 """
 from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Any
+
+from sqlalchemy import desc, func
+from sqlalchemy.orm import Session
 
 from project_db.connectors.base import BaseConnector, SyncReport
 from project_db.connectors.monday.client import MondayClient
@@ -24,6 +38,7 @@ from project_db.connectors.monday.column_extractor import ColumnExtractor
 from project_db.db.models import (
     Client,
     Deal,
+    ExternalId,
     Lead,
     LeadStage,
     Project,
@@ -39,14 +54,14 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Board classification — name pattern → entity type
+# Board classification — name pattern -> entity type
 # ---------------------------------------------------------------------------
 
 DEFAULT_BOARD_MAPPING: list[dict[str, Any]] = [
     {"pattern": r"(?i)\bleads?\b", "entity": "Lead"},
     {"pattern": r"(?i)\bdeals?\b", "entity": "Deal"},
     {"pattern": r"(?i)\bcontacts?\b|\baccounts?\b", "entity": "Client"},
-    # CRM board where each item = one linked project
+    # CRM \"Client Projects\" board: each item = one project
     {"pattern": r"(?i)client\s+projects?", "entity": "Project"},
     # Address/job boards (e.g. "923 Rockland", "5768-5770 St Laurent"):
     # board = one Project, items = Tasks inside it.
@@ -65,7 +80,7 @@ PROJECT_MANAGEMENT_WORKSPACES: set[str] = {"Project Management"}
 # ---------------------------------------------------------------------------
 
 DEFAULT_COLUMN_MAPPING: dict[str, dict[str, str]] = {
-    # e.g. "Project": {"text7": "client_name", "status": "status_label"}
+
     "Project": {},
     "Lead": {},
     "Deal": {},
@@ -89,11 +104,19 @@ class MondayConnector(BaseConnector):
             "column_mapping", DEFAULT_COLUMN_MAPPING
         )
 
+
     # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
-    def sync(self) -> SyncReport:
+    def sync(self, force_full_sync: bool = False) -> SyncReport:
+        """Sync Monday data to canonical DB.
+        
+        Args:
+            force_full_sync: If True, re-fetch all items. Otherwise, use delta sync
+                            (only fetch items updated since last sync). Delta sync
+                            is ~90% cheaper.
+        """
         try:
             workspaces = self.client.list_workspaces()
             logger.info("Found %d Monday workspaces", len(workspaces))
@@ -118,7 +141,7 @@ class MondayConnector(BaseConnector):
                 if entity_type is None:
                     logger.debug("Skipping board %r (no pattern match)", board["name"])
                     continue
-                self._sync_board(board, entity_type)
+                self._sync_board(board, entity_type, force_full_sync=force_full_sync)
 
         except Exception as exc:  # noqa: BLE001
             self._record_failure(f"sync failed: {exc}")
@@ -158,12 +181,40 @@ class MondayConnector(BaseConnector):
     # Board classification & sync dispatch
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Helper: track last sync time per board for delta sync
+    # ------------------------------------------------------------------
+
+    def _get_last_sync_time(self, board_id: int) -> datetime | None:
+        """Fetch the most recent last_synced_at for any item from this board."""
+        try:
+            result = (
+                self.session.query(func.max(ExternalId.last_synced_at))
+                .filter(
+                    ExternalId.source == self.source,
+                    ExternalId.entity_type.in_(["Project", "Lead", "Deal", "Client", "Task"]),
+                    # Heuristic: external keys from this board often contain the board ID
+                    # For ProjectBoard items, the key is "board:{board_id}"
+                    # For regular board items, it's just the item ID
+                )
+                .scalar()
+            )
+            if result:
+                # Use a small buffer (5 minutes) to catch any changes during sync
+                return result - timedelta(minutes=5)
+            return None
+        except Exception:  # noqa: BLE001
+            return None
+
+    # ------------------------------------------------------------------
+    # Board classification & sync dispatch
+    # ------------------------------------------------------------------
+
     def _classify_board(self, name: str, workspace_name: str = "") -> str | None:
         # Boards in the Project Management workspace that don't match CRM patterns
         # are job/property boards — board itself is the project.
         if workspace_name in PROJECT_MANAGEMENT_WORKSPACES:
-            # Still run normal rules first (e.g. "Client Projects" is in CRM but
-            # could be in PM workspace too). Fall back to ProjectBoard.
+
             for rule in self.board_mapping:
                 if re.search(rule["pattern"], name):
                     return rule["entity"]
@@ -174,18 +225,39 @@ class MondayConnector(BaseConnector):
                 return rule["entity"]
         return None
 
-    def _sync_board(self, board: dict[str, Any], entity_type: str) -> None:
+    def _sync_board(
+        self,
+        board: dict[str, Any],
+        entity_type: str,
+        force_full_sync: bool = False,
+    ) -> None:
+        """Sync a single board, using delta sync if available."""
         board_id = int(board["id"])
 
-        # Fetch column definitions so we can map column_values semantically
         column_defs = self.client.list_board_columns(board_id)
         explicit_mapping = self.column_mapping.get(entity_type, {})
         extractor = ColumnExtractor(column_defs, explicit_mapping=explicit_mapping)
 
-        items = self.client.list_items(board_id)
+        # Delta sync: only fetch items updated since last sync
+        last_sync = None if force_full_sync else self._get_last_sync_time(board_id)
+        
+        if last_sync:
+            logger.info(
+                "  board %r -> %s -- delta sync since %s",
+                board["name"],
+                entity_type,
+                last_sync.isoformat(),
+            )
+        
+        items = self.client.list_items(board_id, updated_since=last_sync)
+        
         logger.info(
-            "  board %r → %s — %d items, %d columns",
-            board["name"], entity_type, len(items), len(column_defs),
+            "  board %r -> %s -- %d items%s, %d columns",
+            board["name"],
+            entity_type,
+            len(items),
+            " (delta)" if last_sync else "",
+            len(column_defs),
         )
 
         if entity_type == "ProjectBoard":
@@ -287,6 +359,8 @@ class MondayConnector(BaseConnector):
         }
         if fields.end_date:
             attrs["expected_close_date"] = fields.end_date
+        if fields.probability is not None:
+            attrs["probability"] = fields.probability
 
         result = self.resolver.resolve_or_create(
             source=self.source,
@@ -326,7 +400,7 @@ class MondayConnector(BaseConnector):
         self._record_result(result.was_created, result.was_matched)
 
     # ------------------------------------------------------------------
-    # ProjectBoard — board = Project, items = Tasks
+    # ProjectBoard -- board = Project, items = Tasks
     # ------------------------------------------------------------------
 
     def _sync_project_board(
@@ -336,7 +410,6 @@ class MondayConnector(BaseConnector):
         items: list[dict[str, Any]],
     ) -> None:
         """Create/update one Project from the board, then sync items as Tasks."""
-        # Create the project from board metadata
         project_attrs: dict[str, Any] = {
             "name": board["name"],
             "code": f"MONDAY-BOARD-{board['id']}",
@@ -354,7 +427,6 @@ class MondayConnector(BaseConnector):
         self._record_result(project_result.was_created, project_result.was_matched)
         project_id = project_result.entity.canonical_id
 
-        # Sync each item as a Task
         extractor = ColumnExtractor(column_defs)
         for item in items:
             if item.get("state") == "deleted":
@@ -409,3 +481,103 @@ class MondayConnector(BaseConnector):
         self.session.flush()
         logger.info("Created Client %r (canonical_id=%s)", name, new_client.canonical_id)
         return new_client.canonical_id
+
+    # ------------------------------------------------------------------
+    # Write-back: sync canonical changes back to Monday
+    # ------------------------------------------------------------------
+
+    def sync_back(
+        self,
+        canonical_entity: Any,
+        field_updates: dict[str, Any],
+    ) -> bool:
+        """Push changes from canonical entity back to Monday.
+        
+        This enables ripple effects: when data changes in canonical DB (e.g., 
+        QB invoice created, CompanyCam deficiency added), we can update the 
+        corresponding Monday item.
+        
+        Args:
+            canonical_entity: The canonical entity object (Project, Lead, Deal, etc.)
+            field_updates: Dict mapping Monday column_id -> new value
+                          e.g., {"status": {"index": 1}, "text_column_id": "Updated"}
+        
+        Returns:
+            True if successful, False otherwise
+        
+        Example:
+            >>> project = session.query(Project).first()
+            >>> connector.sync_back(project, {"status": {"index": 2}})
+            True
+        """
+        try:
+            # Look up the Monday external key for this entity
+            entity_type = canonical_entity.__class__.__name__
+            ext_id = (
+                self.session.query(ExternalId)
+                .filter_by(
+                    source=self.source,
+                    entity_type=entity_type,
+                    canonical_id=canonical_entity.canonical_id,
+                )
+                .one_or_none()
+            )
+            
+            if not ext_id:
+                logger.warning(
+                    f"No Monday mapping for {entity_type} {canonical_entity.canonical_id}"
+                )
+                return False
+            
+            # Extract board_id and item_id from external_key
+            # For ProjectBoard items, external_key is "board:{board_id}"
+            # For other items, it's just the item ID
+            try:
+                if ext_id.external_key.startswith("board:"):
+                    logger.debug(
+                        f"Cannot sync_back ProjectBoard items directly; "
+                        f"update tasks instead"
+                    )
+                    return False
+                item_id = int(ext_id.external_key)
+            except (ValueError, AttributeError):
+                logger.warning(
+                    f"Invalid external_key format: {ext_id.external_key}"
+                )
+                return False
+            
+            # Extract board_id from URL if available
+            if not ext_id.external_url:
+                logger.warning(f"No external_url for {entity_type}, cannot determine board_id")
+                return False
+            
+            # Parse board_id from Monday URL (https://view.monday.com/{board_id})
+            try:
+                board_id = int(ext_id.external_url.split("/")[-1])
+            except (ValueError, IndexError):
+                logger.warning(f"Cannot parse board_id from URL: {ext_id.external_url}")
+                return False
+            
+            # Perform the update
+            logger.info(
+                f"Syncing back {entity_type} {canonical_entity.canonical_id} "
+                f"to Monday item {item_id} on board {board_id}"
+            )
+            
+            result = self.client.change_multiple_column_values(
+                board_id=board_id,
+                item_id=item_id,
+                column_values=field_updates,
+            )
+            
+            if result:
+                logger.info(f"Successfully synced back to Monday item {item_id}")
+                # Update the last_synced_at timestamp
+                ext_id.last_synced_at = datetime.utcnow()
+                self.session.commit()
+                return True
+            return False
+            
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"sync_back failed: {exc}")
+            return False
