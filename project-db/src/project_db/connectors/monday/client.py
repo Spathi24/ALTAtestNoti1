@@ -171,29 +171,26 @@ class MondayClient:
         
         Always follows cursor pages automatically.
         """
-        where_clause = ""
         if updated_since:
-            # Filter for items updated after the given timestamp
-            # Monday's API uses ISO-8601 format
-            iso_time = updated_since.isoformat()
-            where_clause = f', updated_after: "{iso_time}"'
             logger.debug(
-                f"Delta sync for board {board_id}: fetching items updated since {iso_time}"
+                "list_items board=%s: updated_since noted, doing full fetch "
+                "(items_page has no updated_after arg in API-Version 2026-07)",
+                board_id,
             )
-        
-        first_page_gql = f"""
-        query ($board_id: [ID!]!, $limit: Int!) {{
-          boards(ids: $board_id) {{
-            items_page(limit: $limit{where_clause}) {{
+
+        first_page_gql = """
+        query ($board_id: [ID!]!, $limit: Int!) {
+          boards(ids: $board_id) {
+            items_page(limit: $limit) {
               cursor
-              items {{
+              items {
                 id name state created_at updated_at
-                group {{ id title }}
-                column_values {{ id type text value }}
-              }}
-            }}
-          }}
-        }}
+                group { id title }
+                column_values { id type text value }
+              }
+            }
+          }
+        }
         """
         next_page_gql = """
         query ($cursor: String!, $limit: Int!) {
