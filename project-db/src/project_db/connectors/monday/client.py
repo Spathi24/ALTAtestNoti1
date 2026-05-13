@@ -272,7 +272,7 @@ class MondayClient:
             Item dict with id and updated column_values
         """
         gql = """
-        mutation change_column_value($value: JSON!) {
+        mutation ($board_id: ID!, $item_id: ID!, $column_id: String!, $value: JSON!) {
           change_column_value(
             board_id: $board_id,
             item_id: $item_id,
@@ -290,7 +290,7 @@ class MondayClient:
             "column_id": column_id,
             "value": value if isinstance(value, str) else json.dumps(value),
         }
-        result = self.query(gql, variables, track_complexity=True)
+        result = self.query(gql, variables)
         return result.get("change_column_value", {})
 
     def change_multiple_column_values(
@@ -314,7 +314,7 @@ class MondayClient:
             Item dict with id and updated column_values
         """
         gql = """
-        mutation change_multiple_column_values($values: JSON!) {
+        mutation ($board_id: ID!, $item_id: ID!, $values: JSON!) {
           change_multiple_column_values(
             board_id: $board_id,
             item_id: $item_id,
@@ -331,8 +331,8 @@ class MondayClient:
             "item_id": item_id,
             "values": json.dumps(column_values),
         }
-        result = self.query(gql, variables, track_complexity=True)
-        logger.info(f"Updated item {item_id} on board {board_id}: {len(column_values)} columns")
+        result = self.query(gql, variables)
+        logger.info("Updated item %s on board %s: %d columns", item_id, board_id, len(column_values))
         return result.get("change_multiple_column_values", {})
 
     def create_item(
@@ -354,7 +354,7 @@ class MondayClient:
             Created item dict with id, name, and column_values
         """
         gql = """
-        mutation create_item($column_values: JSON) {
+        mutation ($board_id: ID!, $item_name: String!, $column_values: JSON, $group_id: String) {
           create_item(
             board_id: $board_id,
             item_name: $item_name,
@@ -368,7 +368,7 @@ class MondayClient:
           }
         }
         """
-        variables = {
+        variables: dict[str, Any] = {
             "board_id": board_id,
             "item_name": item_name,
             "group_id": group_id,
@@ -376,9 +376,9 @@ class MondayClient:
         if column_values:
             variables["column_values"] = json.dumps(column_values)
         
-        result = self.query(gql, variables, track_complexity=True)
+        result = self.query(gql, variables)
         item = result.get("create_item", {})
-        logger.info(f"Created item '{item_name}' on board {board_id}: id={item.get('id')}")
+        logger.info("Created item '%s' on board %s: id=%s", item_name, board_id, item.get("id"))
         return item
 
     def delete_item(self, board_id: int, item_id: int) -> bool:
@@ -392,15 +392,15 @@ class MondayClient:
             True if successful
         """
         gql = """
-        mutation delete_item {
+        mutation ($board_id: ID!, $item_id: ID!) {
           delete_item(board_id: $board_id, item_id: $item_id) {
             id
           }
         }
         """
-        result = self.query(gql, {"board_id": board_id, "item_id": item_id}, track_complexity=True)
+        result = self.query(gql, {"board_id": board_id, "item_id": item_id})
         deleted = result.get("delete_item")
         if deleted:
-            logger.info(f"Deleted item {item_id} from board {board_id}")
+            logger.info("Deleted item %s from board %s", item_id, board_id)
             return True
         return False

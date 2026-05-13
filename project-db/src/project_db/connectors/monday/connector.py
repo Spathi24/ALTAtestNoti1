@@ -486,6 +486,18 @@ class MondayConnector(BaseConnector):
     # Write-back: sync canonical changes back to Monday
     # ------------------------------------------------------------------
 
+    def _get_board_id_for_item(self, item_id: int) -> int | None:
+        """Ask Monday which board an item lives on."""
+        gql = "query ($ids: [ID!]!) { items(ids: $ids) { board { id } } }"
+        try:
+            data = self.client.query(gql, {"ids": [item_id]})
+            items = data.get("items") or []
+            if items:
+                return int(items[0]["board"]["id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("_get_board_id_for_item(%s) failed: %s", item_id, exc)
+        return None
+
     def sync_back(
         self,
         canonical_entity: Any,
@@ -546,16 +558,10 @@ class MondayConnector(BaseConnector):
                 )
                 return False
             
-            # Extract board_id from URL if available
-            if not ext_id.external_url:
-                logger.warning(f"No external_url for {entity_type}, cannot determine board_id")
-                return False
-            
-            # Parse board_id from Monday URL (https://view.monday.com/{board_id})
-            try:
-                board_id = int(ext_id.external_url.split("/")[-1])
-            except (ValueError, IndexError):
-                logger.warning(f"Cannot parse board_id from URL: {ext_id.external_url}")
+            # Look up board_id via API — view.monday.com URLs only carry the item_id
+            board_id = self._get_board_id_for_item(item_id)
+            if board_id is None:
+                logger.warning("Cannot find board_id for item %s via Monday API", item_id)
                 return False
             
             # Perform the update

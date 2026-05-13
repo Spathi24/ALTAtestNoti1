@@ -1,6 +1,6 @@
 """Monday.com push/pull demo.
 
-Demonstrates the full read → inspect → modify → push-back cycle.
+Demonstrates the full read -> inspect -> modify -> push-back cycle.
 
 Usage (after running `project_db init-db`):
 
@@ -58,7 +58,7 @@ def _get_org(session: Session):
 
 
 # ------------------------------------------------------------------
-# pull: sync Monday → canonical DB
+# pull: sync Monday -> canonical DB
 # ------------------------------------------------------------------
 
 
@@ -73,14 +73,14 @@ def cmd_pull() -> None:
 
     with session_scope() as session:
         org = _get_org(session)
-        print(f"Syncing Monday → DB for org {org.canonical_id} …\n")
+        print(f"Syncing Monday -> DB for org {org.canonical_id}...\n")
         connector = MondayConnector(session=session, organization_id=org.canonical_id)
         report = connector.sync()
         print(report.summary())
         if report.errors:
             print("\nErrors during sync:")
             for e in report.errors:
-                print(f"  ✗ {e}")
+                print(f"  ERROR: {e}")
 
 
 # ------------------------------------------------------------------
@@ -101,9 +101,9 @@ def cmd_inspect() -> None:
 
     with session_scope() as session:
         def _header(title: str) -> None:
-            print(f"\n{'─'*60}")
+            print(f"\n{'-'*60}")
             print(f"  {title}")
-            print(f"{'─'*60}")
+            print(f"{'-'*60}")
 
         _header("CLIENTS")
         for c in session.query(Client).all():
@@ -116,8 +116,8 @@ def cmd_inspect() -> None:
             ext = session.query(ExternalId).filter_by(
                 canonical_id=p.canonical_id, source=SourceSystem.MONDAY
             ).first()
-            monday_key = ext.external_key if ext else "—"
-            monday_url = ext.external_url if ext else "—"
+            monday_key = ext.external_key if ext else "-"
+            monday_url = ext.external_url if ext else "-"
             print(
                 f"  [{p.canonical_id}]\n"
                 f"    name   : {p.name}\n"
@@ -150,7 +150,7 @@ def cmd_inspect() -> None:
         for e in session.query(ExternalId).order_by(ExternalId.source).all():
             print(
                 f"  {e.source.value:<15} {e.entity_type:<10} "
-                f"key={e.external_key:<20} → {e.canonical_id}"
+                f"key={e.external_key:<20} -> {e.canonical_id}"
             )
 
 
@@ -165,9 +165,9 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
     Updates are passed as key=value pairs.
 
     Monday column_values mapping:
-      status=<label>    →  {"label": "<label>"}
-      budget=<number>   →  "<number>"
-      name=<text>       →  "<text>"
+      status=<label>    ->  {"label": "<label>"}
+      budget=<number>   ->  "<number>"
+      name=<text>       ->  "<text>"
 
     Examples:
       python scripts/monday_demo.py push <uuid> status=Done
@@ -191,7 +191,7 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
         sys.exit(1)
 
     # Parse key=value pairs into a Monday column_values dict
-    # We convert high-level names like "status" → Monday JSON shape
+    # We convert high-level names like "status" -> Monday JSON shape
     field_updates: dict[str, object] = {}
     local_updates: dict[str, object] = {}
 
@@ -204,7 +204,7 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
         value = value.strip()
 
         if key == "status":
-            # Monday status column → {"label": "..."}
+            # Monday status column -> {"label": "..."}
             field_updates["status"] = {"label": value}
             # Also map to canonical ProjectStatus if recognisable
             from project_db.db.models.work import ProjectStatus
@@ -282,16 +282,43 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
             return
 
         print(f"\nMonday item: key={ext.external_key}  url={ext.external_url}")
+
+        # Resolve logical column names to actual Monday column IDs.
+        # "status" is a logical name; real column ID varies per board.
+        if "status" in field_updates:
+            from project_db.config import settings as _settings
+            from project_db.connectors.monday.client import MondayClient
+            item_id_for_lookup = int(ext.external_key)
+            client_tmp = MondayClient(token=_settings.monday_api_token)
+            board_id_tmp = None
+            try:
+                gql = "query ($ids: [ID!]!) { items(ids: $ids) { board { id } } }"
+                d = client_tmp.query(gql, {"ids": [item_id_for_lookup]})
+                items_tmp = d.get("items") or []
+                if items_tmp:
+                    board_id_tmp = int(items_tmp[0]["board"]["id"])
+            except Exception:
+                pass
+            if board_id_tmp:
+                cols = client_tmp.list_board_columns(board_id_tmp)
+                status_col = next(
+                    (c["id"] for c in cols if c.get("type") == "status" and "status" in c.get("title", "").lower()),
+                    None,
+                )
+                if status_col and status_col != "status":
+                    field_updates[status_col] = field_updates.pop("status")
+                    print(f"  Resolved 'status' -> column id '{status_col}'")
+
         print(f"Pushing column_values: {json.dumps(field_updates, indent=2)}")
 
         connector = MondayConnector(session=session, organization_id=org.canonical_id)
         ok = connector.sync_back(entity, field_updates)
 
         if ok:
-            print("\n✓ Monday updated successfully.")
+            print("\nOK: Monday updated successfully.")
         else:
             print(
-                "\n✗ sync_back returned False.\n"
+                "\nFAIL: sync_back returned False.\n"
                 "  Check logs above. Common causes:\n"
                 "  - The item URL format doesn't embed a board ID (view.monday.com/<item_id>)\n"
                 "  - Monday token doesn't have write permission on this board\n"
@@ -328,14 +355,14 @@ def cmd_add_item(board_id_str: str, name: str) -> None:
     client = MondayClient(token=settings.monday_api_token)
 
     # Create the item on Monday
-    print(f"Creating item {name!r} on board {board_id} …")
+    print(f"Creating item {name!r} on board {board_id}...")
     result = client.create_item(board_id=board_id, item_name=name)
     item_id = result.get("id")
     if not item_id:
         print(f"Monday API returned: {result}")
         sys.exit(1)
 
-    print(f"✓ Created Monday item id={item_id}")
+    print(f"OK: Created Monday item id={item_id}")
 
     # Register it as a canonical Client in the local DB
     with session_scope() as session:
@@ -355,7 +382,7 @@ def cmd_add_item(board_id_str: str, name: str) -> None:
         session.commit()
 
         print(
-            f"✓ Registered as canonical Client\n"
+            f"OK: Registered as canonical Client\n"
             f"  canonical_id : {canonical.canonical_id}\n"
             f"  monday_item  : {item_id}"
         )
@@ -378,12 +405,12 @@ def cmd_list_boards() -> None:
 
 USAGE = """
 Monday.com Push/Pull Demo
-─────────────────────────
+-------------------------
   python scripts/monday_demo.py list-boards
       List all Monday boards (get board IDs from here)
 
   python scripts/monday_demo.py pull
-      Sync all Monday boards → local canonical DB
+      Sync all Monday boards -> local canonical DB
 
   python scripts/monday_demo.py inspect
       Show every entity now in the local DB with source mappings
@@ -396,7 +423,7 @@ Monday.com Push/Pull Demo
       Create a new item on a Monday board and register it in the local DB
 
 Typical workflow
-────────────────
+----------------
   1. python scripts/monday_demo.py list-boards          # find your board IDs
   2. python scripts/monday_demo.py pull                 # pull everything
   3. python scripts/monday_demo.py inspect              # see what landed
