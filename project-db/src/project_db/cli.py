@@ -205,10 +205,9 @@ def cmd_gdrive_auth(_: argparse.Namespace) -> int:
     import json
     import os
 
-    from project_db.config import settings
     from project_db.connectors.gdrive.client import SCOPES
 
-    client_secret_path = settings.google_credentials_path
+    client_secret_path = os.environ.get("GDRIVE_SA_KEY_PATH")
     if not client_secret_path:
         print("FAIL: GDRIVE_SA_KEY_PATH is not set in your .env file.", file=sys.stderr)
         return 2
