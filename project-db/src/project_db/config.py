@@ -52,6 +52,8 @@ class Settings:
     quickbooks_realm_id: str | None = os.environ.get("QUICKBOOKS_REALM_ID")
     quickbooks_access_token: str | None = os.environ.get("QUICKBOOKS_ACCESS_TOKEN")
     google_credentials_path: str | None = os.environ.get("GOOGLE_CREDENTIALS_PATH")
+    gdrive_impersonate: str | None = os.environ.get("GDRIVE_IMPERSONATE")
+    gdrive_root_folder: str = os.environ.get("GDRIVE_ROOT_FOLDER", "root")
     anthropic_api_key: str | None = os.environ.get("ANTHROPIC_API_KEY")
 
     @property
