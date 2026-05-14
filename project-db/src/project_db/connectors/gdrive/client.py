@@ -49,10 +49,18 @@ FETCHABLE_MIME_TYPES = {
 }
 
 # Fields requested on every files.list / changes.list call.
-# Kept narrow to reduce payload and quota units.
+# Includes everything we promote to a Document column plus a few extras
+# kept for the source_meta_json blob (capabilities, shared, starred).
 _FILE_FIELDS = (
-    "id,name,mimeType,modifiedTime,size,md5Checksum,"
-    "parents,driveId,webViewLink,trashed"
+    "id,name,mimeType,"
+    "createdTime,modifiedTime,"
+    "size,md5Checksum,"
+    "parents,driveId,"
+    "webViewLink,webContentLink,iconLink,"
+    "trashed,shared,starred,"
+    "owners(emailAddress,displayName),"
+    "lastModifyingUser(emailAddress,displayName),"
+    "capabilities(canDownload,canEdit)"
 )
 _LIST_FIELDS = f"nextPageToken,files({_FILE_FIELDS})"
 _CHANGE_FILE_FIELDS = f"nextPageToken,newStartPageToken,changes(removed,fileId,file({_FILE_FIELDS}))"
@@ -251,12 +259,11 @@ class GDriveClient:
         Call this ONCE before the first sync and persist the returned string.
         On subsequent syncs pass it to list_changes() to get only what changed.
         """
+        # getStartPageToken takes supportsAllDrives + driveId only; do NOT pass
+        # includeItemsFromAllDrives here (that's for changes.list / files.list).
         resp = (
             self._svc.changes()
-            .getStartPageToken(
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-            )
+            .getStartPageToken(supportsAllDrives=True)
             .execute()
         )
         return resp["startPageToken"]

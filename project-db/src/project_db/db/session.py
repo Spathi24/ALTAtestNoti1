@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-DEFAULT_URL = "sqlite:///./project_db.sqlite"
+# Default DB path: <project-db>/project_db.sqlite, regardless of cwd.
+# (Used only if PROJECT_DB_URL env var is unset.)
+_PKG_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+DEFAULT_URL = f"sqlite:///{(_PKG_ROOT / 'project_db.sqlite').as_posix()}"
 
 
 def get_engine(url: str | None = None):

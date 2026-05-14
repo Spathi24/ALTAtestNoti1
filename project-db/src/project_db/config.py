@@ -44,7 +44,12 @@ except ImportError:
 
 @dataclass(frozen=True)
 class Settings:
-    db_url: str = os.environ.get("PROJECT_DB_URL", "sqlite:///./project_db.sqlite")
+    # If PROJECT_DB_URL is unset, default to <project-db>/project_db.sqlite
+    # (absolute path so it doesn't shift based on cwd).
+    db_url: str = os.environ.get(
+        "PROJECT_DB_URL",
+        f"sqlite:///{(Path(__file__).resolve().parent.parent.parent / 'project_db.sqlite').as_posix()}",
+    )
     monday_api_token: str | None = os.environ.get("MONDAY_API_TOKEN")
     companycam_api_token: str | None = os.environ.get("COMPANYCAM_API_TOKEN")
     quickbooks_client_id: str | None = os.environ.get("QUICKBOOKS_CLIENT_ID")

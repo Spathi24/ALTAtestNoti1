@@ -24,9 +24,11 @@ Env vars (passed via config dict or picked up from environment):
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -46,6 +48,20 @@ _CURSOR_KEY = "gdrive_changes_page_token"
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 
 
+def _parse_rfc3339(value: str | None) -> datetime | None:
+    """Parse RFC 3339 timestamps Drive returns (e.g. '2026-05-14T12:34:56.789Z').
+
+    Returns None on missing or unparseable input -- never raises.
+    """
+    if not value:
+        return None
+    try:
+        # Python 3.11+ handles 'Z' suffix natively; for safety strip and parse.
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_name(name: str) -> str:
     """Lowercase, strip punctuation, collapse whitespace.
 
@@ -59,12 +75,40 @@ def _normalize_name(name: str) -> str:
     return name
 
 
+_CIVIC_NUMBER_RE = re.compile(r"^\s*(\d{2,5})(?:[-\s]+(\d{2,5}))?\b")
+
+
+def _extract_civic_numbers(name: str) -> set[str]:
+    """Pull leading civic number(s) from an address-like name.
+
+    '1455 Rue St. Mathieu'        -> {'1455'}
+    '5768-5770 St Laurent'        -> {'5768', '5770'}
+    '923 Rockland (Ground Floor)' -> {'923'}
+    'Active Projects'             -> set()  (no leading number)
+    """
+    m = _CIVIC_NUMBER_RE.match(name or "")
+    if not m:
+        return set()
+    nums = {m.group(1)}
+    if m.group(2):
+        nums.add(m.group(2))
+    return nums
+
+
 def _match_project_by_name(
     session: Session,
     organization_id: Any,
     folder_name: str,
 ) -> Any | None:
-    """Try to link a Drive folder to a canonical Project by name.
+    """Try to link a Drive folder to a canonical Project.
+
+    Two strategies, tried in order (civic FIRST -- it's the more specific
+    signal for address-style folders):
+      1. Leading civic-number match -- "923 Rockland" beats generic "Rockland"
+         because "923" is a hard match.  Handles renderings like
+         "1455 Rue St. Mathieu" -> project "1455 Saint Mathieu".
+      2. Normalized substring match -- fallback for non-address folder names
+         and projects without civic numbers.
 
     Returns project.canonical_id or None.
     """
@@ -72,14 +116,27 @@ def _match_project_by_name(
     if not needle:
         return None
 
-    for project in session.query(Project).all():
+    folder_civics = _extract_civic_numbers(folder_name)
+    projects = session.query(Project).all()
+
+    # Pass 1: civic-number match (tight when both sides have a civic).
+    if folder_civics:
+        for project in projects:
+            project_civics = _extract_civic_numbers(project.name or "")
+            if project_civics and (folder_civics & project_civics):
+                logger.info(
+                    "[GDRIVE] folder %r -> Project %r (civic match: %s)",
+                    folder_name, project.name, folder_civics & project_civics,
+                )
+                return project.canonical_id
+
+    # Pass 2: normalized substring match (looser fallback).
+    for project in projects:
         haystack = _normalize_name(project.name or "")
         if haystack and (needle == haystack or needle in haystack or haystack in needle):
-            logger.debug(
-                "Folder '%s' matched Project '%s' (id=%s)",
-                folder_name,
-                project.name,
-                project.canonical_id,
+            logger.info(
+                "[GDRIVE] folder %r -> Project %r (name match)",
+                folder_name, project.name,
             )
             return project.canonical_id
 
@@ -146,37 +203,86 @@ class GDriveConnector(BaseConnector):
     # Full crawl
     # ------------------------------------------------------------------
 
+    # Hard cap on recursion depth -- Drive itself caps at 100 levels of nesting,
+    # but a 20-deep tree is already pathological for our use case.
+    _MAX_DEPTH = 20
+
     def _full_sync(self) -> None:
-        """Walk root folder one level deep (subfolders = projects), then files."""
-        root_items = self.client.list_folder(self.root_folder)
-        folders = [i for i in root_items if i.get("mimeType") == _FOLDER_MIME]
-        files_at_root = [i for i in root_items if i.get("mimeType") != _FOLDER_MIME]
+        """Walk root folder fully recursively, tracking folder paths.
 
-        # Files directly in root -- no project context
-        for file in files_at_root:
-            self._upsert_document(file, project_id=None, folder_name=None)
+        At each top-level subfolder we attempt to resolve a canonical Project
+        via folder-name match; files nested anywhere under that subfolder
+        inherit the project_id and the human-readable folder path.
+        """
+        self._walk(
+            folder_id=self.root_folder,
+            folder_path="",
+            project_id=None,
+            parent_folder_id=None,
+            depth=0,
+        )
 
-        # Walk each project subfolder
-        for folder in folders:
-            project_id = self._resolve_folder_to_project(folder["id"], folder["name"])
-            sub_items = self.client.list_folder(folder["id"])
-            for file in sub_items:
-                if file.get("mimeType") == _FOLDER_MIME:
-                    # Nested subfolder: recurse one more level (contracts, drawings, etc.)
-                    nested = self.client.list_folder(file["id"])
-                    for nf in nested:
-                        if nf.get("mimeType") != _FOLDER_MIME:
-                            self._upsert_document(nf, project_id=project_id, folder_name=folder["name"])
-                else:
-                    self._upsert_document(file, project_id=project_id, folder_name=folder["name"])
-
-        # Save a fresh cursor so next run uses delta sync.
+        # Save a fresh cursor so the next run uses delta sync.
         try:
             new_cursor = self.client.get_start_page_token()
             self._save_cursor(new_cursor)
             logger.info("[GDRIVE] Saved new cursor for delta sync: %s", new_cursor)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[GDRIVE] Could not save delta-sync cursor: %s", exc)
+
+    def _walk(
+        self,
+        *,
+        folder_id: str,
+        folder_path: str,
+        project_id: Any | None,
+        parent_folder_id: str | None,
+        depth: int,
+    ) -> None:
+        """Recursive folder traversal.
+
+        Tries to resolve every folder name to a canonical Project (cached so
+        each folder is checked once per run).  Project folders can sit at any
+        depth -- e.g. "01. PROJECTS/ACTIVE/5768 St-Laurent" only matches at
+        depth 3.  Once a folder resolves, every file below it inherits that
+        project_id.  Inner folders that themselves match (e.g. a sub-project
+        nested under a parent project) override the parent's resolution for
+        their own subtree.
+        """
+        if depth > self._MAX_DEPTH:
+            logger.warning("[GDRIVE] Max depth %d exceeded at %s", self._MAX_DEPTH, folder_path)
+            return
+
+        try:
+            items = self.client.list_folder(folder_id)
+        except Exception as exc:  # noqa: BLE001
+            self._record_failure(f"list_folder({folder_id}, path={folder_path!r}): {exc}")
+            return
+
+        logger.debug("[GDRIVE] walk depth=%d path=%r -> %d items", depth, folder_path, len(items))
+
+        for item in items:
+            if item.get("mimeType") == _FOLDER_MIME:
+                # Try to resolve this folder name to a canonical Project.
+                # If it doesn't match, inherit the parent's project_id (which
+                # itself may have matched higher up the tree).
+                matched = self._resolve_folder_to_project(item["id"], item["name"])
+                child_project_id = matched if matched is not None else project_id
+                child_path = f"{folder_path}/{item['name']}" if folder_path else item["name"]
+                self._walk(
+                    folder_id=item["id"],
+                    folder_path=child_path,
+                    project_id=child_project_id,
+                    parent_folder_id=folder_id,
+                    depth=depth + 1,
+                )
+            else:
+                self._upsert_document(
+                    item,
+                    project_id=project_id,
+                    folder_path=folder_path,
+                    parent_folder_id=folder_id,
+                )
 
     # ------------------------------------------------------------------
     # Delta sync
@@ -203,7 +309,13 @@ class GDriveConnector(BaseConnector):
 
             if file_data:
                 project_id = self._resolve_folder_to_project_from_file(file_data)
-                self._upsert_document(file_data, project_id=project_id, folder_name=None)
+                parent_id = (file_data.get("parents") or [None])[0]
+                self._upsert_document(
+                    file_data,
+                    project_id=project_id,
+                    folder_path=None,  # unknown in delta path; next full sync repairs
+                    parent_folder_id=parent_id,
+                )
 
         self._save_cursor(new_cursor)
 
@@ -216,30 +328,66 @@ class GDriveConnector(BaseConnector):
         file: dict[str, Any],
         *,
         project_id: Any | None,
-        folder_name: str | None,
+        folder_path: str | None,
+        parent_folder_id: str | None,
     ) -> None:
-        """Map a Drive file dict to a canonical Document row."""
+        """Map a Drive file dict to a canonical Document row.
+
+        Populates every Drive-metadata column we promoted in the model, and
+        stashes the rest of the payload in source_meta_json.
+        """
         file_id = file.get("id", "")
         name = file.get("name", "Unnamed")
         mime_type = file.get("mimeType", "")
-        url = file.get("webViewLink", f"https://drive.google.com/file/d/{file_id}")
+        url = file.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}"
+
+        # Owner: first owner if multiple (most files have one).
+        owners = file.get("owners") or []
+        owner_email = owners[0].get("emailAddress") if owners else None
+
+        # Size comes back as a string from Drive -- coerce to int.
+        size_str = file.get("size")
+        try:
+            size_bytes = int(size_str) if size_str is not None else None
+        except (TypeError, ValueError):
+            size_bytes = None
 
         attrs: dict[str, Any] = {
             "name": name,
             "mime_type": mime_type,
             "url": url,
             "storage_ref": file_id,
+            "created_at_source": _parse_rfc3339(file.get("createdTime")),
+            "modified_at_source": _parse_rfc3339(file.get("modifiedTime")),
+            "size_bytes": size_bytes,
+            "md5_checksum": file.get("md5Checksum"),
+            "drive_id": file.get("driveId"),
+            "parent_folder_id": parent_folder_id,
+            "folder_path": folder_path,
+            "owner_email": owner_email,
+            "is_trashed": bool(file.get("trashed", False)),
+            "source_meta_json": json.dumps(
+                {
+                    "webContentLink": file.get("webContentLink"),
+                    "iconLink": file.get("iconLink"),
+                    "shared": file.get("shared"),
+                    "starred": file.get("starred"),
+                    "owners": owners,
+                    "lastModifyingUser": file.get("lastModifyingUser"),
+                    "capabilities": file.get("capabilities"),
+                    "parents": file.get("parents"),
+                },
+                default=str,
+            ),
         }
         if project_id is not None:
             attrs["project_id"] = project_id
-
-        external_url = url
 
         try:
             result = self.resolver.resolve_or_create(
                 source=self.source,
                 external_key=file_id,
-                external_url=external_url,
+                external_url=url,
                 entity_class=Document,
                 attrs=attrs,
                 matcher=ExactFieldMatcher(["storage_ref"]),

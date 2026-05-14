@@ -24,17 +24,35 @@ SQLITE_TASK_COLUMNS: dict[str, str] = {
     "parent_task_id": "UUID",
 }
 
+SQLITE_DOCUMENT_COLUMNS: dict[str, str] = {
+    "created_at_source": "DATETIME",
+    "modified_at_source": "DATETIME",
+    "size_bytes": "BIGINT",
+    "md5_checksum": "VARCHAR",
+    "drive_id": "VARCHAR",
+    "parent_folder_id": "VARCHAR",
+    "folder_path": "VARCHAR",
+    "owner_email": "VARCHAR",
+    "is_trashed": "BOOLEAN NOT NULL DEFAULT 0",
+    "source_meta_json": "TEXT",
+}
+
+
+def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
+    existing = {col["name"] for col in inspector.get_columns(table)}
+    for name, ddl_type in columns.items():
+        if name not in existing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+
 
 def ensure_sqlite_schema(engine) -> None:
     """Add nullable compatibility columns to existing SQLite files."""
     if engine.dialect.name != "sqlite":
         return
     inspector = inspect(engine)
-    if "task" not in inspector.get_table_names():
-        return
-
-    existing = {col["name"] for col in inspector.get_columns("task")}
+    tables = set(inspector.get_table_names())
     with engine.begin() as conn:
-        for name, ddl_type in SQLITE_TASK_COLUMNS.items():
-            if name not in existing:
-                conn.execute(text(f"ALTER TABLE task ADD COLUMN {name} {ddl_type}"))
+        if "task" in tables:
+            _add_missing_columns(conn, inspector, "task", SQLITE_TASK_COLUMNS)
+        if "document" in tables:
+            _add_missing_columns(conn, inspector, "document", SQLITE_DOCUMENT_COLUMNS)
