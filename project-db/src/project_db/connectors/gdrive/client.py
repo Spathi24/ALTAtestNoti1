@@ -1,24 +1,34 @@
 """Google Drive REST v3 API client.
 
-Auth strategy: service account with domain-wide delegation (DWD).
-The service-account JSON key path lives in GDRIVE_SA_KEY_PATH.
-We impersonate a Workspace user (GDRIVE_IMPERSONATE) so the account is
-visible on every shared drive without being explicitly added as a member.
+Two auth modes are supported, auto-detected from the credential file type:
 
-Scope: drive.readonly  --  read file metadata + content; no write access.
+1. OAuth Desktop App (personal Gmail / no Workspace domain)
+   - GDRIVE_SA_KEY_PATH points to the OAuth client_secret JSON you downloaded
+     from Google Cloud Console (contains "installed": {...}).
+   - Run `project_db gdrive-auth` ONCE to open the browser consent screen.
+   - A token is saved to GDRIVE_TOKEN_PATH (default: secrets/gdrive_token.json).
+   - Subsequent syncs refresh the token silently from the saved file.
+
+2. Service Account with Domain-Wide Delegation (Google Workspace orgs only)
+   - GDRIVE_SA_KEY_PATH points to a service account JSON (contains
+     "type": "service_account" and a private key).
+   - Set GDRIVE_IMPERSONATE to a Workspace user email to impersonate.
+   - No browser flow needed -- pure headless auth.
+
+Scope: drive.readonly  --  read metadata + content; no writes.
 
 Delta sync: call get_start_page_token() once, persist the token, then call
-list_changes(token) on subsequent runs.  This is the only connector where
-genuine cursor-based delta sync works out of the box (Monday removed
-updated_after; QB needs a timestamp query).
+list_changes(token) on subsequent runs.
 
-Env vars (all optional at import time so tests can mock without credentials):
-  GDRIVE_SA_KEY_PATH  -- absolute path to service-account JSON key file
-  GDRIVE_IMPERSONATE  -- email of the Workspace user to impersonate
+Env vars:
+  GDRIVE_SA_KEY_PATH  -- path to credential JSON (client secret OR service account)
+  GDRIVE_TOKEN_PATH   -- where to save OAuth tokens (default: secrets/gdrive_token.json)
+  GDRIVE_IMPERSONATE  -- only used for service-account mode (Workspace domains only)
   GDRIVE_ROOT_FOLDER  -- Drive folder ID to crawl (defaults to 'root')
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -76,23 +86,45 @@ class GDriveClient:
     ) -> Any:
         """Build and return a googleapiclient Drive v3 resource.
 
-        Raises RuntimeError if the google-api-python-client package is missing
-        or credentials are not configured.
+        Auto-detects credential type from the JSON file:
+          - {"type": "service_account", ...}  -> service account flow
+          - {"installed": {...}}               -> OAuth Desktop app flow
         """
         try:
-            from google.oauth2 import service_account
             from googleapiclient.discovery import build
         except ImportError as exc:
             raise RuntimeError(
                 "google-api-python-client and google-auth are required for the "
-                "Google Drive connector.  Run: pip install google-api-python-client google-auth"
+                "Google Drive connector.  Run: pip install google-api-python-client google-auth google-auth-oauthlib"
             ) from exc
 
         key_path = sa_key_path or os.environ.get("GDRIVE_SA_KEY_PATH")
         if not key_path:
             raise RuntimeError(
-                "GDRIVE_SA_KEY_PATH is not set.  Point it at your service-account JSON key file."
+                "GDRIVE_SA_KEY_PATH is not set.  "
+                "Point it at your credential JSON (OAuth client secret or service account)."
             )
+
+        # Detect which credential type we have.
+        with open(key_path) as fh:
+            cred_data = json.load(fh)
+
+        if cred_data.get("type") == "service_account":
+            creds = GDriveClient._service_account_creds(key_path, impersonate)
+        elif "installed" in cred_data or "web" in cred_data:
+            creds = GDriveClient._oauth_user_creds(key_path)
+        else:
+            raise RuntimeError(
+                f"Unrecognized credential format in {key_path}.  "
+                "Expected a service-account JSON or an OAuth client-secret JSON."
+            )
+
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    @staticmethod
+    def _service_account_creds(key_path: str, impersonate: str | None) -> Any:
+        """Build service-account credentials (Google Workspace domains only)."""
+        from google.oauth2 import service_account
 
         creds = service_account.Credentials.from_service_account_file(
             key_path, scopes=SCOPES
@@ -105,8 +137,43 @@ class GDriveClient:
                 "GDRIVE_IMPERSONATE not set -- shared-drive items may be invisible. "
                 "Set it to a Workspace user who is a member of every project drive."
             )
+        return creds
 
-        return build("drive", "v3", credentials=creds, cache_discovery=False)
+    @staticmethod
+    def _oauth_user_creds(client_secret_path: str) -> Any:
+        """Load saved OAuth user credentials, refreshing if expired.
+
+        Raises RuntimeError if no token file exists yet -- caller should run
+        `project_db gdrive-auth` to complete the one-time browser consent.
+        """
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        token_path = os.environ.get("GDRIVE_TOKEN_PATH") or os.path.join(
+            os.path.dirname(os.path.abspath(client_secret_path)), "gdrive_token.json"
+        )
+
+        creds = None
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+
+        if creds and creds.valid:
+            return creds
+
+        if creds and creds.expired and creds.refresh_token:
+            logger.info("[GDRIVE] Refreshing expired OAuth token...")
+            creds.refresh(Request())
+            # Persist the refreshed token.
+            with open(token_path, "w") as fh:
+                fh.write(creds.to_json())
+            return creds
+
+        raise RuntimeError(
+            f"No valid Google Drive token found at:\n  {token_path}\n\n"
+            "Run this once to authenticate:\n"
+            "  project_db gdrive-auth\n\n"
+            "A browser window will open asking you to sign in with your Google account."
+        )
 
     # ------------------------------------------------------------------
     # Folder listing

@@ -195,6 +195,69 @@ def cmd_list_sources(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gdrive_auth(_: argparse.Namespace) -> int:
+    """One-time OAuth browser flow to authorize Google Drive access.
+
+    Only needed when GDRIVE_SA_KEY_PATH points to an OAuth Desktop client
+    secret JSON (the kind you download from Google Cloud Console).
+    Service-account credentials never need this step.
+    """
+    import json
+    import os
+
+    from project_db.config import settings
+    from project_db.connectors.gdrive.client import SCOPES
+
+    client_secret_path = settings.google_credentials_path
+    if not client_secret_path:
+        print("FAIL: GDRIVE_SA_KEY_PATH is not set in your .env file.", file=sys.stderr)
+        return 2
+
+    if not os.path.exists(client_secret_path):
+        print(f"FAIL: File not found: {client_secret_path}", file=sys.stderr)
+        return 2
+
+    # Confirm this is an OAuth client secret, not a service account.
+    with open(client_secret_path) as fh:
+        cred_data = json.load(fh)
+
+    if cred_data.get("type") == "service_account":
+        print("This credential is a service account -- no browser auth needed.")
+        print("Service accounts authenticate headlessly. Try: project_db sync GOOGLE_DRIVE")
+        return 0
+
+    if "installed" not in cred_data and "web" not in cred_data:
+        print(f"FAIL: Unrecognized credential format in {client_secret_path}", file=sys.stderr)
+        return 2
+
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+    except ImportError:
+        print(
+            "FAIL: google-auth-oauthlib is not installed.\n"
+            "Run: pip install google-auth-oauthlib",
+            file=sys.stderr,
+        )
+        return 2
+
+    token_path = os.environ.get("GDRIVE_TOKEN_PATH") or os.path.join(
+        os.path.dirname(os.path.abspath(client_secret_path)), "gdrive_token.json"
+    )
+
+    print("Opening browser for Google Drive authorization...")
+    print("Sign in with the Google account that owns the Drive you want to sync.\n")
+
+    flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+    creds = flow.run_local_server(port=0, open_browser=True)
+
+    with open(token_path, "w") as fh:
+        fh.write(creds.to_json())
+
+    print(f"\nOK: Token saved to {token_path}")
+    print("You can now run: project_db sync GOOGLE_DRIVE")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -228,6 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
     le.add_argument("entity_type", help="e.g. Project, Client")
     le.add_argument("canonical_id", help="UUID of the canonical entity")
     le.set_defaults(func=cmd_list_external)
+
+    sub.add_parser(
+        "gdrive-auth",
+        help="One-time browser login for Google Drive (OAuth Desktop credentials only)",
+    ).set_defaults(func=cmd_gdrive_auth)
 
     return p
 
