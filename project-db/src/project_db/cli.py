@@ -13,9 +13,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import uuid
 
+# Importing config triggers python-dotenv to load .env into os.environ.
+# Must happen before any os.environ.get(...) calls below.
+from project_db import config as _config  # noqa: F401
 from project_db.ai import AiAssistant
 from project_db.connectors import available_sources, get_connector_class
 from project_db.db import Base, ensure_sqlite_schema, get_engine, session_scope
