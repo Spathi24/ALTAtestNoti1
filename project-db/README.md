@@ -6,8 +6,44 @@ you query across all of them from a single command or — eventually — a plain
 English question to an AI assistant.
 
 **v0.2 focuses on:** Write mutations back to Monday, mirror-column data
-recovery for portfolio-style boards, QuickBooks connector skeleton, and a
-113-test suite covering all of the above.
+recovery for portfolio-style boards, Google Drive connector live (750 docs
+synced), QuickBooks connector skeleton, and a 131-test suite.
+
+---
+
+## Mission
+
+**ALTA is a contractor operations brain, not a sync tool.**
+
+Most SaaS integration projects build a fancy version of Zapier. This one
+doesn't. Once Monday and Drive are flowing into one canonical database, the
+real product is an LLM layer that **reads what your contracts promised and
+compares it to what Monday says is actually happening** — then proposes
+corrections you approve before they get written back.
+
+Concretely, this means:
+
+- **Time saved.** A PM at a mid-sized contractor spends roughly 12–24 hours
+  per week across six active projects toggling tabs to reconcile what's in
+  Monday vs. what's in Drive vs. what's in QuickBooks. Eliminating half of
+  that frees up roughly a working week per PM per month.
+- **Errors caught.** Forgotten scope items, missed deadlines, and unsent
+  invoices are all data-consistency failures across two or more systems.
+  This system turns them into flagged anomalies before they become invoiced
+  losses. One caught change order per quarter pays for the project.
+- **Decisions improved.** Once your operational reality is queryable, you
+  can finally answer questions like *"which clients have the best margin
+  per dollar of project effort?"* — questions that almost no contractor
+  in the industry can answer today.
+
+Frame this project as *sync* and it's redundant with Zapier. Frame it as
+*the layer that sits under Monday and Drive and uses LLMs to enforce
+contract-to-execution consistency* and it's something nobody else is
+building. **The latter is the real project.**
+
+The full strategic mission, architecture rationale, and decision manifesto
+lives in **[docs/STRATEGY.md](docs/STRATEGY.md)** — read it before
+contributing.
 
 ---
 
@@ -16,13 +52,15 @@ recovery for portfolio-style boards, QuickBooks connector skeleton, and a
 ✅ **Write Mutations:** Push changes back to Monday (`change_multiple_column_values`)
 ✅ **Mirror-Column Overlay:** Recover status/timeline from linked portfolio items
 ✅ **Column Cache:** Board-column schema cached per `MondayClient` (one fetch / board / run)
+✅ **Google Drive Connector:** 750 documents synced with full metadata; 300 linked to canonical Projects
 ✅ **QuickBooks Connector:** Code complete, awaiting live credentials
 ✅ **Ripple-Effect Ready:** Infrastructure for cross-system updates
 
-🟡 **Delta Sync:** Withdrawn — Monday API-Version 2026-07 dropped
-`updated_after`. Every sync is a full pull until webhooks ship.
+🟡 **Delta Sync:** Monday withdrawn (API-Version 2026-07 dropped
+`updated_after`). Drive has genuine `changes.list` delta sync.
 
-**See [OPTIMIZATION_v0.2.md](docs/OPTIMIZATION_v0.2.md) for detailed breakdown.**
+**See [OPTIMIZATION_v0.2.md](docs/OPTIMIZATION_v0.2.md) for detailed breakdown
+and [docs/STRATEGY.md](docs/STRATEGY.md) for the strategic direction.**
 
 ---
 
@@ -340,16 +378,35 @@ project-db/
 - [x] **Ripple Effects** — Infrastructure for cross-system updates
 - [ ] ~~Delta Sync~~ — Withdrawn: Monday API-Version 2026-07 removed `updated_after`
 
-### 🔄 v0.3+ — Multi-System Expansion
+### ✅ v0.2.5 — Google Drive live (done)
 
-- [ ] **CompanyCam Connector** — Photos, deficiency reports per job
-- [ ] **Google Drive Connector** — Document metadata and linking
-- [ ] **Webhook Listeners** — Real-time sync instead of manual batch
-- [ ] **Ripple Effect Demos** — QB → Monday updates → email notifications
-- [ ] **Text-to-SQL AI Layer** — Natural language queries against canonical schema
-- [ ] **Postgres + Alembic** — Multi-user support and safe schema migrations
+- [x] **Google Drive Connector** — 750 documents, full metadata, project linking via civic-number match
+- [x] **One consolidated SQLite location** — absolute path in `.env`
 
-See [adding-a-connector.md](docs/adding-a-connector.md) for the playbook on adding new connectors.
+### 🧠 v0.3 — The Brain (per [STRATEGY.md](docs/STRATEGY.md))
+
+This is the next focus. Everything below derives from the strategic decision
+that ALTA's product is the LLM reconciliation layer, not the sync.
+
+- [ ] **`DocumentText` sidecar** — Extract text from PDFs, Google Docs, DOCX, Excel; cap at 10 MB; skip HEIC/DWG/audio
+- [ ] **`Proposal` table** — LLM-generated suggestions awaiting human approval
+- [ ] **LLM timeline-filling** — Given a Project + its DocumentText, propose dates for Monday tasks lacking them
+- [ ] **LLM scope reconciliation** — Compare contract scope (Drive text) to Monday task list, flag missing items
+- [ ] **Approval workflow CLI** — `project_db proposals list / accept / reject`; accepted writes flow back to Monday
+
+### 🛑 Deferred (per STRATEGY.md)
+
+These are valid items, but they are plumbing, not the brain. They are
+explicitly deferred until v0.3 lands and a PM is using ALTA daily.
+
+- ~~CompanyCam connector~~ — deferred until Monday+Drive produce daily value
+- ~~QuickBooks live integration~~ — deferred (code is ready, run when invoices are needed)
+- ~~Text-to-SQL natural-language layer~~ — too speculative; canned reports + LLM proposals first
+- ~~Webhook receivers~~ — full-pull is fine at current scale
+- ~~Postgres + Alembic migrations~~ — migrate when SQLite limits actually bite
+
+See [adding-a-connector.md](docs/adding-a-connector.md) for the playbook on adding new connectors,
+and [STRATEGY.md](docs/STRATEGY.md) for the full rationale on why the order above is correct.
 
 ---
 

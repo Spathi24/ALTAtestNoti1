@@ -4,6 +4,46 @@ This file is read at the start of every session. **Read it before touching code.
 
 ---
 
+## Strategic Direction (READ FIRST)
+
+The full strategic mission lives in
+[`project-db/docs/STRATEGY.md`](project-db/docs/STRATEGY.md). Read it before
+any non-trivial planning conversation. The short version:
+
+**ALTA is a contractor operations brain, not a sync tool.** Framed as
+"centralize Monday + Drive," this project is redundant with Zapier. Framed as
+"use LLMs to reconcile what contracts promised against what Monday says is
+happening, and propose corrections" — it is genuinely novel and worth
+building.
+
+**Operating principles** (the 10-point list from STRATEGY.md — apply these
+when choosing what to build):
+
+1. The schema is right. Don't redesign it.
+2. `Project` is the join nucleus. Never merge a Monday item with a Drive file —
+   link them via shared `project_id`.
+3. One source of truth per entity type for writes (Monday → Tasks/Projects/CRM,
+   Drive → Documents, QB → Invoices). Reads everywhere; writes one direction.
+4. Keep everything. Promote queryable fields to columns; dump the rest in
+   `source_meta_json`.
+5. The LLM is an advisor, never an actor. All AI proposals go to a
+   `Proposal` table for human approval before any write-back.
+6. Tier-one (canned reports) before tier-two (LLM).
+7. No new connectors until Monday+Drive produce daily PM-facing value.
+   CompanyCam and live QuickBooks are deferred.
+8. No new tech yet — no graph DB, no Elasticsearch, no Postgres, no pgvector,
+   no text-to-SQL. Add them when SQL limits actually bite.
+9. The success test is **adoption**, not feature count. If a PM opens this
+   system before opening Monday, it's working.
+10. Stop building plumbing. Start building the brain.
+
+**Current focus per STRATEGY.md:** content extraction from Drive documents
+(PDFs, Docs, DOCX, Excel) into a `DocumentText` sidecar table, then an LLM
+layer that proposes task timelines and scope reconciliations, gated by a
+`Proposal` table with human approval before write-back to Monday.
+
+---
+
 ## What this project is
 
 **ALTAtest / `project_db`** is a centralized data platform that pulls live data
@@ -14,6 +54,10 @@ questions — and eventually have an AI assistant answer them in plain English.
 **Why it exists:** work, money, and photos are siloed across four tools. There
 is no single place to ask things like *"what's the margin on Project X?"* or
 *"show me everything for 923 Rockland — tasks, photos, invoices, documents."*
+
+**What it really is** (per STRATEGY.md): an LLM-powered operations brain that
+reconciles the contract (Drive) against the operational state (Monday) and
+proposes corrections. The sync is plumbing; the reconciliation is the product.
 
 **Architecture in three pieces:**
 
@@ -197,24 +241,49 @@ Done:
 - Mirror-column overlay: pulls status/timeline from portfolio items that
   proxy task-board values.
 - QuickBooks connector code complete (live test still pending real creds).
-- 113-test suite.
-- Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`.
+- **Google Drive connector live**: 750 documents synced with full metadata
+  (folder_path, modified_time, size, md5, owner, etc.), 300 linked to
+  canonical Projects via civic-number + name matching.
+- One consolidated SQLite location (`project-db/project_db.sqlite`,
+  absolute path in `.env`).
+- 131-test suite.
+- Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`, `gdrive-auth`.
 
 Known limits / non-features (do not pretend otherwise):
-- **Sync is full-pull only.** Monday API-Version 2026-07 removed
+- **Sync is full-pull only for Monday.** Monday API-Version 2026-07 removed
   `updated_after` from `items_page`. The old `_get_last_sync_time` was theatre
   and got removed on 2026-05-14. True incremental sync = webhook work.
+  Drive does have genuine `changes.list` delta sync via stored cursor.
 - **QB connector has never been run live.** Invoice table is empty in dev.
+  **Deferred per STRATEGY.md** — do not pick this up until Monday+Drive are
+  in daily PM use.
 - **Task data is sparse.** Only ~11% of Monday tasks have a date/duration
-  filled in. Project optimizer (PERT/CPM) runs but mostly outputs 1-day
-  defaults. It's on the backburner until the data is denser or supplemented
-  by other connectors.
-- **AI assistant is canned-reports only.** `ai/query.py` Modes 2/3 are TODOs.
+  filled in. This is the *exact problem the AI layer is meant to solve*
+  (read Drive contracts → propose dates for Monday tasks). Not a bug to
+  fix in Monday; a feature to build in ALTA.
+- **AI assistant is canned-reports only.** Tier 2 (LLM-driven proposals) is
+  the next big build, per STRATEGY.md.
 
-Next:
-- CompanyCam connector.
-- Google Drive connector (data arbitration: pull timeline / scope-of-work
-  context from contracts to enrich sparse Monday tasks).
-- Webhook receivers (replace polling).
-- Text-to-SQL AI layer over canonical schema.
-- Postgres + Alembic migrations.
+Next (in priority order per STRATEGY.md):
+1. **`DocumentText` sidecar table + content extraction** for PDFs, Google
+   Docs, DOCX, Excel. Cap at 10 MB per file. Skip HEIC, DWG, audio.
+2. **`Proposal` table** for LLM-generated suggestions (entity_type,
+   entity_id, field, proposed_value, confidence, source_doc_ids, status).
+   All AI writes flow through here, gated by human approval.
+3. **LLM timeline-filling**: given a Project + its `DocumentText`, propose
+   `start_date` / `end_date` / `duration_days` for tasks lacking them.
+4. **LLM scope reconciliation**: compare contract scope (Drive text) to
+   Monday task list, flag missing items.
+5. **Approval workflow CLI**: `project_db proposals list`, `accept`,
+   `reject`. Accepted proposals → write back to Monday via existing
+   `sync_back`.
+
+Explicitly NOT next (per STRATEGY.md):
+- CompanyCam connector
+- QB live integration
+- Text-to-SQL natural language layer
+- Postgres migration / Alembic
+- Webhook receivers
+- Any new source system
+
+These are real items but they're plumbing. The brain (#1-5 above) comes first.
