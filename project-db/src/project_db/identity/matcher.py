@@ -122,12 +122,3 @@ class FuzzyFieldMatcher(EntityMatcher):
                 best = row
                 best_score = score
         return best
-
-
-# Suggested default matchers per entity. Tweak as real data reveals weirdness.
-DEFAULT_MATCHERS: dict[str, EntityMatcher] = {
-    "Client": ExactFieldMatcher(["name"]),
-    "Vendor": ExactFieldMatcher(["name"]),
-    "Property": ExactFieldMatcher(["address"]),
-    "User": ExactFieldMatcher(["email"]),
-}

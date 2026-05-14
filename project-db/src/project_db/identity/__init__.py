@@ -1,6 +1,5 @@
-"""Identity resolution layer — canonical ID strategy."""
+"""Identity resolution layer -- canonical ID strategy."""
 from project_db.identity.matcher import (
-    DEFAULT_MATCHERS,
     EntityMatcher,
     ExactFieldMatcher,
     FuzzyFieldMatcher,
@@ -9,7 +8,6 @@ from project_db.identity.matcher import (
 from project_db.identity.resolver import IdentityResolver, ResolveResult
 
 __all__ = [
-    "DEFAULT_MATCHERS",
     "EntityMatcher",
     "ExactFieldMatcher",
     "FuzzyFieldMatcher",

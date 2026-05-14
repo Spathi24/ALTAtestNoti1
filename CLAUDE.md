@@ -71,14 +71,14 @@ A merge conflict at push time is a failure of this rule.
 
 ### 3. Keep the test suite green.
 
-There are **102 tests** in `project-db/tests/`. Before pushing anything that
+There are **113 tests** in `project-db/tests/`. Before pushing anything that
 touches `src/`:
 
 ```bash
 cd project-db && python -m pytest tests/ -q
 ```
 
-Expected: `102 passed`. Anything less is a regression — fix it before you push.
+Expected: `113 passed`. Anything less is a regression — fix it before you push.
 
 If you add a feature, add a test for it. If you change an API surface (renamed
 function, new required arg, dropped enum value), update the test that exercises
@@ -189,18 +189,32 @@ entry to `SourceSystem` enum, write tests, run `pytest`, push.
 
 ---
 
-## Status (v0.2)
+## Status (v0.2, as of 2026-05-14)
 
 Done:
-- Canonical schema (13 entities) + identity resolver with fuzzy match.
+- Canonical schema (13 entities) + identity resolver (exact + fuzzy).
 - Monday connector: full board/item read + column extraction + push (`sync_back`).
-- QuickBooks connector: customers, invoices, estimates.
-- 102-test suite.
+- Mirror-column overlay: pulls status/timeline from portfolio items that
+  proxy task-board values.
+- QuickBooks connector code complete (live test still pending real creds).
+- 113-test suite.
 - Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`.
+
+Known limits / non-features (do not pretend otherwise):
+- **Sync is full-pull only.** Monday API-Version 2026-07 removed
+  `updated_after` from `items_page`. The old `_get_last_sync_time` was theatre
+  and got removed on 2026-05-14. True incremental sync = webhook work.
+- **QB connector has never been run live.** Invoice table is empty in dev.
+- **Task data is sparse.** Only ~11% of Monday tasks have a date/duration
+  filled in. Project optimizer (PERT/CPM) runs but mostly outputs 1-day
+  defaults. It's on the backburner until the data is denser or supplemented
+  by other connectors.
+- **AI assistant is canned-reports only.** `ai/query.py` Modes 2/3 are TODOs.
 
 Next:
 - CompanyCam connector.
-- Google Drive connector.
+- Google Drive connector (data arbitration: pull timeline / scope-of-work
+  context from contracts to enrich sparse Monday tasks).
 - Webhook receivers (replace polling).
 - Text-to-SQL AI layer over canonical schema.
 - Postgres + Alembic migrations.

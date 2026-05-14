@@ -13,10 +13,6 @@ Complexity & Limits:
   - Enterprise: 5,000 queries/min, 5M complexity/min
   - Daily limit: Pro=10k calls, Enterprise=25k calls
 
-Delta Sync:
-  Use list_items_updated_since() to fetch only changed items (cheaper than full resync).
-  Store last_synced_at per board and pass to subsequent syncs.
-
 Write Operations:
   - change_column_value() — update single item field
   - change_multiple_column_values() — batch update (preferred, 150x cheaper)
@@ -171,7 +167,6 @@ class MondayClient:
         self,
         board_id: int,
         limit: int = PAGE_LIMIT,
-        updated_since: datetime | None = None,
         include_subitems: bool = False,
     ) -> list[dict[str, Any]]:
         """Fetch items on a board with explicit board-column values.
@@ -181,17 +176,11 @@ class MondayClient:
         then request column_values(ids: $column_ids) so Status, Timeline,
         Duration, Priority, etc. are actually included when present on the board.
 
-        updated_since is intentionally not pushed into items_page because
-        API-Version 2026-07 does not support an updated_after argument there.
+        Note: there is no incremental / delta-sync mode here. API-Version
+        2026-07 dropped the `updated_after` argument from items_page; every
+        call is a full board pull. If you need incremental sync, build it on
+        Monday's webhook events, not on this endpoint.
         """
-        if updated_since:
-            logger.debug(
-                "list_items board=%s: updated_since noted, doing full fetch "
-                "(items_page has no updated_after arg in API-Version %s)",
-                board_id,
-                API_VERSION,
-            )
-
         columns = self.list_board_columns(board_id)
         column_ids = [c["id"] for c in columns if c.get("id")]
         if not column_ids:
@@ -285,9 +274,8 @@ class MondayClient:
                 break
 
         logger.debug(
-            "list_items board=%s%s -> %d items total; requested %d columns",
+            "list_items board=%s -> %d items total; requested %d columns",
             board_id,
-            " (delta/full-fetch fallback)" if updated_since else "",
             len(all_items),
             len(column_ids),
         )

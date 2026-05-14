@@ -4,11 +4,10 @@ Board classification is config-driven (regex patterns) so renaming a board
 in Monday doesn't require touching Python. Column extraction uses heuristic
 title matching + optional explicit column_id overrides.
 
-Delta Sync:
-  By default, full sync is performed on first run. On subsequent runs, only
-  items updated since last sync are fetched, reducing API cost by 90%+.
-  
-  Set force_full_sync=True to override and re-fetch all items (testing/debugging).
+Sync model: every run is a full board pull. Monday's API-Version 2026-07
+removed `updated_after` from items_page, so true delta sync only works via
+webhooks (not yet implemented). One full sync against the live workspace
+is ~30s and a few hundred items, which is fine for nightly cadence.
 
 Board mapping (DEFAULT_BOARD_MAPPING):
   CRM workspace           -> Lead, Deal, Client boards
@@ -20,18 +19,17 @@ connector config if your Monday column ids/titles differ.
 
 Write-back capability:
   MondayConnector.sync_back() pushes canonical changes to Monday. Use after
-  syncing data from other sources (e.g., QB invoices → update project status).
+  syncing data from other sources (e.g., QB invoices -> update project status).
 """
 from __future__ import annotations
 
 import logging
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from project_db.connectors.base import BaseConnector, SyncReport
@@ -339,14 +337,8 @@ class MondayConnector(BaseConnector):
     # Entry point
     # ------------------------------------------------------------------
 
-    def sync(self, force_full_sync: bool = False) -> SyncReport:
-        """Sync Monday data to canonical DB.
-        
-        Args:
-            force_full_sync: If True, re-fetch all items. Otherwise, use delta sync
-                            (only fetch items updated since last sync). Delta sync
-                            is ~90% cheaper.
-        """
+    def sync(self) -> SyncReport:
+        """Sync Monday data to canonical DB. Always does a full pull."""
         try:
             workspaces = self.client.list_workspaces()
             logger.info("Found %d Monday workspaces", len(workspaces))
@@ -371,7 +363,7 @@ class MondayConnector(BaseConnector):
                 if entity_type is None:
                     logger.debug("Skipping board %r (no pattern match)", board["name"])
                     continue
-                self._sync_board(board, entity_type, force_full_sync=force_full_sync)
+                self._sync_board(board, entity_type)
 
         except Exception as exc:  # noqa: BLE001
             self._record_failure(f"sync failed: {exc}")
@@ -412,39 +404,13 @@ class MondayConnector(BaseConnector):
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
-    # Helper: track last sync time per board for delta sync
-    # ------------------------------------------------------------------
-
-    def _get_last_sync_time(self, board_id: int) -> datetime | None:
-        """Fetch the most recent last_synced_at for any item from this board."""
-        try:
-            result = (
-                self.session.query(func.max(ExternalId.last_synced_at))
-                .filter(
-                    ExternalId.source == self.source,
-                    ExternalId.entity_type.in_(["Project", "Lead", "Deal", "Client", "Task"]),
-                    # Heuristic: external keys from this board often contain the board ID
-                    # For ProjectBoard items, the key is "board:{board_id}"
-                    # For regular board items, it's just the item ID
-                )
-                .scalar()
-            )
-            if result:
-                # Use a small buffer (5 minutes) to catch any changes during sync
-                return result - timedelta(minutes=5)
-            return None
-        except Exception:  # noqa: BLE001
-            return None
-
-    # ------------------------------------------------------------------
     # Board classification & sync dispatch
     # ------------------------------------------------------------------
 
     def _classify_board(self, name: str, workspace_name: str = "") -> str | None:
         # Boards in the Project Management workspace that don't match CRM patterns
-        # are job/property boards — board itself is the project.
+        # are job/property boards -- board itself is the project.
         if workspace_name in PROJECT_MANAGEMENT_WORKSPACES:
-
             for rule in self.board_mapping:
                 if re.search(rule["pattern"], name):
                     return rule["entity"]
@@ -455,42 +421,24 @@ class MondayConnector(BaseConnector):
                 return rule["entity"]
         return None
 
-    def _sync_board(
-        self,
-        board: dict[str, Any],
-        entity_type: str,
-        force_full_sync: bool = False,
-    ) -> None:
-        """Sync a single board, using delta sync if available."""
+    def _sync_board(self, board: dict[str, Any], entity_type: str) -> None:
+        """Sync a single board (full pull -- no delta sync)."""
         board_id = int(board["id"])
 
         column_defs = self.client.list_board_columns(board_id)
         explicit_mapping = self.column_mapping.get(entity_type, {})
         extractor = ColumnExtractor(column_defs, explicit_mapping=explicit_mapping)
 
-        # Delta sync: only fetch items updated since last sync
-        last_sync = None if force_full_sync else self._get_last_sync_time(board_id)
-        
-        if last_sync:
-            logger.info(
-                "  board %r -> %s -- delta sync since %s",
-                board["name"],
-                entity_type,
-                last_sync.isoformat(),
-            )
-        
         items = self.client.list_items(
             board_id,
-            updated_since=last_sync,
             include_subitems=(entity_type == "ProjectBoard"),
         )
-        
+
         logger.info(
-            "  board %r -> %s -- %d items%s, %d columns",
+            "  board %r -> %s -- %d items, %d columns",
             board["name"],
             entity_type,
             len(items),
-            " (delta)" if last_sync else "",
             len(column_defs),
         )
 
@@ -765,21 +713,49 @@ class MondayConnector(BaseConnector):
     # Helpers
     # ------------------------------------------------------------------
 
+    # Strings we will refuse to treat as real client names when they leak in
+    # from heuristic column extraction (group titles, action labels, etc.).
+    _NON_CLIENT_NAME_RE = re.compile(
+        r"^(move\s+to|todo|n/?a|none|tbd|unknown|new\s+\w+\s+stage|--+)$",
+        re.IGNORECASE,
+    )
+
     def _resolve_client_id(self, client_name: str | None) -> Any:
-        """Return canonical_id for a client by name, creating it if needed."""
-        name = (client_name or "").strip() or "Unknown Client"
-        existing = (
+        """Return a canonical client_id for a given name.
+
+        Looks for an existing Client by exact name match. If none is found,
+        falls back to the per-org "Unknown Client" placeholder rather than
+        auto-creating an arbitrary Client from heuristic extraction. Real
+        new Clients should only enter via `_upsert_client` from an actual
+        Monday Clients board sync.
+        """
+        name = (client_name or "").strip()
+        if name and not self._NON_CLIENT_NAME_RE.match(name):
+            existing = (
+                self.session.query(Client)
+                .filter_by(name=name, organization_id=self.organization_id)
+                .first()
+            )
+            if existing:
+                return existing.canonical_id
+
+        # Fall back to the per-org placeholder. Create it once if missing.
+        placeholder = (
             self.session.query(Client)
-            .filter_by(name=name, organization_id=self.organization_id)
-            .one_or_none()
+            .filter_by(name="Unknown Client", organization_id=self.organization_id)
+            .first()
         )
-        if existing:
-            return existing.canonical_id
-        new_client = Client(name=name, organization_id=self.organization_id)
-        self.session.add(new_client)
-        self.session.flush()
-        logger.info("Created Client %r (canonical_id=%s)", name, new_client.canonical_id)
-        return new_client.canonical_id
+        if placeholder is None:
+            placeholder = Client(
+                name="Unknown Client", organization_id=self.organization_id
+            )
+            self.session.add(placeholder)
+            self.session.flush()
+            logger.info(
+                "Created 'Unknown Client' placeholder (canonical_id=%s)",
+                placeholder.canonical_id,
+            )
+        return placeholder.canonical_id
 
     # ------------------------------------------------------------------
     # Write-back: sync canonical changes back to Monday

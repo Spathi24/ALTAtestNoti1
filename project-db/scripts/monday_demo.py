@@ -322,7 +322,9 @@ def cmd_add_item(board_id_str: str, name: str) -> None:
     from project_db.connectors.monday.client import MondayClient
     from project_db.db import get_engine, session_scope
     from project_db.db.base import Base
-    from project_db.db.models import Client, ExternalId, SourceSystem
+    from project_db.db.models import Client, SourceSystem
+    from project_db.identity import IdentityResolver
+    from project_db.identity.matcher import ExactFieldMatcher
 
     engine = get_engine()
     Base.metadata.create_all(engine)
@@ -339,26 +341,23 @@ def cmd_add_item(board_id_str: str, name: str) -> None:
 
     print(f"OK: Created Monday item id={item_id}")
 
-    # Register it as a canonical Client in the local DB
+    # Register via the identity resolver so a second add-item with the same
+    # name dedups to the existing canonical Client instead of duplicating it.
     with session_scope() as session:
         org = _get_org(session)
-        canonical = Client(name=name, organization_id=org.canonical_id)
-        session.add(canonical)
-        session.flush()
-
-        ext = ExternalId(
+        resolver = IdentityResolver(session)
+        result = resolver.resolve_or_create(
             source=SourceSystem.MONDAY,
-            entity_type="Client",
             external_key=str(item_id),
-            external_url=f"https://view.monday.com/{item_id}",
-            canonical_id=canonical.canonical_id,
+            external_url=f"https://view.monday.com/boards/{board_id}/pulses/{item_id}",
+            entity_class=Client,
+            attrs={"name": name, "organization_id": org.canonical_id},
+            matcher=ExactFieldMatcher(["name"]),
         )
-        session.add(ext)
-        session.commit()
-
+        verb = "Matched existing" if result.was_matched else ("Created new" if result.was_created else "Updated")
         print(
-            f"OK: Registered as canonical Client\n"
-            f"  canonical_id : {canonical.canonical_id}\n"
+            f"OK: {verb} canonical Client\n"
+            f"  canonical_id : {result.entity.canonical_id}\n"
             f"  monday_item  : {item_id}"
         )
 

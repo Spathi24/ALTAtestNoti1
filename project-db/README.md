@@ -5,18 +5,22 @@ A unified data layer that pulls live data from all of the company's SaaS tools
 you query across all of them from a single command or — eventually — a plain
 English question to an AI assistant.
 
-**v0.2 focuses on:** Optimization (delta sync, complexity tracking), write mutations,
-multi-system architecture, and QuickBooks connector implementation.
+**v0.2 focuses on:** Write mutations back to Monday, mirror-column data
+recovery for portfolio-style boards, QuickBooks connector skeleton, and a
+113-test suite covering all of the above.
 
 ---
 
 ## What's New in v0.2
 
-✅ **Delta Sync:** Query only changed items (~90% fewer API calls)  
-✅ **Write Mutations:** Push changes back to Monday  
-✅ **Complexity Tracking:** Know the cost of each API call  
-✅ **QuickBooks Connector:** Fully functional, pulls invoices/estimates/customers  
-✅ **Ripple-Effect Ready:** Infrastructure for cross-system updates  
+✅ **Write Mutations:** Push changes back to Monday (`change_multiple_column_values`)
+✅ **Mirror-Column Overlay:** Recover status/timeline from linked portfolio items
+✅ **Column Cache:** Board-column schema cached per `MondayClient` (one fetch / board / run)
+✅ **QuickBooks Connector:** Code complete, awaiting live credentials
+✅ **Ripple-Effect Ready:** Infrastructure for cross-system updates
+
+🟡 **Delta Sync:** Withdrawn — Monday API-Version 2026-07 dropped
+`updated_after`. Every sync is a full pull until webhooks ship.
 
 **See [OPTIMIZATION_v0.2.md](docs/OPTIMIZATION_v0.2.md) for detailed breakdown.**
 
@@ -327,13 +331,14 @@ project-db/
 - [x] 3 canned AI reports: active projects, deal pipeline, AR aging
 - [x] Credentials loaded from `.env`
 
-### ✅ v0.2 — Optimization + QuickBooks (complete)
+### ✅ v0.2 — Write-back + QuickBooks scaffolding (complete)
 
-- [x] **Delta Sync** — Only fetch changed items (~90% API cost reduction)
 - [x] **Write Mutations** — Push changes back to Monday
-- [x] **Complexity Tracking** — Full API cost visibility
-- [x] **QuickBooks Connector** — Invoices, estimates, customers (delta sync ready)
+- [x] **Mirror-Column Overlay** — Recover status/timeline from linked portfolio items
+- [x] **Column Cache** — One column-schema fetch per board per run
+- [x] **QuickBooks Connector** — Invoices, estimates, customers (live test pending)
 - [x] **Ripple Effects** — Infrastructure for cross-system updates
+- [ ] ~~Delta Sync~~ — Withdrawn: Monday API-Version 2026-07 removed `updated_after`
 
 ### 🔄 v0.3+ — Multi-System Expansion
 

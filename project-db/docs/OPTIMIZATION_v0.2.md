@@ -1,47 +1,29 @@
 # Monday.com API Optimization & Multi-System Integration (v0.2)
 
-**Date:** May 12, 2026  
-**Status:** ✅ Implemented  
-**Changes:** Delta sync, write mutations, complexity tracking, QB connector skeleton  
+**Date:** May 12, 2026 (last revised: May 14, 2026)
+**Status:** Partial — see notes per section below
+**Changes:** Write mutations, mirror-column overlay, QB connector skeleton, column caching
 
 ---
 
-## 🎯 What Changed (v0.2)
+## What Changed (v0.2)
 
-### 1. Delta Sync — Stop Re-fetching Everything
+### 1. Delta Sync — Withdrawn
 
-**Problem (v0.1):** Every sync fetched all items from all boards, even if nothing changed.
-- 10 boards × 1000 items = 50 API calls/night
-- 30 nights/month = 1,500 calls (15% of Pro daily limit!)
-- 90%+ of data is redundant
+**Originally planned:** Use Monday's `updated_after` argument on `items_page`
+to fetch only changed items.
 
-**Solution (v0.2):** Query only items updated since last sync.
+**Reality (2026-07 API):** Monday removed the `updated_after` parameter from
+`items_page` in API-Version 2026-07. There is no in-API way to ask for
+"items changed since timestamp X" anymore. The only paths now are:
 
-**Implementation:**
-```python
-# Old (v0.1):
-items = client.list_items(board_id)  # Fetches ALL items
+- **Full pull** every run (current behavior, ~30s for our workspace)
+- **Webhooks** (`change_column_value`, `create_item`, etc. — push-based)
 
-# New (v0.2):
-last_sync = connector._get_last_sync_time(board_id)
-items = client.list_items(board_id, updated_since=last_sync)  # ~90% fewer items
-```
-
-**API side:** Monday supports `updated_after` filter in GraphQL queries:
-```graphql
-query {
-  boards(ids: $board_id) {
-    items_page(updated_after: "2026-05-12T15:00:00Z") {
-      items { ... }
-    }
-  }
-}
-```
-
-**Cost Savings:**
-- **Before:** 1,500 calls/month
-- **After:** ~150 calls/month (90% reduction!)
-- **Daily limits:** No longer at risk
+The v0.2 delta-sync code (`_get_last_sync_time`, `updated_since` parameter)
+was theatre — it tracked timestamps and silently fell back to a full fetch.
+It was removed on 2026-05-14. The honest sync model now is: **every sync is
+a full board pull**. Incremental sync is webhook work, deferred to v0.3.
 
 ---
 
