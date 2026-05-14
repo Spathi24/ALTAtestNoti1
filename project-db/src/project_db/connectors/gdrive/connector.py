@@ -75,7 +75,9 @@ def _normalize_name(name: str) -> str:
     return name
 
 
-_CIVIC_NUMBER_RE = re.compile(r"^\s*(\d{2,5})(?:[-\s]+(\d{2,5}))?\b")
+# Civic numbers in our portfolio are always 3-5 digits.  Requiring 3+ avoids
+# false matches on section-header folders like "01. PROJECTS", "05. INTELLIGENCE".
+_CIVIC_NUMBER_RE = re.compile(r"^\s*(\d{3,5})(?:[-\s]+(\d{3,5}))?\b")
 
 
 def _extract_civic_numbers(name: str) -> set[str]:

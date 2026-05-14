@@ -1,5 +1,13 @@
 # Adding a new connector
 
+> **Read [`STRATEGY.md`](STRATEGY.md) and [`ROADMAP.md`](ROADMAP.md) before
+> picking up a new connector.** As of 2026-05-14 the strategic direction is
+> to NOT add new connectors (CompanyCam, live QB, etc.) until the existing
+> Monday + Drive integration is producing daily value to a PM via the LLM
+> reconciliation layer. This guide stays valid as reference for the day a
+> new connector is actually warranted; it is not an invitation to build
+> one today.
+
 This is the single most common kind of contribution to this repo. The whole
 codebase is structured so adding a new source = predictable, repeatable steps.
 

@@ -17,7 +17,9 @@ _REGISTRY: dict[SourceSystem, Type[BaseConnector]] = {
     SourceSystem.MONDAY: MondayConnector,
     SourceSystem.QUICKBOOKS: QuickBooksConnector,
     SourceSystem.GOOGLE_DRIVE: GDriveConnector,
-    # SourceSystem.COMPANYCAM: CompanyCamConnector,  # TODO v0.3
+    # SourceSystem.COMPANYCAM: CompanyCamConnector,
+    # Deferred per STRATEGY.md -- do not pick up until Monday+Drive produce
+    # daily PM-facing value via the LLM reconciliation layer.
 }
 
 

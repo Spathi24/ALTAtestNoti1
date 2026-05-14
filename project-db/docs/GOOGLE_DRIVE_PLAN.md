@@ -1,7 +1,15 @@
 # Google Drive Integration Plan
 
-**Status:** Planning. Not yet implemented.
-**Owner:** next-up integration after we verify the QuickBooks connector live.
+> **HISTORICAL — kept for context, no longer the source of truth.**
+> The Google Drive connector is now live as of 2026-05-14. For the current
+> state and forward plan see [`STRATEGY.md`](STRATEGY.md) and
+> [`ROADMAP.md`](ROADMAP.md). This document is preserved because its
+> *rationale* (using Drive contracts to fill gaps in Monday task data) is
+> exactly what STRATEGY.md operationalizes; the implementation details below
+> have largely been realized.
+
+**Status:** Implemented 2026-05-14. 750 documents syncing, 300 linked to projects.
+**Original owner notes:** next-up integration after we verify the QuickBooks connector live.
 **Why this matters for our data-arbitration goal:** Drive contains the
 contracts, scopes of work, and quotes that hold the timeline / budget /
 deliverable detail Monday tasks are missing. Once Drive is syncing, an LLM

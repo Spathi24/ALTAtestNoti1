@@ -1,7 +1,15 @@
 """AI assistant entry point.
 
-v0.1: just dispatches to the canned reports. Modes 2 (text-to-SQL) and 3 (RAG)
-are stubbed and clearly marked TODO.
+v0.1: dispatches to the canned reports (Tier 1 per STRATEGY.md).
+
+Mode 2 (text-to-SQL) is intentionally deferred per STRATEGY.md / ROADMAP.md
+Phase 3 -- the strategic path is to build a structured Proposal-driven LLM
+layer first, and only consider text-to-SQL once that proves valuable. The
+stub remains so the dispatch shape doesn't change; do not extend it
+without revisiting the strategy.
+
+Mode 3 (RAG over DocumentText) is the actual next AI surface -- see
+docs/ROADMAP.md Phase 3 for the prompts and table designs.
 """
 from __future__ import annotations
 
