@@ -82,15 +82,48 @@ Goal: the LLM reads a project's contract text plus its current Monday
 state and produces structured suggestions that land in the `Proposal`
 table. Nothing is auto-written to Monday.
 
-- [ ] Add Anthropic client wrapper in `ai/llm_client.py` — model selection via env var, prompt-caching headers set, token tracking
-- [ ] Build a "project context" SQL view: project + tasks + extracted document text + invoices + clients, capped at ~150k tokens
-- [ ] Prompt: timeline extraction — input is project context, output is a JSON list of `{task_canonical_id, proposed_start, proposed_end, confidence, source_doc_id, reasoning}`
-- [ ] Prompt: scope reconciliation — input is contract text + Monday task list, output is JSON list of `{scope_item, in_monday: bool, suggested_task_title, confidence}`
-- [ ] Prompt: anomaly detection — input is full project context, output is JSON list of `{anomaly_type, description, severity}` (e.g., "Status=Done but no invoice sent", "30% budget remaining but 80% complete")
-- [ ] CLI: `project_db propose timelines <project_id>` — runs the timeline prompt, writes proposals
-- [ ] CLI: `project_db propose scope <project_id>` — runs scope reconciliation
-- [ ] CLI: `project_db propose all <project_id>` — runs all three
-- [ ] Add tests with mocked LLM responses for each prompt; verify Proposal rows are well-formed
+**Refined plan (2026-05-15):** target architecture is a local model
+(Qwen / DeepSeek / MiniMax tier) on dedicated hardware (Mac mini),
+with optional Anthropic provider for prototyping while the box is
+being set up.  Build provider-agnostic infrastructure FIRST.
+
+**Session 3a — Provider abstraction + context assembler + delta sync**
+- [ ] `LLMProvider` interface in `ai/providers/base.py`.  OpenAI-compatible
+      Chat Completions shape recommended (Ollama, vLLM, llama.cpp, LM Studio
+      all speak this; Anthropic adapts cleanly).
+- [ ] `MockLLMProvider` (deterministic, for tests)
+- [ ] `AnthropicProvider` (real, for prototyping pre-hardware)
+- [ ] `assemble_project_context(session, project_id)` — Project + Tasks +
+      DocumentText + Invoices, chunked with configurable token budget
+- [ ] Monday `activity_logs(from, to)` delta-sync method on `MondayConnector`
+      (folded in here because it pairs with the "re-propose when changed"
+      trigger).  Sync state via the existing ExternalId-as-cursor pattern.
+
+**Session 3b — Proposal writer + approval CLI**
+- [ ] Prompt: timeline extraction — JSON list of `{task_canonical_id, proposed_start, proposed_end, confidence, source_doc_id, reasoning}`
+- [ ] Prompt: scope reconciliation — JSON list of `{scope_item, in_monday: bool, suggested_task_title, confidence}`
+- [ ] Prompt: anomaly detection — JSON list of `{anomaly_type, description, severity}`
+- [ ] CLI: `project_db propose timelines / scope / anomalies / all <project_id>`
+- [ ] CLI: `project_db proposals list / show / accept / reject` — accept
+      hooks `MondayConnector.sync_back`
+- [ ] Auto-supersede on new proposals for the same `(entity_id, field_name)`
+- [ ] Full test coverage with `MockLLMProvider`
+
+**Session 3c — Fine-tuning corpus + personality + local backend**
+- [ ] `project_db export-corpus` — DocumentText + Monday data dumped as
+      JSONL suitable for continued pretraining / fine-tuning
+- [ ] `prompts/personality.yaml` — tone/style variables injected into the
+      system prompt at runtime (formal / casual / verbose etc.)
+- [ ] `LocalProvider` (OpenAI-compat HTTP) — plugs in when hardware ready;
+      single config-line swap to flip from Anthropic → local
+
+**Open design decisions before Session 3a (need user input):**
+1. Provider API shape (recommended: OpenAI Chat Completions)
+2. Structured-output strategy: ask-and-parse retries, `response_format=json_object`,
+   or grammar-constrained decoding via vLLM/llama.cpp
+3. Run Anthropic as the real provider during 3a/3b while hardware is sourced?
+4. Fine-tuning corpus scope: contracts only, or contracts + Monday history
+   + folder structures + civic mappings?
 
 **Phase 3 exit test:** running `project_db propose all <project_id>` on
 the 923 Rockland project produces at least one timeline proposal and one

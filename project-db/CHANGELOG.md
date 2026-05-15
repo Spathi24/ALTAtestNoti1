@@ -9,6 +9,54 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-15 (evening) — System audit + corrected Monday-delta-sync position
+
+**Theme:** Honest audit of the whole system. Discovered I had been
+asserting "Monday has no delta sync" for two days based on incomplete
+reading of the API. Corrected the record across four docs.
+
+### Audit findings (no code changes needed)
+- **Empty tables triage:** `Invoice` and `DailyLog` empty by design
+  (deferred connectors). `Vendor` and `Property` are coverage gaps with
+  no current source. `Proposal` empty by design (Phase 3 hasn't started).
+- **Connector coverage:** Monday + Drive both honor "keep everything"
+  via JSON blobs (`source_columns_json`, `source_meta_json`); no silent
+  data loss. QB code complete but never run.
+- **Doc hygiene:** added missing `list-sources` and `list-external` to
+  the README's daily-use list (commit b26ef1c).
+
+### Correction: Monday delta sync framing
+User caught me parroting "delta sync withdrawn" without verifying.
+Re-read `docs/monday-graphql-schema.json`. Two viable paths exist that
+I had ignored:
+- `Board.activity_logs(from, to, ...)` — timestamped change feed,
+  poll-based, no hosting needed.
+- `create_webhook(board_id, url, event)` — scriptable mutation, 20+
+  event types. Real blocker is hosting a public HTTPS endpoint, NOT
+  API support.
+Fixed framing in CLAUDE.md, README.md, ROADMAP.md, and the historical
+OPTIMIZATION_v0.2.md (commit b57ccfb).
+
+### Phase 3 plan, refined
+- Recommendation: fold `activity_logs`-based delta sync into Phase 3a
+  alongside the LLM provider abstraction + project-context assembler.
+  The "re-propose when something changed" use case ties them naturally.
+- Webhooks stay deferred until hosting exists (Mac mini scenario
+  unblocks this).
+- Four design decisions still pending from user before Session 3a:
+  provider API shape (OpenAI-compatible recommended), structured-output
+  strategy, role of Anthropic during local-model setup, fine-tuning
+  corpus scope.
+
+### State at EOD
+- 246 tests passing.
+- 750 Documents / 462 with extracted text / 2.19M indexed tokens.
+- All Phase 0 / 1 / 2 exit tests passed; Phase 3 ready to start.
+- 8 routed `ask` reports + `help` discoverability.
+- Mission still pointed correctly per STRATEGY.md.
+
+---
+
 ## 2026-05-15 (afternoon) — Phase 1 + Phase 2 close-out
 
 **Theme:** Exit tests passed. Both phases officially done.
