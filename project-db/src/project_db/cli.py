@@ -299,11 +299,18 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
 
-    counts = {"extracted": 0, "skipped-mime": 0, "skipped-size": 0, "failed": 0, "noop": 0}
-    with session_scope() as s:
-        from project_db.db.models import DocumentText
+    # NOTE: we manage the session manually instead of using session_scope() so we
+    # can commit periodically.  A 750-doc run that crashes (or gets Ctrl-C'd) on
+    # doc 500 would otherwise lose all 500 rows -- session_scope only commits at
+    # the end.  Periodic commits cap that loss at <COMMIT_EVERY> rows.
+    COMMIT_EVERY = 25
+    counts: dict[str, int] = {"extracted": 0, "failed": 0, "noop": 0}
+    from project_db.db import get_session_factory
+    from project_db.db.models import DocumentText
 
-        q = s.query(Document)
+    s = get_session_factory()()
+    try:
+        q = s.query(Document).filter(Document.is_trashed.is_(False))
         if project_filter is not None:
             q = q.filter(Document.project_id == project_filter)
         if missing_only:
@@ -314,11 +321,17 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
 
         docs = q.all()
         total = len(docs)
-        print(f"Processing {total} document(s)...")
+        print(f"Processing {total} document(s)... (commit every {COMMIT_EVERY})")
         for i, doc in enumerate(docs, 1):
-            row = extract_and_store(
-                session=s, client=client, document=doc, overwrite=overwrite,
-            )
+            try:
+                row = extract_and_store(
+                    session=s, client=client, document=doc, overwrite=overwrite,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [{i}/{total}] UNHANDLED {doc.name[:40]!r}: {exc}")
+                counts["failed"] += 1
+                continue
+
             method = row.extraction_method
             if method.startswith("skipped-"):
                 counts[method] = counts.get(method, 0) + 1
@@ -328,11 +341,21 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
                 counts["extracted"] += 1
             else:
                 counts["noop"] += 1
-            if i % 25 == 0 or i == total:
-                print(f"  [{i}/{total}] last={doc.name[:50]!r:<55} method={method}")
+            if i % COMMIT_EVERY == 0 or i == total:
+                s.commit()
+                print(f"  [{i}/{total}] committed. last={doc.name[:40]!r} method={method}")
+    except KeyboardInterrupt:
+        print("\nInterrupted -- committing partial progress...")
+        s.commit()
+        print("Partial progress saved.")
+    except Exception:
+        s.rollback()
+        raise
+    finally:
+        s.close()
 
     print("\n--- Summary ---")
-    for k, v in counts.items():
+    for k, v in sorted(counts.items()):
         print(f"  {k:>16}: {v}")
     return 0
 

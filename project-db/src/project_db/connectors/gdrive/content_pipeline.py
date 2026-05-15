@@ -98,6 +98,10 @@ def _decide_and_extract(
     if not file_id:
         return None, "failed-no-storage-ref", None
 
+    # Don't waste API calls on docs the user already trashed in Drive.
+    if getattr(document, "is_trashed", False):
+        return None, "skipped-trashed", None
+
     if mime not in SUPPORTED_MIMES:
         return None, "skipped-mime", None
 

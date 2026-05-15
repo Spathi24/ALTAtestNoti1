@@ -262,6 +262,22 @@ class TestPipelinePolicy:
         assert row.extraction_method == "failed-download"
         assert row.extracted_text is None
 
+    def test_trashed_document_skipped_without_download(self, session, org, client_factory):
+        """A trashed Document gets a skipped-trashed marker, no API call."""
+        doc = _make_doc(
+            session, client_factory,
+            mime="application/pdf", size=1024, storage_ref="trash_me",
+        )
+        doc.is_trashed = True
+        session.commit()
+
+        client = MagicMock()
+        row = extract_and_store(session=session, client=client, document=doc)
+        session.commit()
+        assert row.extraction_method == "skipped-trashed"
+        client.download_file.assert_not_called()
+        client.export_google_doc.assert_not_called()
+
     def test_no_storage_ref_fails_clean(self, session, org, client_factory):
         doc = _make_doc(
             session, client_factory,
@@ -378,6 +394,19 @@ class TestConnectorExtractFlag:
         assert rows[0].extracted_text == "Body of the contract"
         assert rows[0].extraction_method == "gdoc-export"
         client.export_google_doc.assert_called_once()
+
+    def test_on_flag_uses_resolver_entity_not_requery(self, session, org):
+        """The connector should use resolver result.entity, not re-query by storage_ref.
+
+        Sanity check: with extract_content on, exactly one Document exists
+        (not two from a duplicate insert via re-query race) and exactly one
+        DocumentText was created.
+        """
+        connector, _ = self._build_connector(session, org, extract_content=True)
+        connector.sync()
+        from project_db.db.models import Document
+        assert session.query(Document).filter_by(storage_ref="file42").count() == 1
+        assert session.query(DocumentText).count() == 1
 
 
 # ---------------------------------------------------------------------------

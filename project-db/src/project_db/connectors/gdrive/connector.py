@@ -406,19 +406,13 @@ class GDriveConnector(BaseConnector):
             self._record_failure(f"Document {file_id} ({name}): {exc}")
             return
 
-        if self.extract_content:
+        if self.extract_content and result.entity is not None:
             try:
-                document = (
-                    self.session.query(Document)
-                    .filter_by(storage_ref=file_id)
-                    .one_or_none()
+                extract_and_store(
+                    session=self.session,
+                    client=self.client,
+                    document=result.entity,
                 )
-                if document is not None:
-                    extract_and_store(
-                        session=self.session,
-                        client=self.client,
-                        document=document,
-                    )
             except Exception as exc:  # noqa: BLE001
                 # Never let extraction failure abort the sync.
                 self._record_failure(f"extract_content {file_id} ({name}): {exc}")
