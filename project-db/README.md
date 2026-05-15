@@ -180,6 +180,13 @@ project_db ask "tasks without dates for project Rockland"
 project_db ask "which projects are missing documents"
 project_db ask "budget vs contract for project Rockland"
 project_db ask "help"                       # list every routed pattern
+
+# --- Admin / diagnostic ---
+project_db init-db                          # one-time table create + seed org
+project_db list-sources                     # registered connectors
+project_db list-boards                      # Monday boards (needs MONDAY_API_TOKEN)
+project_db inspect-board <board_id>        # columns + heuristic mapping + sample items
+project_db list-external <EntityType> <UUID>   # every source-system ID for one canonical entity
 ```
 
 ### Example output
