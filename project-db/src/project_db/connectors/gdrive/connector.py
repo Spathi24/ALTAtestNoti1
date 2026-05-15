@@ -182,6 +182,11 @@ class GDriveConnector(BaseConnector):
         # Cache: folder_id -> project_id (None = unrecognized)
         self._folder_project_cache: dict[str, Any | None] = {}
 
+        # Drive-state reconciliation: track everything the current walk visits
+        # so we can soft-mark vanished files at the end.  See _reconcile_removed.
+        self._seen_file_ids: set[str] = set()
+        self._visited_folder_ids: set[str] = set()
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -231,6 +236,12 @@ class GDriveConnector(BaseConnector):
             depth=0,
         )
 
+        # Reconcile DB state against current Drive state -- soft-mark vanished
+        # files as trashed.  Only safe if the walk completed without listing
+        # failures; otherwise a transient permission/network blip could
+        # incorrectly trash a swathe of real files.
+        self._reconcile_removed()
+
         # Save a fresh cursor so the next run uses delta sync.
         try:
             new_cursor = self.client.get_start_page_token()
@@ -238,6 +249,65 @@ class GDriveConnector(BaseConnector):
             logger.info("[GDRIVE] Saved new cursor for delta sync: %s", new_cursor)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[GDRIVE] Could not save delta-sync cursor: %s", exc)
+
+    def _reconcile_removed(self) -> None:
+        """Soft-mark Documents that vanished from Drive since the last full sync.
+
+        Scope rules (deliberately conservative -- we'd rather leave a stale row
+        than mark a real file trashed by mistake):
+
+          1. If the walk had any listing failures, SKIP.  A transient permission
+             error in one folder shouldn't trigger mass-trashing of its files.
+          2. Only consider Documents whose parent_folder_id was actually visited
+             this run.  This means a sync rooted at a subfolder won't touch
+             docs in other parts of the tree, and legacy rows with no
+             parent_folder_id (e.g. delta-synced before folder_path existed)
+             stay untouched.
+          3. Already-trashed rows are skipped (no double-counting in the report).
+          4. Per STRATEGY.md "keep everything" -- this is soft delete only.
+             The row stays; only is_trashed flips.  If the file reappears
+             later, _upsert_document will set is_trashed back to False from
+             Drive's `trashed` flag.
+        """
+        if self.report.records_failed > 0:
+            logger.warning(
+                "[GDRIVE] Skipping reconciliation: %d listing failure(s) -- "
+                "stale rows preserved to avoid wrong-marking real files.",
+                self.report.records_failed,
+            )
+            return
+
+        if not self._visited_folder_ids:
+            logger.info("[GDRIVE] Skipping reconciliation: no folders visited.")
+            return
+
+        # All non-trashed Documents whose parent_folder_id was in our scope.
+        candidates = (
+            self.session.query(Document)
+            .filter(
+                Document.parent_folder_id.in_(self._visited_folder_ids),
+                Document.is_trashed.is_(False),
+            )
+            .all()
+        )
+
+        removed = 0
+        for doc in candidates:
+            if doc.storage_ref in self._seen_file_ids:
+                continue
+            doc.is_trashed = True
+            removed += 1
+            logger.info(
+                "[GDRIVE] Marked removed: %s (storage_ref=%s, folder_path=%s)",
+                doc.name, doc.storage_ref, doc.folder_path,
+            )
+
+        if removed:
+            self.session.flush()
+            self.report.records_removed = removed
+            logger.info("[GDRIVE] Reconciliation: %d Documents soft-marked trashed.", removed)
+        else:
+            logger.info("[GDRIVE] Reconciliation: 0 vanished files (DB matches Drive).")
 
     def _walk(
         self,
@@ -261,6 +331,10 @@ class GDriveConnector(BaseConnector):
         if depth > self._MAX_DEPTH:
             logger.warning("[GDRIVE] Max depth %d exceeded at %s", self._MAX_DEPTH, folder_path)
             return
+
+        # Record visit BEFORE listing so reconcile knows we were here even if
+        # the listing itself fails downstream.
+        self._visited_folder_ids.add(folder_id)
 
         try:
             items = self.client.list_folder(folder_id)
@@ -347,6 +421,8 @@ class GDriveConnector(BaseConnector):
         """
         file_id = file.get("id", "")
         name = file.get("name", "Unnamed")
+        if file_id:
+            self._seen_file_ids.add(file_id)
         mime_type = file.get("mimeType", "")
         url = file.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}"
 

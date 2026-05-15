@@ -414,6 +414,152 @@ class TestConnectorExtractFlag:
 # ---------------------------------------------------------------------------
 
 
+class TestSyncReconciliation:
+    """Full sync must soft-mark Documents that vanished from Drive."""
+
+    def _connector_with_one_folder_one_file(self, session, org, *, file_payload):
+        """Build a connector whose Drive has root -> one folder -> [file_payload]."""
+        from project_db.connectors.gdrive.client import GDriveClient
+        from project_db.connectors.gdrive.connector import GDriveConnector
+
+        svc = MagicMock()
+        folder = {
+            "id": "fold1", "name": "Project Alpha",
+            "mimeType": "application/vnd.google-apps.folder", "parents": ["root"],
+        }
+        list_mock = MagicMock()
+        list_mock.execute.side_effect = [
+            {"files": [folder], "nextPageToken": None},
+            {"files": [file_payload] if file_payload else [], "nextPageToken": None},
+        ]
+        svc.files.return_value.list.return_value = list_mock
+        svc.changes.return_value.getStartPageToken.return_value.execute.return_value = {
+            "startPageToken": "tok"
+        }
+        return GDriveConnector(
+            session=session, organization_id=org.canonical_id,
+            config={"_client": GDriveClient(service=svc), "root_folder": "root"},
+        )
+
+    def test_vanished_file_in_visited_folder_is_marked_trashed(self, session, org):
+        """File present in DB (parent=fold1) but absent from this sync's listing -> trashed."""
+        # Seed a Document that's already in the DB from an "earlier sync"
+        # under fold1.
+        old_doc = Document(
+            name="VanishedContract.pdf", url="https://drive/old",
+            mime_type="application/pdf", storage_ref="vanished_id",
+            parent_folder_id="fold1", folder_path="Project Alpha",
+            is_trashed=False,
+        )
+        session.add(old_doc); session.commit()
+
+        # Now sync: Drive returns NO files in fold1 this time.
+        connector = self._connector_with_one_folder_one_file(session, org, file_payload=None)
+        report = connector.sync()
+
+        session.refresh(old_doc)
+        assert old_doc.is_trashed is True
+        assert report.records_removed == 1
+
+    def test_vanished_file_in_unvisited_folder_is_left_alone(self, session, org):
+        """File whose parent_folder_id we never visited must NOT be marked trashed."""
+        ghost = Document(
+            name="GhostFile.pdf", url="https://drive/ghost",
+            mime_type="application/pdf", storage_ref="ghost_id",
+            parent_folder_id="not_visited_folder", folder_path="Elsewhere",
+            is_trashed=False,
+        )
+        session.add(ghost); session.commit()
+
+        connector = self._connector_with_one_folder_one_file(session, org, file_payload=None)
+        connector.sync()
+
+        session.refresh(ghost)
+        assert ghost.is_trashed is False
+
+    def test_legacy_doc_with_null_parent_is_left_alone(self, session, org):
+        """A row with parent_folder_id=None (legacy / delta-only) must not be touched."""
+        legacy = Document(
+            name="LegacyDoc.pdf", url="https://drive/legacy",
+            mime_type="application/pdf", storage_ref="legacy_id",
+            parent_folder_id=None, folder_path=None,
+            is_trashed=False,
+        )
+        session.add(legacy); session.commit()
+
+        connector = self._connector_with_one_folder_one_file(session, org, file_payload=None)
+        connector.sync()
+
+        session.refresh(legacy)
+        assert legacy.is_trashed is False
+
+    def test_file_still_present_is_not_marked_trashed(self, session, org):
+        """File present in DB AND in the new sync listing stays untrashed."""
+        existing = Document(
+            name="StillThere.pdf", url="https://drive/x",
+            mime_type="application/pdf", storage_ref="still_here",
+            parent_folder_id="fold1", folder_path="Project Alpha",
+            is_trashed=False,
+        )
+        session.add(existing); session.commit()
+
+        connector = self._connector_with_one_folder_one_file(
+            session, org,
+            file_payload={
+                "id": "still_here", "name": "StillThere.pdf",
+                "mimeType": "application/pdf",
+                "parents": ["fold1"],
+                "size": "1024", "createdTime": "2026-01-01T00:00:00Z",
+                "modifiedTime": "2026-05-15T00:00:00Z",
+            },
+        )
+        report = connector.sync()
+        session.refresh(existing)
+        assert existing.is_trashed is False
+        assert report.records_removed == 0
+
+    def test_reconciliation_skipped_when_listing_fails(self, session, org):
+        """If any list_folder failed mid-walk, reconciliation must be skipped."""
+        from project_db.connectors.gdrive.client import GDriveClient
+        from project_db.connectors.gdrive.connector import GDriveConnector
+
+        # Pre-seed a doc that WOULD be marked trashed in a clean run.
+        doomed = Document(
+            name="WouldBeTrashed.pdf", url="https://drive/x",
+            mime_type="application/pdf", storage_ref="doomed_id",
+            parent_folder_id="fold_err", folder_path="Errored Folder",
+            is_trashed=False,
+        )
+        session.add(doomed); session.commit()
+
+        svc = MagicMock()
+        folder = {
+            "id": "fold_err", "name": "Errored Folder",
+            "mimeType": "application/vnd.google-apps.folder", "parents": ["root"],
+        }
+        list_mock = MagicMock()
+        # Root list OK, second call (the subfolder listing) blows up.
+        list_mock.execute.side_effect = [
+            {"files": [folder], "nextPageToken": None},
+            RuntimeError("Drive returned 500"),
+        ]
+        svc.files.return_value.list.return_value = list_mock
+        svc.changes.return_value.getStartPageToken.return_value.execute.return_value = {
+            "startPageToken": "tok"
+        }
+
+        connector = GDriveConnector(
+            session=session, organization_id=org.canonical_id,
+            config={"_client": GDriveClient(service=svc), "root_folder": "root"},
+        )
+        report = connector.sync()
+
+        session.refresh(doomed)
+        assert doomed.is_trashed is False, "Should NOT trash when listing failed"
+        assert report.records_removed == 0
+        assert report.records_failed >= 1
+
+
 class TestExtractContentCLI:
     def test_parser_accepts_extract_content_with_flags(self):
         from project_db.cli import build_parser

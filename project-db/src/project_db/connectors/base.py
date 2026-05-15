@@ -48,6 +48,7 @@ class SyncReport:
     records_created: int = 0
     records_matched: int = 0
     records_failed: int = 0
+    records_removed: int = 0  # soft-deletes (e.g. file vanished from Drive)
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -59,7 +60,8 @@ class SyncReport:
         return (
             f"[{self.source.value}] processed={self.records_processed} "
             f"created={self.records_created} matched={self.records_matched} "
-            f"failed={self.records_failed} duration={duration:.1f}s"
+            f"removed={self.records_removed} failed={self.records_failed} "
+            f"duration={duration:.1f}s"
         )
 
 
