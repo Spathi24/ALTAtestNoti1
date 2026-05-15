@@ -1,6 +1,8 @@
 """AI assistant entry point.
 
-v0.1: dispatches to the canned reports (Tier 1 per STRATEGY.md).
+v0.2: dispatches to canned reports (Tier 1 per STRATEGY.md).  Now supports
+parameter extraction -- ``"overview of project 923 Rockland"`` resolves the
+project ref and calls the report with it.
 
 Mode 2 (text-to-SQL) is intentionally deferred per STRATEGY.md / ROADMAP.md
 Phase 3 -- the strategic path is to build a structured Proposal-driven LLM
@@ -13,12 +15,40 @@ docs/ROADMAP.md Phase 3 for the prompts and table designs.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from project_db.ai.views import REPORT_REGISTRY
+
+
+# Pulls a UUID (any 8-4-4-4-12 hex) from anywhere in the question.
+_UUID_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+# Pulls a project name after the literal "project" keyword.
+# "overview of project 923 Rockland" -> "923 Rockland"
+# Stops at trailing punctuation / question marks.
+_PROJECT_NAME_RE = re.compile(
+    r"\bproject\s+([^\?\.\,]+)",
+    re.IGNORECASE,
+)
+
+
+def extract_project_ref(question: str) -> str | None:
+    """Find a project reference -- UUID first, then text after 'project '."""
+    if not question:
+        return None
+    m = _UUID_RE.search(question)
+    if m:
+        return m.group(0)
+    m = _PROJECT_NAME_RE.search(question)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 @dataclass
@@ -34,32 +64,61 @@ class AiAssistant:
 
     def ask(self, question: str) -> AiResponse:
         # MODE 1 — canned report keyword matching. Crude but reliable.
-        q = question.lower()
+        q = (question or "").lower()
+        ref = extract_project_ref(question)
+
+        # Order matters: more specific patterns first so generic words don't
+        # steal the match.
+        if "budget" in q and ("contract" in q or "vs" in q):
+            return self._dispatch_with_project("budget_vs_contract", ref)
+        if "overview" in q or "snapshot" in q or "summary of project" in q:
+            return self._dispatch_with_project("project_overview", ref)
+        if ("docs" in q or "documents" in q or "files" in q) and ("missing" in q):
+            return self._canned("missing_documents")
+        if ("docs" in q or "documents" in q or "files" in q) and ref:
+            return self._dispatch_with_project("docs_for_project", ref)
+        if "tasks" in q and ("without date" in q or "no date" in q or "missing date" in q):
+            return self._dispatch_with_project("tasks_without_dates", ref, allow_no_ref=True)
         if "active project" in q or "open project" in q:
-            return AiResponse(
-                mode="canned",
-                used_report="active_projects",
-                answer=REPORT_REGISTRY["active_projects"](self.session),
-            )
+            return self._canned("active_projects")
         if "pipeline" in q or "deal value" in q:
-            return AiResponse(
-                mode="canned",
-                used_report="deal_pipeline_value",
-                answer=REPORT_REGISTRY["deal_pipeline_value"](self.session),
-            )
+            return self._canned("deal_pipeline_value")
         if "ar aging" in q or "outstanding invoice" in q or "receivable" in q:
-            return AiResponse(
-                mode="canned",
-                used_report="ar_aging",
-                answer=REPORT_REGISTRY["ar_aging"](self.session),
-            )
+            return self._canned("ar_aging")
 
-        # MODE 2 — text-to-SQL. TODO: wire to an LLM (Anthropic API)
-        # that's been given the schema and produces parameterized SQL.
-        # MODE 3 — RAG over daily logs / docs via pgvector embeddings.
-
+        # MODE 2 — text-to-SQL: still deferred.
+        # MODE 3 — RAG over DocumentText: Phase 3.
         return AiResponse(
             mode="canned",
             used_report=None,
             answer="No canned report matched; text-to-SQL not implemented yet.",
+        )
+
+    def _canned(self, name: str) -> AiResponse:
+        return AiResponse(
+            mode="canned",
+            used_report=name,
+            answer=REPORT_REGISTRY[name](self.session),
+        )
+
+    def _dispatch_with_project(
+        self, name: str, ref: str | None, *, allow_no_ref: bool = False,
+    ) -> AiResponse:
+        """Call a per-project report, surfacing a useful error when ref is missing."""
+        if ref is None and not allow_no_ref:
+            return AiResponse(
+                mode="canned",
+                used_report=name,
+                answer={
+                    "error": (
+                        f"This report needs a project reference. "
+                        f"Try: '{name.replace('_', ' ')} for project <name or UUID>'."
+                    ),
+                },
+            )
+        kwargs = {"project_ref": ref} if ref is not None else {}
+        return AiResponse(
+            mode="canned",
+            used_report=name,
+            answer=REPORT_REGISTRY[name](self.session, **kwargs),
         )
