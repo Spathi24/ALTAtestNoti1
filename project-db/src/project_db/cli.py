@@ -261,6 +261,82 @@ def cmd_gdrive_auth(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract_content(args: argparse.Namespace) -> int:
+    """Run text extraction over already-synced Documents.
+
+    Pulls bytes from Drive (via export or download), runs the appropriate
+    parser, writes DocumentText rows.  Safe to run repeatedly:
+      --missing-only (default): only Documents with no DocumentText yet
+      --overwrite:               re-extract everything, replacing existing rows
+      --project <UUID>:          restrict to one project's documents
+      --limit <N>:               stop after N documents (good for smoke tests)
+
+    Documents we deliberately can't read (unsupported mime, too big) still
+    get a DocumentText row with extraction_method='skipped-*' so we don't
+    re-check them every run.
+    """
+    from project_db.connectors.gdrive.client import GDriveClient
+    from project_db.connectors.gdrive.content_pipeline import extract_and_store
+
+    overwrite = bool(args.overwrite)
+    missing_only = not overwrite  # default mode
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    project_filter = None
+    if args.project:
+        try:
+            project_filter = uuid.UUID(args.project)
+        except ValueError:
+            print(f"FAIL: Invalid project UUID: {args.project}", file=sys.stderr)
+            return 2
+
+    try:
+        client = GDriveClient()
+    except RuntimeError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    counts = {"extracted": 0, "skipped-mime": 0, "skipped-size": 0, "failed": 0, "noop": 0}
+    with session_scope() as s:
+        from project_db.db.models import DocumentText
+
+        q = s.query(Document)
+        if project_filter is not None:
+            q = q.filter(Document.project_id == project_filter)
+        if missing_only:
+            q = q.outerjoin(DocumentText, DocumentText.document_id == Document.canonical_id)
+            q = q.filter(DocumentText.document_id.is_(None))
+        if args.limit:
+            q = q.limit(int(args.limit))
+
+        docs = q.all()
+        total = len(docs)
+        print(f"Processing {total} document(s)...")
+        for i, doc in enumerate(docs, 1):
+            row = extract_and_store(
+                session=s, client=client, document=doc, overwrite=overwrite,
+            )
+            method = row.extraction_method
+            if method.startswith("skipped-"):
+                counts[method] = counts.get(method, 0) + 1
+            elif method.startswith("failed-"):
+                counts["failed"] += 1
+            elif row.extracted_text:
+                counts["extracted"] += 1
+            else:
+                counts["noop"] += 1
+            if i % 25 == 0 or i == total:
+                print(f"  [{i}/{total}] last={doc.name[:50]!r:<55} method={method}")
+
+    print("\n--- Summary ---")
+    for k, v in counts.items():
+        print(f"  {k:>16}: {v}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -299,6 +375,19 @@ def build_parser() -> argparse.ArgumentParser:
         "gdrive-auth",
         help="One-time browser login for Google Drive (OAuth Desktop credentials only)",
     ).set_defaults(func=cmd_gdrive_auth)
+
+    ec = sub.add_parser(
+        "extract-content",
+        help="Extract text from Drive documents into DocumentText (idempotent)",
+    )
+    ec.add_argument("--project", help="Restrict to one Project canonical UUID")
+    ec.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-extract documents that already have a DocumentText row",
+    )
+    ec.add_argument("--limit", type=int, help="Stop after N documents (smoke test)")
+    ec.set_defaults(func=cmd_extract_content)
 
     return p
 

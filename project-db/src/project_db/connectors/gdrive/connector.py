@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from project_db.connectors.base import BaseConnector, SyncReport
 from project_db.connectors.gdrive.client import GDriveClient
+from project_db.connectors.gdrive.content_pipeline import extract_and_store
 from project_db.db.models import ExternalId, Project, SourceSystem
 from project_db.db.models.docs import Document
 from project_db.identity.matcher import ExactFieldMatcher
@@ -171,6 +172,12 @@ class GDriveConnector(BaseConnector):
             self.config.get("root_folder")
             or __import__("os").environ.get("GDRIVE_ROOT_FOLDER", "root")
         )
+
+        # Off by default: every sync would otherwise issue one Drive download per
+        # file (up to 750 in our portfolio).  The `extract-content` CLI is the
+        # primary way to populate DocumentText.  Set extract_content=True in
+        # config to opt into in-line extraction during sync.
+        self.extract_content: bool = bool(self.config.get("extract_content", False))
 
         # Cache: folder_id -> project_id (None = unrecognized)
         self._folder_project_cache: dict[str, Any | None] = {}
@@ -397,6 +404,24 @@ class GDriveConnector(BaseConnector):
             self._record_result(result.was_created, result.was_matched)
         except Exception as exc:  # noqa: BLE001
             self._record_failure(f"Document {file_id} ({name}): {exc}")
+            return
+
+        if self.extract_content:
+            try:
+                document = (
+                    self.session.query(Document)
+                    .filter_by(storage_ref=file_id)
+                    .one_or_none()
+                )
+                if document is not None:
+                    extract_and_store(
+                        session=self.session,
+                        client=self.client,
+                        document=document,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                # Never let extraction failure abort the sync.
+                self._record_failure(f"extract_content {file_id} ({name}): {exc}")
 
     def _handle_removal(self, file_id: str) -> None:
         """Soft-delete: mark the document URL as [removed] so we know it's gone."""

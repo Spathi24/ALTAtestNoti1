@@ -13,6 +13,7 @@ dependencies = [
 postgres = ["psycopg[binary]>=3.1"]
 ai = ["anthropic>=0.40"]
 gdrive = ["google-api-python-client>=2.0", "google-auth>=2.0", "google-auth-oauthlib>=1.0"]
+content = ["pymupdf>=1.24", "python-docx>=1.1", "openpyxl>=3.1"]
 dev = ["pytest>=8.0", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]
