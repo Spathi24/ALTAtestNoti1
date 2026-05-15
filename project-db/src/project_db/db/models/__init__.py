@@ -10,8 +10,9 @@ from project_db.db.models.canonical import (
 )
 from project_db.db.models.core import Client, Property, User, Vendor
 from project_db.db.models.crm import Deal, Lead, LeadStage
-from project_db.db.models.docs import Document
+from project_db.db.models.docs import Document, DocumentText
 from project_db.db.models.finance import Invoice, InvoiceStatus
+from project_db.db.models.proposals import Proposal, ProposalStatus
 from project_db.db.models.work import (
     DailyLog,
     Project,
@@ -25,6 +26,7 @@ __all__ = [
     "DailyLog",
     "Deal",
     "Document",
+    "DocumentText",
     "ExternalId",
     "Invoice",
     "InvoiceStatus",
@@ -34,6 +36,8 @@ __all__ = [
     "Project",
     "ProjectStatus",
     "Property",
+    "Proposal",
+    "ProposalStatus",
     "SourceSystem",
     "Task",
     "TaskStatus",

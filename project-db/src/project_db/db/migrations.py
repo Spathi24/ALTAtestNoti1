@@ -38,6 +38,38 @@ SQLITE_DOCUMENT_COLUMNS: dict[str, str] = {
 }
 
 
+SQLITE_DOCUMENT_TEXT_DDL = """
+CREATE TABLE document_text (
+    document_id TEXT PRIMARY KEY,
+    extracted_text TEXT,
+    extraction_method VARCHAR NOT NULL,
+    extracted_at DATETIME NOT NULL,
+    token_count INTEGER,
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_PROPOSAL_DDL = """
+CREATE TABLE proposal (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    entity_type VARCHAR NOT NULL,
+    entity_id TEXT NOT NULL,
+    field_name VARCHAR NOT NULL,
+    proposed_value TEXT NOT NULL,
+    confidence FLOAT,
+    source_doc_ids TEXT,
+    prompt_version VARCHAR,
+    status VARCHAR NOT NULL DEFAULT 'PENDING',
+    decided_at DATETIME,
+    decided_by VARCHAR,
+    rejection_reason TEXT
+)
+"""
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -45,8 +77,13 @@ def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
 
 
+def _create_table_if_missing(conn, tables: set[str], name: str, ddl: str) -> None:
+    if name not in tables:
+        conn.execute(text(ddl))
+
+
 def ensure_sqlite_schema(engine) -> None:
-    """Add nullable compatibility columns to existing SQLite files."""
+    """Add nullable compatibility columns + Phase-1 tables to existing SQLite files."""
     if engine.dialect.name != "sqlite":
         return
     inspector = inspect(engine)
@@ -56,3 +93,5 @@ def ensure_sqlite_schema(engine) -> None:
             _add_missing_columns(conn, inspector, "task", SQLITE_TASK_COLUMNS)
         if "document" in tables:
             _add_missing_columns(conn, inspector, "document", SQLITE_DOCUMENT_COLUMNS)
+        _create_table_if_missing(conn, tables, "document_text", SQLITE_DOCUMENT_TEXT_DDL)
+        _create_table_if_missing(conn, tables, "proposal", SQLITE_PROPOSAL_DDL)

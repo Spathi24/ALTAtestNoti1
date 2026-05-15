@@ -33,3 +33,7 @@ Thumbs.db
 
 # Claude worktree metadata
 .claude/
+
+# Node (presentation build only)
+node_modules/
+presentation/node_modules/

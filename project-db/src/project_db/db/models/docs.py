@@ -15,7 +15,9 @@ metadata to answer real questions without re-hitting the API:
 """
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, String, Text
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
@@ -54,3 +56,24 @@ class Document(Base, CanonicalMixin):
         ForeignKey("client.canonical_id"),
         nullable=True,
     )
+
+
+class DocumentText(Base):
+    """Extracted text content for a Document. One row per Document, 1:1.
+
+    Lives in its own table (not promoted onto Document) because the body can
+    be megabytes and most queries don't need it. The `extraction_method`
+    column doubles as a status marker: a row with method 'skipped-size' or
+    'skipped-mime' means we looked at this Document and decided not to read
+    it, which is different from never having tried.
+    """
+
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    extracted_text = Column(Text, nullable=True)
+    extraction_method = Column(String, nullable=False)
+    extracted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    token_count = Column(Integer, nullable=True)
