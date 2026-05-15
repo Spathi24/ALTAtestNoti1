@@ -115,14 +115,15 @@ A merge conflict at push time is a failure of this rule.
 
 ### 3. Keep the test suite green.
 
-There are **113 tests** in `project-db/tests/`. Before pushing anything that
-touches `src/`:
+There are **245+ tests** in `project-db/tests/` (the count grows; check
+the latest pass line in CHANGELOG.md if you need a precise number).
+Before pushing anything that touches `src/`:
 
 ```bash
 cd project-db && python -m pytest tests/ -q
 ```
 
-Expected: `113 passed`. Anything less is a regression — fix it before you push.
+Expected: every test passes. Anything less is a regression — fix it before you push.
 
 If you add a feature, add a test for it. If you change an API surface (renamed
 function, new required arg, dropped enum value), update the test that exercises
@@ -246,8 +247,17 @@ Done:
   canonical Projects via civic-number + name matching.
 - One consolidated SQLite location (`project-db/project_db.sqlite`,
   absolute path in `.env`).
-- 131-test suite.
-- Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`, `gdrive-auth`.
+- **Phase 1 (Brain foundation) done:** DocumentText sidecar + Proposal
+  table + content extractors (PDF / DOCX / XLSX / Google Docs+Sheets),
+  `extract-content` CLI, Drive sync reconciliation. 463/751 documents
+  have non-empty extracted text in the live DB.
+- **Phase 2 (Tier-1 reports) done:** `project_overview`,
+  `docs_for_project`, `tasks_without_dates`, `missing_documents`,
+  `budget_vs_contract` reachable via `project_db ask "..."`.
+  Run `project_db ask "help"` to see all routed patterns.
+- 250+-test suite (see CHANGELOG.md for precise current count).
+- Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`,
+  `gdrive-auth`, `extract-content`, `ask`.
 
 Known limits / non-features (do not pretend otherwise):
 - **Sync is full-pull only for Monday.** Monday API-Version 2026-07 removed

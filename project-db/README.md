@@ -12,7 +12,7 @@ corrections to what Monday says is happening.
   `ask`. **Done pending live verification of all 5.**
 - Phase 3 (Tier-2 LLM proposals): next.
 
-**245-test suite.** Day-by-day work log in
+**246-test suite.** Day-by-day work log in
 **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
@@ -179,6 +179,7 @@ project_db ask "tasks without dates"
 project_db ask "tasks without dates for project Rockland"
 project_db ask "which projects are missing documents"
 project_db ask "budget vs contract for project Rockland"
+project_db ask "help"                       # list every routed pattern
 ```
 
 ### Example output

@@ -38,6 +38,28 @@ _PROJECT_NAME_RE = re.compile(
 )
 
 
+# Surfaced by the dispatcher when a non-technical user types "help" / "?"
+# or asks a meta question.  Order mirrors the routing precedence so the
+# answer doubles as a debugging aid.
+_HELP_PAYLOAD: dict[str, Any] = {
+    "intro": (
+        "I answer using canned reports.  Use one of the patterns below; "
+        "<project> can be a name fragment ('Rockland') or a full UUID."
+    ),
+    "patterns": [
+        {"say": "overview of project <project>", "report": "project_overview"},
+        {"say": "docs for project <project>", "report": "docs_for_project"},
+        {"say": "tasks without dates [for project <project>]", "report": "tasks_without_dates"},
+        {"say": "which projects are missing documents", "report": "missing_documents"},
+        {"say": "budget vs contract for project <project>", "report": "budget_vs_contract"},
+        {"say": "active projects", "report": "active_projects"},
+        {"say": "deal pipeline", "report": "deal_pipeline_value"},
+        {"say": "ar aging / outstanding invoices", "report": "ar_aging"},
+    ],
+    "tip": "Type 'help' any time to see this list.",
+}
+
+
 def extract_project_ref(question: str) -> str | None:
     """Find a project reference -- UUID first, then text after 'project '."""
     if not question:
@@ -64,8 +86,20 @@ class AiAssistant:
 
     def ask(self, question: str) -> AiResponse:
         # MODE 1 — canned report keyword matching. Crude but reliable.
-        q = (question or "").lower()
+        q = (question or "").lower().strip()
         ref = extract_project_ref(question)
+
+        # Discoverability: a non-technical user has no way to know which
+        # phrases work.  Catch the common "what can you do" formulations
+        # and list every routed pattern so they can copy/paste.
+        if q in {"help", "?", ""} or any(p in q for p in (
+            "what can you do", "list reports", "what reports",
+            "available reports", "available queries", "available commands",
+        )):
+            return AiResponse(
+                mode="canned", used_report="help",
+                answer=_HELP_PAYLOAD,
+            )
 
         # Order matters: more specific patterns first so generic words don't
         # steal the match.

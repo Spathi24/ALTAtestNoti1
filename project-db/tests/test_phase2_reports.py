@@ -422,3 +422,17 @@ class TestAskDispatcher:
         a = AiAssistant(session)
         resp = a.ask("what is the meaning of life")
         assert resp.used_report is None
+
+    def test_help_routes_to_help_payload(self, session, rich_project):
+        """A non-technical user typing 'help' must see all routed patterns."""
+        a = AiAssistant(session)
+        for q in ["help", "?", "", "what can you do?", "list reports"]:
+            resp = a.ask(q)
+            assert resp.used_report == "help", f"failed on q={q!r}"
+            payload = resp.answer
+            assert "patterns" in payload
+            # Every routed report should appear in the help.
+            report_names = {p["report"] for p in payload["patterns"]}
+            assert "project_overview" in report_names
+            assert "budget_vs_contract" in report_names
+            assert "active_projects" in report_names

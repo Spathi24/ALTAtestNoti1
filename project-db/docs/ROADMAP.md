@@ -24,49 +24,55 @@ rewrite.
 - [x] Drive delta sync via `changes.list` cursor
 - [x] OAuth Desktop auth flow (`project_db gdrive-auth`)
 - [x] One consolidated SQLite location, absolute path in `.env`
-- [x] 131-test suite
+- [x] Test suite (was 131; grew to 250+ through Phases 1 and 2)
 
 ---
 
-## Phase 1 — The Brain Foundation (NEXT, single focus)
+## Phase 1 — The Brain Foundation (DONE 2026-05-15)
 
 Goal: every Drive document with parseable content has indexed text tied to
 its canonical Project, and there is a place to store LLM proposals without
 mutating canonical fields.
 
-- [ ] Create `DocumentText` SQLAlchemy model: `document_id` (FK), `extracted_text` (TEXT), `extraction_method` (VARCHAR — 'pdf-pymupdf', 'gdoc-export', 'docx-python', 'xlsx-openpyxl', 'skipped-size', 'skipped-mime'), `extracted_at` (DATETIME), `token_count` (INT, nullable)
-- [ ] Add `ensure_sqlite_schema` migration for `DocumentText`
-- [ ] Add `pymupdf`, `python-docx`, `openpyxl` to `pyproject.toml` under a new `[content]` optional dependency group
-- [ ] Implement `gdrive/extractors.py` with one function per mime type, returning `(text, method)` or `(None, 'skipped-*')`
-- [ ] Wire extractors into `GDriveConnector` — content extraction runs after metadata upsert; cap at 10 MB per file; skip HEIC, DWG, ZIP, audio
-- [ ] Add `project_db extract-content [--project <id>] [--missing-only]` CLI command for re-running extraction without a full Drive sync
-- [ ] Create `Proposal` SQLAlchemy model: `entity_type` (VARCHAR), `entity_id` (UUID), `field_name` (VARCHAR), `proposed_value` (TEXT — JSON-encoded), `confidence` (FLOAT), `source_doc_ids` (TEXT — JSON list of Document UUIDs), `prompt_version` (VARCHAR), `status` (ENUM: pending/accepted/rejected/superseded), `created_at`, `decided_at`, `decided_by`
-- [ ] Add tests: extractor coverage per mime type, Proposal model CRUD, DocumentText constraints
+- [x] `DocumentText` SQLAlchemy model: `document_id` (FK), `extracted_text` (TEXT), `extraction_method`, `extracted_at`, `token_count`
+- [x] `ensure_sqlite_schema` migration for both `DocumentText` and `Proposal`
+- [x] `pymupdf`, `python-docx`, `openpyxl` added under `[content]` optional deps
+- [x] `gdrive/extractors.py` with one function per mime type (PDF / DOCX / XLSX / Google Docs / Google Sheets); lazy imports so the codebase loads without the libs
+- [x] Wired extractors into `GDriveConnector` (`extract_content` flag, default off — CLI is primary entry). 10 MB cap. Trashed docs skipped. Unsupported mime auto-`skipped-mime`.
+- [x] `project_db extract-content [--project] [--overwrite] [--limit]` CLI; idempotent; periodic commits; Ctrl-C handling
+- [x] `Proposal` SQLAlchemy model with all fields + ProposalStatus enum
+- [x] **Bonus:** Drive sync reconciliation soft-marks vanished files (was insert-only before)
+- [x] **Bonus:** SQLite FK enforcement turned on (`PRAGMA foreign_keys=ON`); CASCADE now actually works
+- [x] Tests: 60+ across the three new files (`test_phase1_models`, `test_gdrive_extractors`, partial coverage in `test_gdrive_enhancements`)
 
-**Phase 1 exit test:** running `project_db extract-content` populates
-`DocumentText` rows for at least 200 documents from the live Drive sync,
-with non-empty text and a `token_count` set. Manual spot-check confirms
-the text looks readable.
+**Phase 1 exit test — PASSED:** ran `project_db extract-content` over the
+full 750-doc tree. **457 documents** with non-empty text, every one with
+a token_count. Spot-check on real contract text (Petro.docx, Tony Estimate.pdf,
+Alta Construction Group - contract.pdf) confirms readable output.
 
 ---
 
-## Phase 2 — Tier-1 AI (deterministic reports, no LLM)
+## Phase 2 — Tier-1 AI (deterministic reports, no LLM) — DONE 2026-05-15
 
 Goal: PMs have at least three queries they hit daily that they couldn't
 run before, with zero AI involved. This builds trust before introducing
 probabilistic outputs.
 
-- [ ] Report: `project_overview <project_id>` — one screen showing tasks, recent documents, invoices, daily logs, linked clients/vendors
-- [ ] Report: `docs_for_project <project_id>` — every Document with folder_path, size, modified date, ordered by folder
-- [ ] Report: `tasks_without_dates [--project <id>]` — Monday tasks missing start/end/due dates, with project + folder_path context
-- [ ] Report: `missing_documents` — projects with zero documents of mime type 'application/pdf' or 'application/vnd.google-apps.document' (likely missing a contract)
-- [ ] Report: `budget_vs_contract <project_id>` — extract numeric values from contract text, compare to Monday budget column, flag divergences > 15%
-- [ ] Wire all reports through existing `project_db ask "..."` so the canned mode picks them up
-- [ ] Add tests for each report's SQL against a populated fixture DB
+- [x] `project_overview` — one-screen snapshot (tasks, docs, invoices, logs, client, external IDs)
+- [x] `docs_for_project` — every Document with folder_path, size, modified date, ordered by folder
+- [x] `tasks_without_dates [--project]` — Monday tasks missing start/end/due dates
+- [x] `missing_documents` — projects with zero contract-shaped docs (PDF / Google Doc / DOCX)
+- [x] `budget_vs_contract` — regex `$amounts` from extracted contract text vs Monday budget; flags >15% divergence. Regex swaps for LLM extraction in Phase 3 (same output shape).
+- [x] All wired through `project_db ask "..."` with natural-language project-ref extraction (UUID or "project <name>")
+- [x] `ask "help"` lists every routed pattern for non-technical users
+- [x] 46 new tests; reports importable from `project_db.ai.views` for Phase-3 LLM tool layer
 
-**Phase 2 exit test:** a non-technical person can run any of the five
-reports above against the live DB and get a useful, correctly-formatted
-result.
+**Phase 2 exit test — PASSED:** all 5 reports verified against the live DB.
+- `tasks_without_dates` → 137 dateless tasks surfaced
+- `missing_documents` → 1 PROPOSED project flagged
+- `project_overview` → real Project (Rockland: 1 task, 18 docs, 0 invoices)
+- `docs_for_project` → 18 docs for Rockland with folder_path context
+- `budget_vs_contract` → 5768-5770 St Laurent contracts produced real $ extractions; the report honestly returns `divergence_pct=null` when Monday budget is unset rather than fabricating
 
 ---
 

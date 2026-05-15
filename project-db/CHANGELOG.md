@@ -9,7 +9,51 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
-## 2026-05-15 — Phase 1 (Brain Foundation) + Phase 2 (Tier-1 Reports)
+## 2026-05-15 (afternoon) — Phase 1 + Phase 2 close-out
+
+**Theme:** Exit tests passed. Both phases officially done.
+
+### Phase 1 exit test (PASSED)
+Ran `project_db extract-content` over the full Drive tree.
+- 742 documents processed (5 were already done)
+- **457 with non-empty extracted text** (target was ≥200)
+- 255 properly skipped as unsupported mime (HEIC, JPG, .wav, etc.)
+- 12 skipped as too big (>10 MB)
+- 1 actual failure (download error)
+- 17 no-op (parsed cleanly but produced empty text — image-only PDFs)
+- Every successful extraction carries a token_count
+
+Total DocumentText rows in live DB: **751** (every Document has a status row).
+Spot-check confirmed real readable text from contracts, leases, estimates,
+DOCX scopes of work.
+
+### Phase 2 exit test (PASSED)
+All five reports verified live:
+- `tasks_without_dates` → 137 dateless tasks
+- `missing_documents` → 1 PROPOSED project flagged
+- `project_overview` → Rockland: 1 task, 18 docs, 0 invoices
+- `docs_for_project` → Rockland: 18 docs with folder_path context
+- `budget_vs_contract` → 5768-5770 St Laurent contracts produced
+  real $ extractions (rents, lease months, line items). Honestly
+  returns `divergence_pct=null` when Monday budget is unset.
+
+### New: discoverability for non-technical users
+`project_db ask "help"` (or `?`, `what can you do`, `list reports`, etc.)
+now returns the full list of routed patterns. Closes the gap where a
+non-technical user had no way to discover phrases like
+"budget vs contract for project X" without reading code.
+
+### Doc hygiene
+- CLAUDE.md: stale "113 tests" / "131-test suite" → current numbers
+  and a pointer to CHANGELOG for the precise count.
+- ROADMAP.md: Phase 1 + Phase 2 checkboxes flipped to `[x]`, exit-test
+  results recorded inline.
+- README.md: test count updated, `ask "help"` added to daily-use list.
+
+### Tests
+- **246 total** (+1 today for the help route).
+
+
 
 **Theme:** Stop building plumbing, start building the brain.
 
