@@ -11,7 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 # Default DB path: <project-db>/project_db.sqlite, regardless of cwd.
@@ -26,6 +27,19 @@ def get_engine(url: str | None = None):
     # SQLite: same-thread restriction off, makes the CLI nicer to work with.
     connect_args = {"check_same_thread": False} if resolved.startswith("sqlite") else {}
     return create_engine(resolved, connect_args=connect_args, future=True)
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    """SQLite ignores FK constraints unless `PRAGMA foreign_keys=ON` per-connection.
+
+    Without this, DocumentText's CASCADE-delete annotation is decorative --
+    deleting a Document would orphan its DocumentText row.
+    """
+    if dbapi_connection.__class__.__module__.startswith("sqlite3"):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 _SessionLocal: sessionmaker[Session] | None = None
