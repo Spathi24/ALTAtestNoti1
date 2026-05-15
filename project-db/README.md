@@ -1,13 +1,19 @@
-# project_db — v0.2 Multi-System Integration
+# project_db — v0.3 (in progress): The Brain
 
 A unified data layer that pulls live data from all of the company's SaaS tools
 (Monday.com, QuickBooks, CompanyCam, Google Drive) into one database, and lets
-you query across all of them from a single command or — eventually — a plain
-English question to an AI assistant.
+you query across all of them — or have an LLM read your contracts and propose
+corrections to what Monday says is happening.
 
-**v0.2 focuses on:** Write mutations back to Monday, mirror-column data
-recovery for portfolio-style boards, Google Drive connector live (750 docs
-synced), QuickBooks connector skeleton, and a 131-test suite.
+**v0.3 status:**
+- Phase 1 (Brain foundation): DocumentText sidecar + Proposal table +
+  content extractors + Drive reconciliation. **Done.**
+- Phase 2 (Tier-1 deterministic reports): 5 new canned reports wired into
+  `ask`. **Done pending live verification of all 5.**
+- Phase 3 (Tier-2 LLM proposals): next.
+
+**245-test suite.** Day-by-day work log in
+**[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
 
@@ -47,20 +53,40 @@ contributing.
 
 ---
 
-## What's New in v0.2
+## What's New in v0.3 (in progress)
 
-✅ **Write Mutations:** Push changes back to Monday (`change_multiple_column_values`)
-✅ **Mirror-Column Overlay:** Recover status/timeline from linked portfolio items
-✅ **Column Cache:** Board-column schema cached per `MondayClient` (one fetch / board / run)
-✅ **Google Drive Connector:** 750 documents synced with full metadata; 300 linked to canonical Projects
-✅ **QuickBooks Connector:** Code complete, awaiting live credentials
-✅ **Ripple-Effect Ready:** Infrastructure for cross-system updates
+✅ **DocumentText sidecar table** — 1:1 with `Document`, stores extracted
+text + extraction method + token count. Enables the LLM layer to actually
+read your contracts.
+✅ **Proposal table** — every LLM-generated suggestion lands here as
+PENDING; a human accept/reject is what triggers write-back to Monday.
+LLM is an advisor, never an actor.
+✅ **Content extractors** — PDF (PyMuPDF), DOCX (python-docx), XLSX
+(openpyxl), Google Docs / Sheets via Drive export. 10 MB cap.
+Unsupported mimes recorded as `skipped-mime` so we don't retry them.
+✅ **`extract-content` CLI** — idempotent text extraction with
+`--missing-only` (default), `--overwrite`, `--project`, `--limit`.
+Periodic commits + Ctrl-C handling for long runs.
+✅ **Drive sync reconciliation** — full sync now soft-marks Documents
+that vanished from Drive (was insert-only; orphans lingered).
+Conservative scope rules; soft-delete only per STRATEGY.md.
+✅ **5 new canned reports** — `project_overview`, `docs_for_project`,
+`tasks_without_dates`, `missing_documents`, `budget_vs_contract`.
+All importable from `project_db.ai.views` for the Phase 3 LLM tool layer.
 
-🟡 **Delta Sync:** Monday withdrawn (API-Version 2026-07 dropped
-`updated_after`). Drive has genuine `changes.list` delta sync.
+### What's New in v0.2
 
-**See [OPTIMIZATION_v0.2.md](docs/OPTIMIZATION_v0.2.md) for detailed breakdown
-and [docs/STRATEGY.md](docs/STRATEGY.md) for the strategic direction.**
+✅ Write mutations back to Monday • mirror-column overlay •
+column cache • Google Drive connector live (750 docs, 300 linked) •
+QuickBooks connector code complete • Drive delta sync via
+`changes.list` cursor.
+
+🟡 Monday delta sync withdrawn (API-Version 2026-07 dropped
+`updated_after`); full-pull is fine at current scale.
+
+**See [docs/STRATEGY.md](docs/STRATEGY.md) for the strategic direction,
+[docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan, and
+[CHANGELOG.md](CHANGELOG.md) for day-by-day progress.**
 
 ---
 
@@ -132,17 +158,27 @@ project_db init-db
 ### Daily use
 
 ```bash
-# Pull all data from Monday into the local DB
-project_db sync monday
+# --- Sync ---
+project_db sync monday              # pull Monday boards/items into the canonical DB
+project_db sync GOOGLE_DRIVE        # pull Drive metadata (run gdrive-auth once first)
+project_db gdrive-auth              # one-time OAuth browser flow (Desktop creds)
 
-# Ask what projects are currently active
+# --- Read contract text ---
+project_db extract-content --limit 5            # smoke test
+project_db extract-content                      # default: every doc missing text
+project_db extract-content --project <UUID>     # restrict to one project
+project_db extract-content --overwrite          # re-extract everything
+
+# --- Ask (canned reports) ---
 project_db ask "what active projects do we have?"
-
-# See the current deal pipeline value by stage
 project_db ask "what deals are in the pipeline?"
-
-# See accounts receivable aging
 project_db ask "show ar aging"
+project_db ask "overview of project 923 Rockland"
+project_db ask "docs for project Rockland"
+project_db ask "tasks without dates"
+project_db ask "tasks without dates for project Rockland"
+project_db ask "which projects are missing documents"
+project_db ask "budget vs contract for project Rockland"
 ```
 
 ### Example output
@@ -385,14 +421,37 @@ project-db/
 
 ### 🧠 v0.3 — The Brain (per [STRATEGY.md](docs/STRATEGY.md))
 
-This is the next focus. Everything below derives from the strategic decision
-that ALTA's product is the LLM reconciliation layer, not the sync.
+The current focus. The phased plan lives in
+[docs/ROADMAP.md](docs/ROADMAP.md); the abridged version:
 
-- [ ] **`DocumentText` sidecar** — Extract text from PDFs, Google Docs, DOCX, Excel; cap at 10 MB; skip HEIC/DWG/audio
-- [ ] **`Proposal` table** — LLM-generated suggestions awaiting human approval
-- [ ] **LLM timeline-filling** — Given a Project + its DocumentText, propose dates for Monday tasks lacking them
-- [ ] **LLM scope reconciliation** — Compare contract scope (Drive text) to Monday task list, flag missing items
-- [ ] **Approval workflow CLI** — `project_db proposals list / accept / reject`; accepted writes flow back to Monday
+**Phase 1 — Brain foundation (done)**
+- [x] `DocumentText` sidecar — extract text from PDFs, Google Docs, DOCX, Excel; 10 MB cap
+- [x] `Proposal` table — LLM-generated suggestions awaiting human approval
+- [x] `extract-content` CLI — idempotent, project-scoped, with `--overwrite`
+- [x] Drive sync reconciliation — soft-mark vanished files
+
+**Phase 2 — Tier-1 reports (done, pending full live verification)**
+- [x] `project_overview`, `docs_for_project`, `tasks_without_dates`,
+  `missing_documents`, `budget_vs_contract`
+- [x] Wired into `ask` via keyword + project-ref extraction
+- [x] All importable from `project_db.ai.views` for the Phase 3 LLM tool layer
+
+**Phase 3 — Tier-2 LLM proposals (next)**
+- [ ] Anthropic client wrapper, prompt caching
+- [ ] Timeline-filling prompt (Project + DocumentText → proposed task dates)
+- [ ] Scope reconciliation prompt (contract vs Monday task list)
+- [ ] Anomaly-detection prompt
+- [ ] `propose timelines / scope / all <project_id>` CLI commands
+
+**Phase 4 — Approval workflow**
+- [ ] `proposals list / show / accept / reject`
+- [ ] Accept triggers Monday write-back via existing `sync_back`
+- [ ] Auto-supersede on new proposals for the same field
+
+**Phase 5 — Adoption**
+- [ ] One PM, one project, daily run for two weeks
+- [ ] `project_db daily <project_id>` — sync + extract + propose in one command
+- [ ] Decision point at 4-6 weeks: is it being used?
 
 ### 🛑 Deferred (per STRATEGY.md)
 
@@ -415,27 +474,31 @@ and [STRATEGY.md](docs/STRATEGY.md) for the full rationale on why the order abov
 All credentials go in `.env` (copy from `.env.example`):
 
 ```bash
-# Database — SQLite for local dev, Postgres for production
-PROJECT_DB_URL=sqlite:///./project_db.sqlite
+# Database — SQLite for local dev, Postgres for production.
+# Use an absolute path so the same file is used regardless of cwd.
+PROJECT_DB_URL=sqlite:///C:/full/path/to/project-db/project_db.sqlite
 # PROJECT_DB_URL=postgresql+psycopg://user:pass@host:5432/project_db
 
 # Monday.com — required for sync monday
 MONDAY_API_TOKEN=...
 
-# QuickBooks (v0.2)
+# QuickBooks (v0.2, code complete, live test deferred)
 QUICKBOOKS_CLIENT_ID=...
 QUICKBOOKS_CLIENT_SECRET=...
 QUICKBOOKS_REALM_ID=...
 QUICKBOOKS_ACCESS_TOKEN=...
 
-# CompanyCam (v0.3)
-COMPANYCAM_API_TOKEN=...
+# Google Drive (v0.2.5 live; OAuth Desktop or service-account JSON)
+GDRIVE_SA_KEY_PATH=/path/to/oauth_client_or_service_account.json
+GDRIVE_IMPERSONATE=workspace-user@example.com    # service-account flow only
+GDRIVE_TOKEN_PATH=/path/to/gdrive_token.json     # OAuth flow only; auto-created
+GDRIVE_ROOT_FOLDER=root                          # or a specific Drive folder ID
 
-# Google Drive (v0.3)
-GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json
-
-# Anthropic — for AI text-to-SQL mode (v0.3+)
+# Anthropic — Phase 3 LLM proposals (not yet wired)
 ANTHROPIC_API_KEY=...
+
+# CompanyCam — deferred per STRATEGY.md
+# COMPANYCAM_API_TOKEN=...
 ```
 
 The `.env` file is gitignored and never committed. `project_db` finds it
