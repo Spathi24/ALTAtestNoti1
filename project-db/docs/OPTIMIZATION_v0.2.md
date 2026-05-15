@@ -23,7 +23,16 @@ to fetch only changed items.
 The v0.2 delta-sync code (`_get_last_sync_time`, `updated_since` parameter)
 was theatre — it tracked timestamps and silently fell back to a full fetch.
 It was removed on 2026-05-14. The honest sync model now is: **every sync is
-a full board pull**. Incremental sync is webhook work, deferred to v0.3.
+a full board pull**.
+
+> **Update 2026-05-15:** the claim "incremental sync is webhook work" was
+> incomplete. A third path exists in the live schema: **`Board.activity_logs(from, to, ...)`**
+> returns a timestamped change feed we can poll. Pattern: query the log
+> since `last_sync_at`, dedupe `item_id`s, refetch those items by ID. No
+> hosting required. The choice between (a) full-pull, (b) activity_logs
+> polling, and (c) webhooks (which IS scriptable via `create_webhook` —
+> the only blocker is hosting) is a Phase-3 decision, not a settled
+> "deferred until v0.3" item.
 
 ---
 

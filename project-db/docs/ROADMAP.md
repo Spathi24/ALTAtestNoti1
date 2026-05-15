@@ -141,7 +141,8 @@ until Phase 5 is in a known-good state.
 
 - [ ] CompanyCam connector (photos)
 - [ ] QuickBooks live test + invoice sync
-- [ ] Webhook receivers (replaces polling on Monday)
+- [ ] Webhook receivers (replaces polling on Monday) — note: `create_webhook` is a scriptable mutation in the live Monday API; the actual blocker is hosting a public HTTPS endpoint
+- [ ] Monday `activity_logs(from, to)`-based delta sync — lightweight, no hosting needed; reasonable to fold into a Phase-3 session
 - [ ] Postgres + Alembic migrations
 - [ ] `pgvector` for semantic document search
 - [ ] Text-to-SQL natural language layer

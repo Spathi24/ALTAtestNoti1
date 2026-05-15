@@ -81,8 +81,11 @@ column cache • Google Drive connector live (750 docs, 300 linked) •
 QuickBooks connector code complete • Drive delta sync via
 `changes.list` cursor.
 
-🟡 Monday delta sync withdrawn (API-Version 2026-07 dropped
-`updated_after`); full-pull is fine at current scale.
+🟡 Monday sync is full-pull at the moment. `updated_after` on `items_page`
+was removed in API-Version 2026-07, but `Board.activity_logs(from, to, ...)`
+is a viable poll-based delta path that we haven't built yet, and
+`create_webhook` is a scriptable mutation we can use once we have hosting.
+At ~20s full pull on 154 tasks, neither is urgent today.
 
 **See [docs/STRATEGY.md](docs/STRATEGY.md) for the strategic direction,
 [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan, and
@@ -420,7 +423,7 @@ project-db/
 - [x] **Column Cache** — One column-schema fetch per board per run
 - [x] **QuickBooks Connector** — Invoices, estimates, customers (live test pending)
 - [x] **Ripple Effects** — Infrastructure for cross-system updates
-- [ ] ~~Delta Sync~~ — Withdrawn: Monday API-Version 2026-07 removed `updated_after`
+- [ ] **Delta Sync (via `activity_logs`)** — `updated_after` is gone, but `Board.activity_logs(from, to)` is a viable poll-based alternative we haven't built; ~half-session of work
 
 ### ✅ v0.2.5 — Google Drive live (done)
 
@@ -469,7 +472,7 @@ explicitly deferred until v0.3 lands and a PM is using ALTA daily.
 - ~~CompanyCam connector~~ — deferred until Monday+Drive produce daily value
 - ~~QuickBooks live integration~~ — deferred (code is ready, run when invoices are needed)
 - ~~Text-to-SQL natural-language layer~~ — too speculative; canned reports + LLM proposals first
-- ~~Webhook receivers~~ — full-pull is fine at current scale
+- **Webhook receivers** — `create_webhook` is scriptable in the live API; blocker is hosting a public HTTPS endpoint, not API capability. Natural fit when the local-model hardware (Mac mini) comes online.
 - ~~Postgres + Alembic migrations~~ — migrate when SQLite limits actually bite
 
 See [adding-a-connector.md](docs/adding-a-connector.md) for the playbook on adding new connectors,

@@ -260,9 +260,19 @@ Done:
   `gdrive-auth`, `extract-content`, `ask`.
 
 Known limits / non-features (do not pretend otherwise):
-- **Sync is full-pull only for Monday.** Monday API-Version 2026-07 removed
-  `updated_after` from `items_page`. The old `_get_last_sync_time` was theatre
-  and got removed on 2026-05-14. True incremental sync = webhook work.
+- **Sync is full-pull only for Monday — but not because delta is impossible.**
+  Monday API-Version 2026-07 removed `updated_after` from `items_page` (that
+  specific shortcut is gone), but two viable alternatives exist in the live
+  schema and we just haven't built either:
+    * **Poll-based:** `Board.activity_logs(from, to, ...)` returns timestamped
+      change events. Pattern: query the log since `last_sync_at`, dedupe
+      `item_id`s, refetch those items by ID. No hosting required, lightweight.
+    * **Push-based:** `create_webhook(board_id, url, event)` is a scriptable
+      mutation (20+ event types). Needs a public HTTPS endpoint for Monday
+      to POST to — blocked until we have hosting (Mac mini / VPS).
+  At current scale (154 tasks, ~20s full pull) neither is urgent, but **stop
+  saying "Monday has no delta sync."** Say "Monday delta-sync code is not
+  yet built; activity_logs is the viable path."
   Drive does have genuine `changes.list` delta sync via stored cursor.
 - **QB connector has never been run live.** Invoice table is empty in dev.
   **Deferred per STRATEGY.md** — do not pick this up until Monday+Drive are
@@ -293,7 +303,13 @@ Explicitly NOT next (per STRATEGY.md):
 - QB live integration
 - Text-to-SQL natural language layer
 - Postgres migration / Alembic
-- Webhook receivers
+- Webhook receivers (Monday `create_webhook` IS scriptable — the blocker
+  is hosting, not API support; revisit when Mac mini / hosting exists)
 - Any new source system
+
+Worth-doing-soon but not yet:
+- Monday `activity_logs`-based delta sync. Lightweight (no hosting needed),
+  pairs naturally with Phase-3 "re-propose when something changes."
+  Reasonable to fold into a Phase-3 session rather than its own phase.
 
 These are real items but they're plumbing. The brain (#1-5 above) comes first.
