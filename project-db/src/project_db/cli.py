@@ -435,9 +435,21 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
             f"{block}"
         )
 
+        if args.verbose:
+            print()
+            print("=== SYSTEM PROMPT ===")
+            print(system)
+            print("\n=== USER PROMPT (first 1000 chars) ===")
+            print(user[:1000] + ("\n... [truncated]" if len(user) > 1000 else ""))
+            print("\n=== FULL ASSEMBLED CONTEXT (first 500 chars) ===")
+            print(block[:500] + ("\n... [truncated]" if len(block) > 500 else ""))
+            print()
+
         print(f"Calling LLM (max_output_tokens={args.max_output_tokens})...")
         print("  (first call to a freshly-pulled local model can take 30-180s")
         print("   on CPU while weights load -- subsequent calls are fast)")
+        import time as _time
+        t0 = _time.monotonic()
         try:
             resp = provider.complete(
                 messages=[LLMMessage(role="user", content=user)],
@@ -455,12 +467,29 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        elapsed = _time.monotonic() - t0
+
+        in_toks = resp.usage.get("input_tokens", 0)
+        out_toks = resp.usage.get("output_tokens", 0)
+        tok_per_sec = (out_toks / elapsed) if elapsed > 0 and out_toks else 0
 
         print()
-        print(f"--- response (finish={resp.finish_reason}, "
-              f"in={resp.usage.get('input_tokens', '?')} "
-              f"out={resp.usage.get('output_tokens', '?')}) ---")
+        print(
+            f"--- response (finish={resp.finish_reason}, "
+            f"in={in_toks} out={out_toks}, "
+            f"{elapsed:.1f}s @ {tok_per_sec:.1f} tok/s) ---"
+        )
         print(resp.content)
+
+        if args.verbose:
+            print()
+            print("=== METADATA ===")
+            print(f"  model:         {resp.model}")
+            print(f"  finish_reason: {resp.finish_reason}")
+            print(f"  input_tokens:  {in_toks}")
+            print(f"  output_tokens: {out_toks}")
+            print(f"  elapsed_sec:   {elapsed:.2f}")
+            print(f"  tok_per_sec:   {tok_per_sec:.1f}")
         return 0
 
 
@@ -524,6 +553,10 @@ def build_parser() -> argparse.ArgumentParser:
     lt.add_argument(
         "--max-output-tokens", default=300, type=int,
         help="Output cap (default 300; lower = faster on slow CPU models)",
+    )
+    lt.add_argument(
+        "--verbose", action="store_true",
+        help="Dump system prompt, user prompt excerpt, context, and timing metadata",
     )
     lt.set_defaults(func=cmd_llm_test)
 

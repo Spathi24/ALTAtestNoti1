@@ -172,6 +172,43 @@ least three times a week. If not, see STRATEGY.md §7.
 
 ---
 
+## Future architecture notes (post-Phase-5)
+
+These are user-articulated directions worth preserving so future
+sessions don't re-derive them.  Not committed work; not next; not now.
+
+**Dual-model architecture.**  Two configured providers running in
+parallel:
+
+  - **Fast** (small local model / Haiku tier): conversational
+    layer for `ask`, query routing, simple Q&A.
+  - **Deep** (big local model / Opus tier): proposal generation,
+    contract-vs-Monday reconciliation, anomaly detection.
+
+They share state through the canonical DB (`ProjectContext`,
+`Proposal` table), not through token windows.  Already enabled by
+the `LLMProvider` interface -- just instantiate two providers and
+config-switch which one a given call uses.  Likely env-var pattern:
+`LLM_PROVIDER_FAST` + `LLM_PROVIDER_DEEP`.
+
+**RAG layer.**  Vector embeddings over `DocumentText` for
+similarity-based retrieval.  Complements `assemble_project_context`
+rather than replacing it: the assembler grabs structured canonical
+spine (tasks / invoices / dates), RAG grabs fuzzy text chunks
+("the deadline clause" in a 100-page contract).  Both feed the
+same prompt.  Will need `pgvector` (= Postgres migration) or
+`sqlite-vec` extension first.
+
+**Domain-pretrained / fine-tuned local model.**  Continued
+pretraining on the company corpus (DocumentText + Monday history
++ folder structures + civic mappings) so the model speaks our
+internal language out of the box.  The exporter is Session 3c;
+the actual fine-tuning happens on the dedicated hardware
+(Mac mini / dedicated GPU box) and is not a code task in this
+repo.
+
+---
+
 ## Deferred (per STRATEGY.md — explicitly NOT next)
 
 These are real items but they are plumbing-not-brain. Do not pick them up
