@@ -9,6 +9,79 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-16 (afternoon) — Session 3a close-out: delta sync + LLM smoke
+
+**Theme:** Wrap up 3a with the deferred Monday delta-sync work and a
+real end-to-end LLM smoke test against a local model.  Ship the
+prompt-design lessons learned along the way.
+
+### Monday delta sync via `Board.activity_logs` (commit ea09770)
+- `MondayClient.list_activity_logs(board_id, from_ts, ...)` — paginated
+  GraphQL against the live API.  20-page safety cap.
+- `MondayConnector.sync(delta=True)` smart-skip: queries the change
+  feed per board, skips boards with zero activity since their stored
+  cursor.  Cursor pattern mirrors Drive's `changes.list` cursor —
+  per-board ExternalId rows with ISO8601 timestamps in `external_url`.
+- Conservative on failure: if probing activity_logs errors, treat the
+  board as changed (better wasted pull than missed update).
+- CLI: `project_db sync monday --delta`
+- **Live result on real DB:** full sync 38.1s → delta sync 6.4s,
+  11 of 12 boards skipped (only users + 1 changed board re-pulled).
+  6× speedup on a quiet day.
+- 19 new tests.
+
+### `project_db llm-test <project>` (commit f881076 + iterations)
+- End-to-end smoke command: picks the configured provider, assembles
+  real project context, sends a "give me a status update" prompt,
+  prints the response.  Does NOT write Proposal rows.
+- Knobs: `--token-budget`, `--max-docs`, `--max-output-tokens`,
+  `--verbose`.  Defaults tuned for local CPU reality.
+- Reports tokens/sec and elapsed time on every run.
+
+### Local model setup (Ollama smoke run)
+- User installed Ollama + pulled llama3.2:3b then qwen2.5:3b.
+- `LLM_PROVIDER=openai-compatible`, `OPENAI_BASE_URL=http://localhost:11434/v1`,
+  `OPENAI_MODEL=qwen2.5:3b`.
+- Live result on Rockland (small project): coherent status update,
+  225s on CPU at 0.3 tok/s.  Wires fully proven.
+
+### Iterations forced by the smoke test (each its own lesson)
+**Iteration 1 (commit 7f96321):** First call timed out.  Cold-start +
+CPU inference + 600 max-output blew through the 120s default timeout.
+Fixed: default 600s, OPENAI_TIMEOUT env var, smaller defaults on
+llm-test (20k budget, 3 docs, 300 output tokens).
+
+**Iteration 2 (commit 67fc3f3):** Added `--verbose` flag for prompt
+dumping + per-call timing.  Also captured the dual-model future
+architecture + RAG vision in ROADMAP.
+
+**Iteration 3 (commit b74a4de):** Bigger smoke test (5768-5770,
+11k tokens) produced a FRENCH LEASE REWRITE instead of a status
+update.  Diagnosed: Ollama silently truncated to 4096 tokens from
+the FRONT, so the head-loaded instruction got cut and the model
+only saw lease boilerplate at the tail.  Fixed:
+  1. Instruction moved to TAIL of user message (chat templates
+     preserve the tail of the last user turn under truncation).
+  2. System prompt restated as backup.
+  3. Warning printed when estimated prompt size > 3500 tokens.
+- This is a **general prompt-engineering lesson** that informs every
+  Phase-3b proposal prompt: instruction LAST, context FIRST.
+- Post-fix retry: same project, same model — model now correctly
+  responds to "give a status update" using the truncated context it
+  has.  Coherent on-topic English vs the previous French lease.
+
+### State at EOD
+- **311 tests** passing (+24 today).
+- 8 commits since yesterday's EOD wrap.
+- Phase 3a fully complete (provider abstraction + context assembler
+  + delta sync + LLM smoke + prompt-engineering lessons baked in).
+- Local model proven, slow on laptop, blocked from real use by
+  hardware -- Mac mini / Claude API will fix.
+- Phase 3b ready to start: real timeline / scope / anomaly prompts,
+  Proposal table writes, approval CLI.
+
+---
+
 ## 2026-05-16 — Session 3a: LLM provider abstraction + project-context assembler
 
 **Theme:** Start Phase 3 by building the model-agnostic plumbing.  No

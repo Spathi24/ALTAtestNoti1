@@ -115,7 +115,7 @@ A merge conflict at push time is a failure of this rule.
 
 ### 3. Keep the test suite green.
 
-There are **245+ tests** in `project-db/tests/` (the count grows; check
+There are **310+ tests** in `project-db/tests/` (the count grows; check
 the latest pass line in CHANGELOG.md if you need a precise number).
 Before pushing anything that touches `src/`:
 
@@ -203,7 +203,7 @@ ALTAtest/
     │   │   ├── monday/              ← client.py, connector.py, column_extractor.py
     │   │   └── quickbooks/
     │   └── ai/                      ← canned reports + (stub) text-to-SQL
-    └── tests/                       ← pytest suite (102 tests)
+    └── tests/                       ← pytest suite (311 tests)
 ```
 
 ---
@@ -255,9 +255,18 @@ Done:
   `docs_for_project`, `tasks_without_dates`, `missing_documents`,
   `budget_vs_contract` reachable via `project_db ask "..."`.
   Run `project_db ask "help"` to see all routed patterns.
-- 250+-test suite (see CHANGELOG.md for precise current count).
+- **Phase 3a (LLM scaffolding) done:** `LLMProvider` abstraction with
+  three concrete backends (`MockLLMProvider`, `AnthropicProvider`,
+  `OpenAICompatibleProvider` — local Ollama / vLLM / llama.cpp etc.).
+  `assemble_project_context()` builds the structured prompt block.
+  `project_db llm-test <project>` exercises the full pipeline.
+- **Monday delta sync done:** `project_db sync monday --delta` uses
+  `Board.activity_logs` to skip boards with no activity since cursor.
+  6× speedup on quiet days.
+- 310+-test suite (see CHANGELOG.md for precise current count).
 - Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`,
-  `gdrive-auth`, `extract-content`, `ask`.
+  `gdrive-auth`, `extract-content`, `ask`, `llm-test`,
+  `sync monday --delta`.
 
 Known limits / non-features (do not pretend otherwise):
 - **Sync is full-pull only for Monday — but not because delta is impossible.**

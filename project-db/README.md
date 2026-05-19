@@ -12,7 +12,7 @@ corrections to what Monday says is happening.
   `ask`. **Done pending live verification of all 5.**
 - Phase 3 (Tier-2 LLM proposals): next.
 
-**246-test suite.** Day-by-day work log in
+**311-test suite.** Day-by-day work log in
 **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
@@ -162,7 +162,9 @@ project_db init-db
 
 ```bash
 # --- Sync ---
-project_db sync monday              # pull Monday boards/items into the canonical DB
+project_db sync monday              # full pull (every board)
+project_db sync monday --delta      # smart-skip: query Board.activity_logs,
+                                    # skip boards with no changes since cursor
 project_db sync GOOGLE_DRIVE        # pull Drive metadata (run gdrive-auth once first)
 project_db gdrive-auth              # one-time OAuth browser flow (Desktop creds)
 
@@ -183,6 +185,12 @@ project_db ask "tasks without dates for project Rockland"
 project_db ask "which projects are missing documents"
 project_db ask "budget vs contract for project Rockland"
 project_db ask "help"                       # list every routed pattern
+
+# --- LLM smoke (Phase 3a) ---
+project_db llm-test Rockland                # assemble context + call configured LLM
+project_db llm-test 5768-5770 --verbose     # also dump prompts, timing, tokens
+project_db llm-test Rockland --token-budget 8000 --max-docs 1 \
+                              --max-output-tokens 200   # shrink for slow local models
 
 # --- Admin / diagnostic ---
 project_db init-db                          # one-time table create + seed org
@@ -447,12 +455,10 @@ The current focus. The phased plan lives in
 - [x] Wired into `ask` via keyword + project-ref extraction
 - [x] All importable from `project_db.ai.views` for the Phase 3 LLM tool layer
 
-**Phase 3 — Tier-2 LLM proposals (next)**
-- [ ] Anthropic client wrapper, prompt caching
-- [ ] Timeline-filling prompt (Project + DocumentText → proposed task dates)
-- [ ] Scope reconciliation prompt (contract vs Monday task list)
-- [ ] Anomaly-detection prompt
-- [ ] `propose timelines / scope / all <project_id>` CLI commands
+**Phase 3 — Tier-2 LLM proposals (in progress)**
+- [x] Session 3a: `LLMProvider` abstraction (mock + anthropic + openai-compatible) + `assemble_project_context` + `llm-test` smoke CLI + Monday `activity_logs` delta sync
+- [ ] Session 3b: real prompts (timeline / scope / anomalies) → Proposal rows + approval CLI
+- [ ] Session 3c: fine-tuning corpus exporter + personality config + local-backend swap
 
 **Phase 4 — Approval workflow**
 - [ ] `proposals list / show / accept / reject`
@@ -505,8 +511,20 @@ GDRIVE_IMPERSONATE=workspace-user@example.com    # service-account flow only
 GDRIVE_TOKEN_PATH=/path/to/gdrive_token.json     # OAuth flow only; auto-created
 GDRIVE_ROOT_FOLDER=root                          # or a specific Drive folder ID
 
-# Anthropic — Phase 3 LLM proposals (not yet wired)
+# --- LLM provider (Phase 3a) ---
+# Resolver order: LLM_PROVIDER -> anthropic-if-key -> mock fallback.
+LLM_PROVIDER=mock                 # mock | anthropic | openai-compatible
+
+# Anthropic provider:
 ANTHROPIC_API_KEY=...
+
+# OpenAI-compatible provider -- works with Ollama, vLLM, llama.cpp,
+# LM Studio, OpenAI itself.  When the Mac mini ships, point BASE_URL
+# at it and MODEL at the loaded model.  Zero code change.
+OPENAI_BASE_URL=http://localhost:11434/v1     # Ollama default
+OPENAI_MODEL=qwen2.5:3b                       # or llama3.2:3b, qwen2.5:32b, ...
+OPENAI_API_KEY=EMPTY                          # most local servers ignore auth
+OPENAI_TIMEOUT=600                            # seconds; bump for slow CPU inference
 
 # CompanyCam — deferred per STRATEGY.md
 # COMPANYCAM_API_TOKEN=...
