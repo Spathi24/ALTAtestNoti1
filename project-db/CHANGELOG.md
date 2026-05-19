@@ -9,6 +9,71 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-16 — Session 3a: LLM provider abstraction + project-context assembler
+
+**Theme:** Start Phase 3 by building the model-agnostic plumbing.  No
+real model touched.  Designed so swapping Anthropic-for-now → local
+Qwen-on-Mac-mini → fine-tuned Qwen is a config change, not a refactor.
+
+### Provider layer (`src/project_db/ai/providers/`)
+- **`base.py`** — `LLMProvider` ABC with one required method (`complete`)
+  and one convenience (`complete_json` with retry-on-bad-JSON).
+  Canonical message shape mirrors OpenAI Chat Completions because
+  every local server speaks it.  Errors normalized as `LLMProviderError`.
+- **`mock.py`** — `MockLLMProvider` for tests.  Sequential responses
+  or callback; captures every call for assertions.
+- **`anthropic_provider.py`** — translates to Anthropic Messages API.
+  Lifts system-role turns to the `system` field correctly.  SDK
+  errors wrapped, not raw.
+- **`openai_compatible.py`** — works with Ollama, vLLM, llama.cpp,
+  LM Studio, TGI, OpenAI itself.  Zero new code when Mac mini lands —
+  flip `OPENAI_BASE_URL` env var.
+- **`get_default_provider()`** — env-driven resolver
+  (`LLM_PROVIDER=mock|anthropic|openai-compatible`).
+
+### Project context assembler (`src/project_db/ai/context.py`)
+- `assemble_project_context(session, project_id, token_budget, ...)`
+  pulls Project + Client + Tasks + Documents + DocumentTexts +
+  Invoices + DailyLogs into one structured `ProjectContext`.
+- `to_dict()` for JSON; `to_prompt_block()` for direct prompt insertion.
+- Three knobs: `max_documents_with_text` (top-N newest *with text*),
+  `per_doc_char_cap` (per-body clip), `token_budget` (global, evicts
+  bodies oldest-first when over).
+- Live test on 5768-5770 St Laurent: 16 tasks, 143 docs metadata,
+  5 contract bodies, ~14k token output block.
+
+### Bug caught by tests before commit
+- First implementation picked the N most-recent Documents and *then*
+  looked up text — but the newest doc on Rockland was a HEIC photo
+  with no DocumentText, so `max_documents_with_text=1` returned 0
+  bodies.  Fixed: now joins through DocumentText first, then takes
+  top-N by recency.  Semantic is "N readable bodies," not "N doc
+  slots that might or might not have text."
+
+### Decisions baked in unilaterally (push back if wrong)
+1. OpenAI Chat Completions wire shape as canonical (every local
+   server speaks it; Anthropic adapts via thin translator).
+2. Structured output: retry-on-bad-JSON in base class; native
+   `response_format=json_object` as opt-in HTTP hint where supported.
+3. Anthropic plays prototyping role until Mac mini lands.
+4. Three providers from day one (mock + anthropic + openai-compatible)
+   so the local swap costs zero code later.
+
+### Tests
+- **287 total** (+41 today).
+- 22 new in `test_ai_providers.py` covering interface contract,
+  three concrete providers, JSON retry, env resolver.
+- 19 new in `test_ai_context.py` covering assembly, trash exclusion,
+  doc-budget eviction, prompt-block formatting, JSON serialization.
+
+### What Session 3a did NOT do (next session)
+- No prompts written (timeline / scope / anomaly — Session 3b).
+- No proposals CLI (Session 3b).
+- Monday `activity_logs` delta sync deferred to start of Session 3b.
+- No real Anthropic API call yet — every test is mocked.
+
+---
+
 ## 2026-05-15 (evening) — System audit + corrected Monday-delta-sync position
 
 **Theme:** Honest audit of the whole system. Discovered I had been

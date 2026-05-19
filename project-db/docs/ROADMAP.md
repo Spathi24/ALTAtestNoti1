@@ -87,19 +87,24 @@ table. Nothing is auto-written to Monday.
 with optional Anthropic provider for prototyping while the box is
 being set up.  Build provider-agnostic infrastructure FIRST.
 
-**Session 3a — Provider abstraction + context assembler + delta sync**
-- [ ] `LLMProvider` interface in `ai/providers/base.py`.  OpenAI-compatible
-      Chat Completions shape recommended (Ollama, vLLM, llama.cpp, LM Studio
-      all speak this; Anthropic adapts cleanly).
-- [ ] `MockLLMProvider` (deterministic, for tests)
-- [ ] `AnthropicProvider` (real, for prototyping pre-hardware)
-- [ ] `assemble_project_context(session, project_id)` — Project + Tasks +
-      DocumentText + Invoices, chunked with configurable token budget
-- [ ] Monday `activity_logs(from, to)` delta-sync method on `MondayConnector`
-      (folded in here because it pairs with the "re-propose when changed"
-      trigger).  Sync state via the existing ExternalId-as-cursor pattern.
+**Session 3a — Provider abstraction + context assembler (DONE 2026-05-16)**
+- [x] `LLMProvider` interface in `ai/providers/base.py`.  OpenAI Chat
+      Completions shape canonical; `complete_json` retry helper on base.
+- [x] `MockLLMProvider` (deterministic, for tests)
+- [x] `AnthropicProvider` (real, for prototyping pre-hardware)
+- [x] `OpenAICompatibleProvider` (Ollama/vLLM/llama.cpp — zero new code
+      when local hardware arrives)
+- [x] `get_default_provider()` env-var resolver
+- [x] `assemble_project_context(session, project_id)` — full join,
+      configurable token budget, evicts doc bodies oldest-first
+- [x] 41 new tests
+- [ ] ~~Monday `activity_logs(from, to)` delta-sync~~ — moved to start
+      of 3b so 3a stayed model-layer-focused
 
-**Session 3b — Proposal writer + approval CLI**
+**Session 3b — Monday delta sync + Proposal writer + approval CLI**
+- [ ] `MondayConnector.delta_sync_via_activity_log(from_ts)` — poll
+      `Board.activity_logs(from, to, ...)`, dedupe item_ids, refetch
+      changed items.  Sync state via ExternalId cursor pattern.
 - [ ] Prompt: timeline extraction — JSON list of `{task_canonical_id, proposed_start, proposed_end, confidence, source_doc_id, reasoning}`
 - [ ] Prompt: scope reconciliation — JSON list of `{scope_item, in_monday: bool, suggested_task_title, confidence}`
 - [ ] Prompt: anomaly detection — JSON list of `{anomaly_type, description, severity}`
