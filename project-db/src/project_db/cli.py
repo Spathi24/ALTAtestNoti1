@@ -82,7 +82,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("No organization found. Run init-db first.", file=sys.stderr)
             return 2
         connector = connector_cls(session=s, organization_id=org.canonical_id)
-        report = connector.sync()
+        # --delta is only meaningful for Monday today (Drive's sync already
+        # uses changes.list internally).  Other connectors silently ignore.
+        sync_kwargs = {}
+        if getattr(args, "delta", False) and source == SourceSystem.MONDAY:
+            sync_kwargs["delta"] = True
+        report = connector.sync(**sync_kwargs)
         print(report.summary())
         if report.errors:
             print("Errors:")
@@ -381,6 +386,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", help="Run a connector sync")
     sync.add_argument("source", help="e.g. monday")
+    sync.add_argument(
+        "--delta",
+        action="store_true",
+        help="Monday only: skip boards with no activity_logs since last sync",
+    )
     sync.set_defaults(func=cmd_sync)
 
     ask = sub.add_parser("ask", help="Ask the AI assistant a question")

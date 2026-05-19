@@ -176,10 +176,11 @@ class MondayClient:
         then request column_values(ids: $column_ids) so Status, Timeline,
         Duration, Priority, etc. are actually included when present on the board.
 
-        Note: there is no incremental / delta-sync mode here. API-Version
-        2026-07 dropped the `updated_after` argument from items_page; every
-        call is a full board pull. If you need incremental sync, build it on
-        Monday's webhook events, not on this endpoint.
+        Note: this method always does a full board pull -- `updated_after`
+        was removed from `items_page` in API-Version 2026-07.  For delta
+        sync see ``list_activity_logs`` plus ``MondayConnector.sync(delta=True)``,
+        which uses the activity log to skip boards with no changes since
+        the last run.
         """
         columns = self.list_board_columns(board_id)
         column_ids = [c["id"] for c in columns if c.get("id")]
@@ -546,3 +547,86 @@ class MondayClient:
             logger.info("Deleted item %s from board %s", item_id, board_id)
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # Activity logs (delta-sync gate)
+    # ------------------------------------------------------------------
+
+    def list_activity_logs(
+        self,
+        board_id: int,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 100,
+        page: int = 1,
+        max_pages: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return board activity-log events, newest first.
+
+        Monday gives every Board a change feed.  We use it as the cheap
+        delta-sync gate: ``MondayConnector.sync(delta=True)`` queries this
+        with ``from_ts = last_sync_at`` and skips the board entirely when
+        the result is empty.  Per-item delta -- refetching just the
+        changed items -- is a future enhancement that would build on
+        this same endpoint.
+
+        Args:
+          board_id:   Numeric board id.
+          from_ts:    ISO-formatted via .isoformat() before sending.
+                      Server interprets as UTC.
+          to_ts:      Upper bound; usually omitted (= now).
+          limit:      Events per page (max 1000 per Monday docs).
+          page:       Start page; loops forward to ``max_pages``.
+          max_pages:  Safety cap.  20 pages * 100/page = 2000 events
+                      per board, plenty for skip-or-process decisions.
+
+        Returns events with shape::
+
+            {"id": "...", "created_at": "2026-05-16T12:34:56Z",
+             "event": "update_column_value", "entity": "...",
+             "user_id": "...", "data": "{...JSON blob...}"}
+
+        ``data`` is a JSON string -- callers parse if they need item ids.
+        """
+        gql = """
+        query ($board_id: [ID!]!, $from_ts: ISO8601DateTime,
+               $to_ts: ISO8601DateTime, $limit: Int!, $page: Int!) {
+          boards(ids: $board_id) {
+            activity_logs(
+              from: $from_ts
+              to: $to_ts
+              limit: $limit
+              page: $page
+            ) {
+              id created_at event entity user_id data
+            }
+          }
+        }
+        """
+        out: list[dict[str, Any]] = []
+        current_page = page
+        while current_page < page + max_pages:
+            variables: dict[str, Any] = {
+                "board_id": [board_id],
+                "limit": limit,
+                "page": current_page,
+            }
+            if from_ts is not None:
+                variables["from_ts"] = from_ts.isoformat()
+            if to_ts is not None:
+                variables["to_ts"] = to_ts.isoformat()
+            data = self.query(gql, variables)
+            boards = data.get("boards") or []
+            if not boards:
+                break
+            events = boards[0].get("activity_logs") or []
+            out.extend(events)
+            if len(events) < limit:
+                break
+            current_page += 1
+        logger.debug(
+            "list_activity_logs board=%s from=%s -> %d events",
+            board_id, from_ts, len(out),
+        )
+        return out

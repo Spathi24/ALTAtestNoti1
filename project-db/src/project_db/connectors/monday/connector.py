@@ -337,8 +337,23 @@ class MondayConnector(BaseConnector):
     # Entry point
     # ------------------------------------------------------------------
 
-    def sync(self) -> SyncReport:
-        """Sync Monday data to canonical DB. Always does a full pull."""
+    # Cursor storage: each board has its own activity-log cursor (ISO8601
+    # timestamp stored as the external_url of a synthetic ExternalId row).
+    # Pattern mirrors what GDriveConnector does for changes.list.
+    _CURSOR_PREFIX = "monday_board_cursor:"
+
+    def sync(self, *, delta: bool = False) -> SyncReport:
+        """Sync Monday data to canonical DB.
+
+        Args:
+          delta: If True, query ``Board.activity_logs`` for each board and
+                 SKIP boards that have had zero activity since the cursor
+                 stored from the last run.  At small scale this saves the
+                 cost of a full board pull on quiet boards.  Per-item
+                 delta -- refetching only changed items rather than the
+                 whole board -- is a future enhancement built on the same
+                 endpoint.  Default False (full pull on every board).
+        """
         try:
             workspaces = self.client.list_workspaces()
             logger.info("Found %d Monday workspaces", len(workspaces))
@@ -351,6 +366,8 @@ class MondayConnector(BaseConnector):
             boards = self.client.list_boards()
             logger.info("Found %d boards total", len(boards))
 
+            sync_started_at = datetime.utcnow()
+            skipped_unchanged = 0
             for board in boards:
                 if board.get("state") != "active":
                     continue
@@ -363,11 +380,90 @@ class MondayConnector(BaseConnector):
                 if entity_type is None:
                     logger.debug("Skipping board %r (no pattern match)", board["name"])
                     continue
+
+                if delta and not self._board_has_changes(board["id"]):
+                    skipped_unchanged += 1
+                    logger.info(
+                        "[MONDAY] delta: skipping board %r (no activity since cursor)",
+                        board["name"],
+                    )
+                    continue
+
                 self._sync_board(board, entity_type)
+                # Advance the per-board cursor only after a successful sync.
+                self._save_board_cursor(board["id"], sync_started_at)
+
+            if delta:
+                logger.info(
+                    "[MONDAY] delta sync: %d board(s) skipped as unchanged",
+                    skipped_unchanged,
+                )
 
         except Exception as exc:  # noqa: BLE001
             self._record_failure(f"sync failed: {exc}")
         return self._finalize()
+
+    # ------------------------------------------------------------------
+    # Activity-log cursor storage
+    # ------------------------------------------------------------------
+
+    def _board_has_changes(self, board_id: Any) -> bool:
+        """True iff the board has at least one activity-log event since
+        the stored cursor.  No cursor yet (= first delta run) returns
+        True so the board gets synced and a cursor saved for next time.
+        """
+        cursor_ts = self._load_board_cursor(board_id)
+        if cursor_ts is None:
+            return True
+        try:
+            events = self.client.list_activity_logs(
+                int(board_id), from_ts=cursor_ts, limit=1, max_pages=1,
+            )
+        except Exception as exc:  # noqa: BLE001 -- never let the gate fail-hard
+            logger.warning(
+                "[MONDAY] activity_logs probe failed on board=%s: %s "
+                "(treating as changed to be safe)", board_id, exc,
+            )
+            return True
+        return bool(events)
+
+    def _load_board_cursor(self, board_id: Any) -> datetime | None:
+        ext = (
+            self.session.query(ExternalId)
+            .filter_by(
+                source=self.source,
+                entity_type="SyncState",
+                external_key=f"{self._CURSOR_PREFIX}{board_id}",
+            )
+            .one_or_none()
+        )
+        if ext is None or not ext.external_url:
+            return None
+        try:
+            return datetime.fromisoformat(ext.external_url)
+        except (TypeError, ValueError):
+            return None
+
+    def _save_board_cursor(self, board_id: Any, ts: datetime) -> None:
+        ext = (
+            self.session.query(ExternalId)
+            .filter_by(
+                source=self.source,
+                entity_type="SyncState",
+                external_key=f"{self._CURSOR_PREFIX}{board_id}",
+            )
+            .one_or_none()
+        )
+        if ext is None:
+            ext = ExternalId(
+                source=self.source,
+                entity_type="SyncState",
+                external_key=f"{self._CURSOR_PREFIX}{board_id}",
+                canonical_id=self.organization_id,  # stable anchor
+            )
+            self.session.add(ext)
+        ext.external_url = ts.isoformat()
+        self.session.flush()
 
     # ------------------------------------------------------------------
     # Users
