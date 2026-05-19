@@ -41,7 +41,7 @@ class OpenAICompatibleProvider(LLMProvider):
         base_url: str,
         default_model: str,
         api_key: str | None = None,
-        timeout_seconds: float = 120.0,
+        timeout_seconds: float | None = None,
     ) -> None:
         """
         Args:
@@ -53,13 +53,23 @@ class OpenAICompatibleProvider(LLMProvider):
           api_key:        Many local servers ignore auth -- pass any
                           non-empty string ("EMPTY" is conventional).
                           Reads OPENAI_API_KEY env var if None.
-          timeout_seconds: Local big models can be slow; default
-                          generous so we don't paper over real timeouts.
+          timeout_seconds: HTTP timeout per request.  If None, reads
+                          OPENAI_TIMEOUT env var, else defaults to 600s.
+                          Cold-start of a local CPU model + 1k+ input
+                          tokens routinely runs 60-180s; cloud APIs
+                          finish in <30s.  We default generous so the
+                          local-laptop happy path doesn't blow up on
+                          first use; tune down via env var if you'd
+                          rather fail fast.
         """
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY") or "EMPTY"
-        self._timeout = timeout_seconds
+        if timeout_seconds is None:
+            env_val = os.environ.get("OPENAI_TIMEOUT")
+            self._timeout = float(env_val) if env_val else 600.0
+        else:
+            self._timeout = timeout_seconds
 
     def complete(
         self,

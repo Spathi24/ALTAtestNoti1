@@ -285,15 +285,22 @@ class TestCLIParsing:
     def test_llm_test_parser(self):
         from project_db.cli import build_parser
         ns = build_parser().parse_args(
-            ["llm-test", "Rockland", "--token-budget", "5000", "--max-docs", "3"]
+            ["llm-test", "Rockland",
+             "--token-budget", "5000",
+             "--max-docs", "3",
+             "--max-output-tokens", "100"]
         )
         assert ns.cmd == "llm-test"
         assert ns.project == "Rockland"
         assert ns.token_budget == 5000
         assert ns.max_docs == 3
+        assert ns.max_output_tokens == 100
 
     def test_llm_test_parser_defaults(self):
         from project_db.cli import build_parser
         ns = build_parser().parse_args(["llm-test", "Rockland"])
-        assert ns.token_budget == 80_000
-        assert ns.max_docs == 10
+        # Defaults are tuned for local CPU models -- small enough that
+        # a fresh laptop+Ollama install doesn't time out on first try.
+        assert ns.token_budget == 20_000
+        assert ns.max_docs == 3
+        assert ns.max_output_tokens == 300

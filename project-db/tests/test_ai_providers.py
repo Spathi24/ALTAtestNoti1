@@ -265,6 +265,26 @@ class TestOpenAICompatibleProvider:
                 p.complete(messages=[LLMMessage(role="user", content="x")])
             assert "unexpected response shape" in str(exc.value)
 
+    def test_openai_timeout_env_var(self, monkeypatch):
+        """OPENAI_TIMEOUT env var overrides the default 600s."""
+        monkeypatch.setenv("OPENAI_TIMEOUT", "42")
+        p = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", default_model="m")
+        assert p._timeout == 42.0
+
+    def test_explicit_timeout_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_TIMEOUT", "42")
+        p = OpenAICompatibleProvider(
+            base_url="http://localhost:8000/v1", default_model="m",
+            timeout_seconds=99.0,
+        )
+        assert p._timeout == 99.0
+
+    def test_default_timeout_generous_for_local(self, monkeypatch):
+        """No env, no explicit -- should default high enough for CPU cold starts."""
+        monkeypatch.delenv("OPENAI_TIMEOUT", raising=False)
+        p = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", default_model="m")
+        assert p._timeout >= 300.0  # Generous; current value is 600.
+
     def test_response_format_text_omits_json_object_hint(self):
         p = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", default_model="m")
         mock_response = MagicMock()

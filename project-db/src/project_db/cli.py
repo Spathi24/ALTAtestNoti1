@@ -435,15 +435,25 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
             f"{block}"
         )
 
-        print("Calling LLM...")
+        print(f"Calling LLM (max_output_tokens={args.max_output_tokens})...")
+        print("  (first call to a freshly-pulled local model can take 30-180s")
+        print("   on CPU while weights load -- subsequent calls are fast)")
         try:
             resp = provider.complete(
                 messages=[LLMMessage(role="user", content=user)],
                 system=system,
-                max_tokens=600,
+                max_tokens=int(args.max_output_tokens),
             )
         except LLMProviderError as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
+            print(
+                "\nTroubleshooting:\n"
+                "  - HTTP timeout?  Set OPENAI_TIMEOUT=900 or warm the model:\n"
+                "      ollama run llama3.2:3b \"say hi\"\n"
+                "  - Connection refused?  Is Ollama running?  ollama ps\n"
+                "  - Model not found?  ollama pull <model>",
+                file=sys.stderr,
+            )
             return 1
 
         print()
@@ -504,12 +514,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lt.add_argument("project", help="Project name fragment or canonical UUID")
     lt.add_argument(
-        "--token-budget", default=80_000, type=int,
-        help="Cap on assembled-context size (default 80k tokens; lower for small models)",
+        "--token-budget", default=20_000, type=int,
+        help="Cap on assembled-context size (default 20k tokens; small models choke on more)",
     )
     lt.add_argument(
-        "--max-docs", default=10, type=int,
-        help="Max number of document bodies to attach (default 10)",
+        "--max-docs", default=3, type=int,
+        help="Max number of document bodies to attach (default 3)",
+    )
+    lt.add_argument(
+        "--max-output-tokens", default=300, type=int,
+        help="Output cap (default 300; lower = faster on slow CPU models)",
     )
     lt.set_defaults(func=cmd_llm_test)
 
