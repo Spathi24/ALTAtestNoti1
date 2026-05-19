@@ -281,3 +281,19 @@ class TestCLIParsing:
         from project_db.cli import build_parser
         ns = build_parser().parse_args(["sync", "monday"])
         assert ns.delta is False
+
+    def test_llm_test_parser(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(
+            ["llm-test", "Rockland", "--token-budget", "5000", "--max-docs", "3"]
+        )
+        assert ns.cmd == "llm-test"
+        assert ns.project == "Rockland"
+        assert ns.token_budget == 5000
+        assert ns.max_docs == 3
+
+    def test_llm_test_parser_defaults(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["llm-test", "Rockland"])
+        assert ns.token_budget == 80_000
+        assert ns.max_docs == 10

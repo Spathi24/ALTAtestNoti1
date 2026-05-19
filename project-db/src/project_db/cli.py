@@ -365,6 +365,95 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_llm_test(args: argparse.Namespace) -> int:
+    """Smoke-test the LLM stack end-to-end against a real project.
+
+    Picks the configured provider via LLM_PROVIDER env var (mock /
+    anthropic / openai-compatible), assembles a real project context,
+    sends a short "describe this project briefly" prompt, prints the
+    model's response.
+
+    This is intentionally a one-shot prove-the-wires command, NOT
+    proposal generation -- it doesn't write Proposal rows.  It exists
+    so you can verify the whole stack (context assembler -> provider ->
+    real model) before Phase 3b's real prompts go in.
+    """
+    from project_db.ai import (
+        LLMMessage,
+        LLMProviderError,
+        assemble_project_context,
+        get_default_provider,
+    )
+    from project_db.ai.views import _resolve_project
+
+    try:
+        provider = get_default_provider()
+    except LLMProviderError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        print(
+            "\nSet LLM_PROVIDER and the relevant env vars.  Examples:\n"
+            "  LLM_PROVIDER=mock                  (offline, returns empty)\n"
+            "  LLM_PROVIDER=anthropic   + ANTHROPIC_API_KEY=...\n"
+            "  LLM_PROVIDER=openai-compatible + OPENAI_BASE_URL=http://localhost:11434/v1\n"
+            "                                 + OPENAI_MODEL=llama3.2:3b",
+            file=sys.stderr,
+        )
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        print(f"Provider: {provider.name}")
+        print(f"Project:  {project.name}  ({project.canonical_id})")
+        print()
+        print("Assembling context...")
+        ctx = assemble_project_context(
+            s, project.canonical_id,
+            token_budget=int(args.token_budget),
+            max_documents_with_text=int(args.max_docs),
+        )
+        block = ctx.to_prompt_block()
+        print(f"  context: {len(block):,} chars / ~{len(block)//4:,} tokens")
+        print(f"  tasks={len(ctx.tasks)}  docs={len(ctx.documents)}  "
+              f"doc_bodies={len(ctx.document_texts)}  invoices={len(ctx.invoices)}")
+        if ctx.truncated:
+            print(f"  truncated: {ctx.truncated}")
+        print()
+
+        system = (
+            "You are reading internal project records for a construction "
+            "company.  Be concise (3-5 sentences).  Use only the data "
+            "shown -- do not invent facts."
+        )
+        user = (
+            "Give me a brief plain-English status update on this project: "
+            "what it is, what's been done, what's outstanding, and any "
+            "obvious gaps you notice.\n\n"
+            f"{block}"
+        )
+
+        print("Calling LLM...")
+        try:
+            resp = provider.complete(
+                messages=[LLMMessage(role="user", content=user)],
+                system=system,
+                max_tokens=600,
+            )
+        except LLMProviderError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(f"--- response (finish={resp.finish_reason}, "
+              f"in={resp.usage.get('input_tokens', '?')} "
+              f"out={resp.usage.get('output_tokens', '?')}) ---")
+        print(resp.content)
+        return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -408,6 +497,21 @@ def build_parser() -> argparse.ArgumentParser:
         "gdrive-auth",
         help="One-time browser login for Google Drive (OAuth Desktop credentials only)",
     ).set_defaults(func=cmd_gdrive_auth)
+
+    lt = sub.add_parser(
+        "llm-test",
+        help="Smoke-test the LLM stack against a real project (no Proposal written)",
+    )
+    lt.add_argument("project", help="Project name fragment or canonical UUID")
+    lt.add_argument(
+        "--token-budget", default=80_000, type=int,
+        help="Cap on assembled-context size (default 80k tokens; lower for small models)",
+    )
+    lt.add_argument(
+        "--max-docs", default=10, type=int,
+        help="Max number of document bodies to attach (default 10)",
+    )
+    lt.set_defaults(func=cmd_llm_test)
 
     ec = sub.add_parser(
         "extract-content",
