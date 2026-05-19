@@ -423,17 +423,49 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
             print(f"  truncated: {ctx.truncated}")
         print()
 
+        # Prompt structure rule (matters more than it looks): put the
+        # INSTRUCTION at the TAIL of the user message, not the head.
+        # When a prompt exceeds the model's context window, most servers
+        # (including Ollama) truncate from the FRONT.  A head-loaded
+        # instruction gets cut, the model only sees the document bodies
+        # at the bottom, and starts "helpfully" responding to that
+        # instead.  (We hit this once -- got a French lease rewrite
+        # instead of a project status.  Lesson burned in.)
         system = (
             "You are reading internal project records for a construction "
-            "company.  Be concise (3-5 sentences).  Use only the data "
-            "shown -- do not invent facts."
+            "company.  Given the structured records below, produce a "
+            "concise (3-5 sentences) plain-English status update.  Use "
+            "ONLY the data shown -- do not invent facts.  If the records "
+            "are insufficient, say so explicitly."
         )
         user = (
-            "Give me a brief plain-English status update on this project: "
-            "what it is, what's been done, what's outstanding, and any "
-            "obvious gaps you notice.\n\n"
-            f"{block}"
+            f"{block}\n\n"
+            "---\n\n"
+            "INSTRUCTION: Based ONLY on the project records above, "
+            "give me a brief plain-English status update covering:\n"
+            "  - what the project is\n"
+            "  - what's been done\n"
+            "  - what's outstanding\n"
+            "  - any obvious gaps you notice (missing dates, missing "
+            "contract, missing invoices, etc.)\n"
+            "Stay under 5 sentences.  Do not invent facts."
         )
+
+        # Cheap overflow detection: most local models default to
+        # 2048-4096-token context unless the user has bumped num_ctx
+        # in their Ollama config.  Warn if our prompt would not fit.
+        prompt_estimated_tokens = (len(user) + len(system)) // 4
+        if prompt_estimated_tokens > 3500:
+            print()
+            print(
+                f"  WARNING: estimated prompt size is ~{prompt_estimated_tokens:,} "
+                f"tokens.  Many local servers (Ollama default) cap context at "
+                f"2048-4096 and silently TRUNCATE excess from the FRONT.  Even "
+                f"with the instruction at the tail this can produce confused "
+                f"output.  Drop --token-budget to ~10000 and --max-docs to 1 "
+                f"if the response looks wrong.",
+                file=sys.stderr,
+            )
 
         if args.verbose:
             print()
