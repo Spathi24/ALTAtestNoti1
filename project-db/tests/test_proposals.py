@@ -25,6 +25,7 @@ from project_db.ai.proposals import (
     _clamp_confidence,
     _coerce_item_list,
     _parse_date,
+    accept_proposal,
     generate_timeline_proposals,
     get_proposal_detail,
     list_proposals,
@@ -474,6 +475,164 @@ class TestRejectProposal:
         assert reloaded.status == ProposalStatus.REJECTED
 
 
+class _FakeConnector:
+    """Stand-in for MondayConnector in accept tests.
+
+    Records every sync_back call so tests can assert the exact
+    field_updates payload, and can be configured to return False or
+    raise -- the two failure modes accept_proposal must survive.
+    """
+    def __init__(self, *, returns: bool = True, raises: bool = False):
+        self.calls: list[dict] = []
+        self._returns = returns
+        self._raises = raises
+
+    def sync_back(self, entity, field_updates):
+        self.calls.append({"entity": entity, "field_updates": field_updates})
+        if self._raises:
+            raise RuntimeError("simulated Monday API failure")
+        return self._returns
+
+
+class TestAcceptProposal:
+    """The risky half -- writes to Monday.  Ordering is load-bearing:
+    the external write happens FIRST; status flips only on success."""
+
+    def _one_pending(self, session, timeline_fixture) -> Proposal:
+        provider = _mock([
+            {"task_index": 0, "proposed_start": "2026-06-01",
+             "proposed_end": "2026-06-07", "confidence": 0.9,
+             "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        return batch.proposals[0]
+
+    def test_happy_path_writes_and_accepts(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, p.canonical_id, writeback=conn, decided_by="alice")
+        session.commit()
+
+        assert result["ok"] is True
+        assert result["new_status"] == "ACCEPTED"
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.ACCEPTED
+        assert reloaded.decided_by == "alice"
+        assert reloaded.decided_at is not None
+
+    def test_sync_back_receives_timeline_payload(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        conn = _FakeConnector(returns=True)
+        accept_proposal(session, p.canonical_id, writeback=conn)
+        session.commit()
+        assert len(conn.calls) == 1
+        fu = conn.calls[0]["field_updates"]
+        assert fu == {"timeline": {"from": "2026-06-01", "to": "2026-06-07"}}
+
+    def test_canonical_task_mirrored_on_accept(self, session, timeline_fixture):
+        """After a successful accept the canonical Task carries the dates."""
+        p = self._one_pending(session, timeline_fixture)
+        task_id = p.entity_id
+        conn = _FakeConnector(returns=True)
+        accept_proposal(session, p.canonical_id, writeback=conn)
+        session.commit()
+        task = session.query(Task).filter_by(canonical_id=task_id).one()
+        assert task.start_date == date(2026, 6, 1)
+        assert task.end_date == date(2026, 6, 7)
+
+    def test_write_back_false_leaves_proposal_pending(self, session, timeline_fixture):
+        """LOAD-BEARING: a failed Monday write must NOT flip the status."""
+        p = self._one_pending(session, timeline_fixture)
+        task_id = p.entity_id
+        conn = _FakeConnector(returns=False)
+        result = accept_proposal(session, p.canonical_id, writeback=conn)
+        session.commit()
+
+        assert result["ok"] is False
+        assert "returned False" in result["error"]
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.PENDING, "status must NOT change on write failure"
+        # And the canonical task must NOT have been mirrored.
+        task = session.query(Task).filter_by(canonical_id=task_id).one()
+        assert task.start_date is None
+        assert task.end_date is None
+
+    def test_write_back_raises_leaves_proposal_pending(self, session, timeline_fixture):
+        """A raising connector is caught; proposal stays PENDING."""
+        p = self._one_pending(session, timeline_fixture)
+        conn = _FakeConnector(raises=True)
+        result = accept_proposal(session, p.canonical_id, writeback=conn)
+        session.commit()
+        assert result["ok"] is False
+        assert "raised" in result["error"]
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.PENDING
+
+    def test_dry_run_touches_nothing(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        task_id = p.entity_id
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, p.canonical_id, writeback=conn, dry_run=True)
+        session.commit()
+
+        assert result["ok"] is True
+        assert result["dry_run"] is True
+        assert result["would_write"] == {"timeline": {"from": "2026-06-01", "to": "2026-06-07"}}
+        # Nothing called, nothing changed.
+        assert conn.calls == []
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.PENDING
+        task = session.query(Task).filter_by(canonical_id=task_id).one()
+        assert task.start_date is None
+
+    def test_dry_run_needs_no_connector(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        result = accept_proposal(session, p.canonical_id, dry_run=True)  # writeback=None
+        assert result["ok"] is True
+        assert result["dry_run"] is True
+
+    def test_real_accept_without_connector_fails(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        result = accept_proposal(session, p.canonical_id)  # no writeback, not dry-run
+        assert result["ok"] is False
+        assert "no writeback" in result["error"]
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.PENDING
+
+    def test_cannot_accept_non_pending(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        p.status = ProposalStatus.REJECTED
+        session.commit()
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, p.canonical_id, writeback=conn)
+        assert result["ok"] is False
+        assert "not PENDING" in result["error"]
+        assert conn.calls == [], "must not write to Monday for a non-PENDING proposal"
+
+    def test_double_accept_is_rejected(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        conn = _FakeConnector(returns=True)
+        first = accept_proposal(session, p.canonical_id, writeback=conn)
+        session.commit()
+        assert first["ok"] is True
+        # Second accept must fail -- proposal is already ACCEPTED.
+        second = accept_proposal(session, p.canonical_id, writeback=conn)
+        assert second["ok"] is False
+        assert "not PENDING" in second["error"]
+        assert len(conn.calls) == 1, "second accept must not re-write to Monday"
+
+    def test_nonexistent_id(self, session):
+        result = accept_proposal(session, str(uuid.uuid4()), writeback=_FakeConnector())
+        assert result["ok"] is False
+        assert "no proposal" in result["error"]
+
+    def test_garbage_id(self, session):
+        result = accept_proposal(session, "not-a-uuid", writeback=_FakeConnector())
+        assert result["ok"] is False
+        assert "valid UUID" in result["error"]
+
+
 class TestProposalCLIParsing:
     def test_propose_parser(self):
         from project_db.cli import build_parser
@@ -518,4 +677,21 @@ class TestProposalCLIParsing:
         ns = build_parser().parse_args(["proposals", "reject", "some-uuid"])
         assert ns.proposals_action == "reject"
         assert ns.reason is None
+        assert ns.by is None
+
+    def test_proposals_accept_parser(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args([
+            "proposals", "accept", "some-uuid", "--dry-run", "--by", "alice",
+        ])
+        assert ns.proposals_action == "accept"
+        assert ns.proposal_id == "some-uuid"
+        assert ns.dry_run is True
+        assert ns.by == "alice"
+
+    def test_proposals_accept_parser_defaults(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["proposals", "accept", "some-uuid"])
+        assert ns.proposals_action == "accept"
+        assert ns.dry_run is False
         assert ns.by is None

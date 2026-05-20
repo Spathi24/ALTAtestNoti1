@@ -9,6 +9,55 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-18 (later) — Session 3b (part 2b): accept + Monday write-back
+
+**Theme:** The riskiest piece of Phase 3 -- the one path that mutates
+a live external system.  Built carefully, staged, dry-runnable.
+
+### accept_proposal -- the advisor->action closer
+- `accept_proposal(session, proposal_id, writeback, dry_run, decided_by)`.
+- **Ordering is load-bearing:** the Monday write happens FIRST; the
+  proposal flips to ACCEPTED only on a True return.  A failed write
+  leaves the proposal PENDING and the canonical Task untouched -- so we
+  can never have an ACCEPTED proposal that didn't reach Monday.
+- Writes a timeline proposal's `{start, end}` to Monday as a
+  `{"timeline": {"from", "to"}}` column update via the existing,
+  battle-tested `MondayConnector.sync_back`.
+- On success, also mirrors the dates onto the canonical Task so
+  `ask "tasks without dates"` reflects reality immediately (the next
+  Monday sync re-confirms the same values -- idempotent).
+- `--dry-run`: resolves + validates everything, prints exactly what
+  WOULD be written, touches nothing.  No connector needed.
+- Guards: bad UUID, not-found, PENDING-only, known field/entity only,
+  unparseable dates, missing connector.  Every failure leaves the
+  proposal PENDING.
+- A raising connector is caught -> proposal stays PENDING.
+
+### CLI
+- `project_db proposals accept <id> [--dry-run] [--by]`.
+- Dry-run never builds a Monday connector / never needs a token.
+
+### Verification
+- 16 new tests (367 total).  The load-bearing one
+  (`test_write_back_false_leaves_proposal_pending`) proves a failed
+  write does NOT flip status and does NOT mirror the task.
+  Also: double-accept rejected, raising connector survived, dry-run
+  touches nothing, exact sync_back payload asserted.
+- Live: dry-run via the real CLI on a seeded proposal -- correct
+  preview (`{"timeline": {"from": "2026-09-01", "to": "2026-09-12"}}`),
+  proposal confirmed still PENDING, cleaned up.
+- A REAL Monday write was deliberately NOT performed -- that mutates
+  the user's live workspace and needs explicit sign-off.
+
+### State at EOD
+- **367 tests** passing.
+- Approval loop CODE-complete: list / show / reject / accept all built.
+- Outstanding before the loop is *proven* end-to-end: one real
+  `accept` against Monday (user sign-off), and prompt-quality
+  validation (needs the real model).
+
+---
+
 ## 2026-05-18 — Session 3b (part 2a): reject + a security incident
 
 **Theme:** Methodical, low-risk progress.  The safe half of the

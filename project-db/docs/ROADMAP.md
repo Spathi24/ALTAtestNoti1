@@ -113,14 +113,14 @@ being set up.  Build provider-agnostic infrastructure FIRST.
 
 **Session 3b part 2 — Approval actions + remaining prompts**
 - [x] CLI: `proposals reject <id> [--reason] [--by]` — pure DB, PENDING-only guard (DONE 2026-05-18)
-- [ ] CLI: `proposals accept <id>` — Monday write-back via `MondayConnector.sync_back`.
-      NOTE: sync_back commits its own session — accept must write Monday
-      FIRST, flip proposal status only on a True return.  Plan a
-      `--dry-run` flag so the reviewer can preview the write.
+- [x] CLI: `proposals accept <id> [--dry-run] [--by]` — Monday write-back via `sync_back`; write-first/flip-second ordering; mirrors dates onto canonical Task (DONE 2026-05-18)
 - [ ] Prompt: scope reconciliation — `{scope_item, in_monday: bool, suggested_task_title, confidence}`
 - [ ] Prompt: anomaly detection — `{anomaly_type, description, severity}`
 - [ ] CLI: `propose scope / anomalies / all <project>`
-- [ ] Tests: accept→write-back (mocked Monday client), double-accept idempotency
+
+**Before the loop is *proven* (not just built):**
+- [ ] One real `accept` against the live Monday workspace (needs user sign-off — it mutates a real task)
+- [ ] Prompt-quality validation pass (needs a real model — Claude API / Mac mini)
 
 **Session 3b note:** prompt *quality* is unvalidated until a real model
 (Claude API / Mac mini) is behind the provider.  The engine is built

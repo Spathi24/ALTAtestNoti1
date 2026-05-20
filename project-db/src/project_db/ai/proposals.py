@@ -486,6 +486,154 @@ def reject_proposal(
     }
 
 
+# Proposal field_names the approval loop knows how to ACT on (write back).
+# A "timeline" proposal maps to a Monday timeline column.  scope/anomaly
+# proposals are advisory-only and are not in this set.
+_ACCEPTABLE_FIELDS = {"timeline"}
+
+
+def accept_proposal(
+    session: Session,
+    proposal_id: Any,
+    *,
+    writeback: Any = None,
+    dry_run: bool = False,
+    decided_by: str | None = None,
+) -> dict[str, Any]:
+    """Accept a PENDING proposal: write the change to Monday, then flip status.
+
+    ORDER IS LOAD-BEARING.  The Monday write happens FIRST; the proposal
+    flips to ACCEPTED only on a True return.  Reverse that and a failed
+    write would leave an ACCEPTED proposal that never reached Monday.
+    (`MondayConnector.sync_back` returns a clean bool and never raises,
+    which makes the ordering safe to rely on.)
+
+    dry_run=True: resolve + validate everything, return a preview of what
+    WOULD be written, touch nothing -- no DB change, no API call.
+    ``writeback`` may be None in dry-run mode.
+
+    For a real accept, ``writeback`` must expose
+    ``sync_back(entity, field_updates) -> bool`` -- in practice a
+    ``MondayConnector``; in tests, a fake.
+
+    Returns ``{"ok": bool, ...}``.  On ANY failure the proposal is left
+    PENDING and nothing is written.
+    """
+    from project_db.db.models import Task
+
+    # --- resolve + guard --------------------------------------------------
+    try:
+        pid = uuid.UUID(str(proposal_id))
+    except (ValueError, TypeError):
+        return {"ok": False, "error": f"not a valid UUID: {proposal_id!r}"}
+
+    p = session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+    if p is None:
+        return {"ok": False, "error": f"no proposal with id {proposal_id}"}
+
+    if p.status != ProposalStatus.PENDING:
+        current = p.status.value if hasattr(p.status, "value") else str(p.status)
+        return {
+            "ok": False,
+            "error": (
+                f"proposal is {current}, not PENDING -- only PENDING "
+                f"proposals can be accepted"
+            ),
+        }
+
+    if p.field_name not in _ACCEPTABLE_FIELDS:
+        return {
+            "ok": False,
+            "error": (
+                f"don't know how to act on a {p.field_name!r} proposal yet "
+                f"(acceptable: {sorted(_ACCEPTABLE_FIELDS)})"
+            ),
+        }
+    if p.entity_type != "Task":
+        return {
+            "ok": False,
+            "error": f"don't know how to write back a {p.entity_type!r} entity yet",
+        }
+
+    task = session.query(Task).filter_by(canonical_id=p.entity_id).one_or_none()
+    if task is None:
+        return {"ok": False, "error": f"target Task {p.entity_id} not found"}
+
+    # --- parse the proposed value ----------------------------------------
+    try:
+        value = json.loads(p.proposed_value)
+    except (json.JSONDecodeError, TypeError):
+        return {"ok": False, "error": "proposed_value is not valid JSON"}
+    start = _parse_date(value.get("start_date"))
+    end = _parse_date(value.get("end_date"))
+    if start is None or end is None:
+        return {
+            "ok": False,
+            "error": (
+                f"proposed_value has unparseable dates: "
+                f"start={value.get('start_date')!r} end={value.get('end_date')!r}"
+            ),
+        }
+
+    # Monday timeline column value shape: {"from": "...", "to": "..."}.
+    field_updates = {"timeline": {"from": start.isoformat(), "to": end.isoformat()}}
+
+    # --- dry run: preview, touch nothing ---------------------------------
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "proposal_id": str(p.canonical_id),
+            "task_title": task.title,
+            "field": "timeline",
+            "would_write": field_updates,
+            "note": "Nothing written. Re-run without --dry-run to apply.",
+        }
+
+    # --- real accept: write to Monday FIRST ------------------------------
+    if writeback is None:
+        return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
+
+    try:
+        wrote = writeback.sync_back(task, field_updates)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": f"write-back raised ({exc}) -- proposal left PENDING",
+        }
+
+    if not wrote:
+        return {
+            "ok": False,
+            "error": (
+                "Monday write-back returned False -- proposal left PENDING. "
+                "Likely causes: the task's board has no timeline column, or "
+                "no Monday mapping (ExternalId) exists for this task."
+            ),
+        }
+
+    # --- write succeeded: flip status + mirror onto the canonical Task ---
+    p.status = ProposalStatus.ACCEPTED
+    p.decided_at = datetime.utcnow()
+    p.decided_by = decided_by
+    # Keep the canonical store honest immediately; the next Monday sync
+    # re-confirms these exact values (idempotent), so this can't drift.
+    task.start_date = start
+    task.end_date = end
+    session.flush()
+
+    return {
+        "ok": True,
+        "dry_run": False,
+        "proposal_id": str(p.canonical_id),
+        "previous_status": "PENDING",
+        "new_status": "ACCEPTED",
+        "task_title": task.title,
+        "wrote_to_monday": field_updates,
+        "decided_by": decided_by,
+    }
+
+
 def get_proposal_detail(
     session: Session, proposal_id: Any
 ) -> dict[str, Any] | None:
