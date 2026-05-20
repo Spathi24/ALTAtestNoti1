@@ -28,6 +28,7 @@ from project_db.ai.proposals import (
     generate_timeline_proposals,
     get_proposal_detail,
     list_proposals,
+    reject_proposal,
 )
 from project_db.ai.providers import MockLLMProvider
 from project_db.db.models import (
@@ -393,6 +394,86 @@ class TestGetProposalDetail:
 # ---------------------------------------------------------------------------
 
 
+class TestRejectProposal:
+    """The safe half of the approval loop -- pure DB, no external write."""
+
+    def _one_pending(self, session, timeline_fixture) -> Proposal:
+        provider = _mock([
+            {"task_index": 0, "proposed_start": "2026-06-01",
+             "proposed_end": "2026-06-07", "confidence": 0.9,
+             "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        return batch.proposals[0]
+
+    def test_reject_pending_proposal(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        result = reject_proposal(session, p.canonical_id, decided_by="alice")
+        session.commit()
+
+        assert result["ok"] is True
+        assert result["new_status"] == "REJECTED"
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.REJECTED
+        assert reloaded.decided_by == "alice"
+        assert reloaded.decided_at is not None
+
+    def test_reject_stores_reason(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        reject_proposal(session, p.canonical_id, reason="contract was revised", decided_by="bob")
+        session.commit()
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.rejection_reason == "contract was revised"
+
+    def test_reject_nonexistent_id(self, session):
+        result = reject_proposal(session, str(uuid.uuid4()))
+        assert result["ok"] is False
+        assert "no proposal" in result["error"]
+
+    def test_reject_garbage_id(self, session):
+        result = reject_proposal(session, "not-a-uuid")
+        assert result["ok"] is False
+        assert "valid UUID" in result["error"]
+
+    def test_cannot_reject_already_rejected(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        reject_proposal(session, p.canonical_id, decided_by="alice")
+        session.commit()
+        # Second reject must fail explicitly.
+        result = reject_proposal(session, p.canonical_id, decided_by="alice")
+        assert result["ok"] is False
+        assert "not PENDING" in result["error"]
+
+    def test_cannot_reject_accepted_proposal(self, session, timeline_fixture):
+        """A proposal already moved to ACCEPTED cannot be rejected."""
+        p = self._one_pending(session, timeline_fixture)
+        p.status = ProposalStatus.ACCEPTED  # simulate a prior accept
+        session.commit()
+        result = reject_proposal(session, p.canonical_id)
+        assert result["ok"] is False
+        assert "ACCEPTED" in result["error"]
+        # Status must be untouched.
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.status == ProposalStatus.ACCEPTED
+
+    def test_cannot_reject_superseded_proposal(self, session, timeline_fixture):
+        p = self._one_pending(session, timeline_fixture)
+        p.status = ProposalStatus.SUPERSEDED
+        session.commit()
+        result = reject_proposal(session, p.canonical_id)
+        assert result["ok"] is False
+
+    def test_reject_default_decided_by_is_none_at_function_level(self, session, timeline_fixture):
+        """The function itself doesn't invent a user; the CLI supplies one."""
+        p = self._one_pending(session, timeline_fixture)
+        reject_proposal(session, p.canonical_id)  # no decided_by
+        session.commit()
+        reloaded = session.query(Proposal).filter_by(canonical_id=p.canonical_id).one()
+        assert reloaded.decided_by is None
+        assert reloaded.status == ProposalStatus.REJECTED
+
+
 class TestProposalCLIParsing:
     def test_propose_parser(self):
         from project_db.cli import build_parser
@@ -420,3 +501,21 @@ class TestProposalCLIParsing:
         ns = build_parser().parse_args(["proposals", "show", "some-uuid"])
         assert ns.proposals_action == "show"
         assert ns.proposal_id == "some-uuid"
+
+    def test_proposals_reject_parser(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args([
+            "proposals", "reject", "some-uuid",
+            "--reason", "stale", "--by", "alice",
+        ])
+        assert ns.proposals_action == "reject"
+        assert ns.proposal_id == "some-uuid"
+        assert ns.reason == "stale"
+        assert ns.by == "alice"
+
+    def test_proposals_reject_parser_minimal(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["proposals", "reject", "some-uuid"])
+        assert ns.proposals_action == "reject"
+        assert ns.reason is None
+        assert ns.by is None

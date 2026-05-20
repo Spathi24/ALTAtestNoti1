@@ -111,13 +111,16 @@ being set up.  Build provider-agnostic infrastructure FIRST.
 - [x] 32 tests on MockLLMProvider; live-verified on 923 Rockland
 - [x] ~~Monday delta sync~~ — already shipped in Session 3a (`sync monday --delta`)
 
-**Session 3b part 2 — Approval actions + remaining prompts (NEXT)**
-- [ ] CLI: `proposals accept <id>` — flips status, triggers Monday write-back via `MondayConnector.sync_back`
-- [ ] CLI: `proposals reject <id> [--reason "..."]`
+**Session 3b part 2 — Approval actions + remaining prompts**
+- [x] CLI: `proposals reject <id> [--reason] [--by]` — pure DB, PENDING-only guard (DONE 2026-05-18)
+- [ ] CLI: `proposals accept <id>` — Monday write-back via `MondayConnector.sync_back`.
+      NOTE: sync_back commits its own session — accept must write Monday
+      FIRST, flip proposal status only on a True return.  Plan a
+      `--dry-run` flag so the reviewer can preview the write.
 - [ ] Prompt: scope reconciliation — `{scope_item, in_monday: bool, suggested_task_title, confidence}`
 - [ ] Prompt: anomaly detection — `{anomaly_type, description, severity}`
 - [ ] CLI: `propose scope / anomalies / all <project>`
-- [ ] Tests: accept→write-back (mocked Monday client), reject, double-accept idempotency
+- [ ] Tests: accept→write-back (mocked Monday client), double-accept idempotency
 
 **Session 3b note:** prompt *quality* is unvalidated until a real model
 (Claude API / Mac mini) is behind the provider.  The engine is built

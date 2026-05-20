@@ -9,6 +9,53 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-18 — Session 3b (part 2a): reject + a security incident
+
+**Theme:** Methodical, low-risk progress.  The safe half of the
+approval loop, plus a real security finding caught during a routine
+audit.
+
+### SECURITY INCIDENT (commit 3f0cd5b)
+Routine `.env.example` audit found two leaks on the PUBLIC GitHub repo,
+live since 2026-05-11:
+- `project-db/.env` (the real secrets file) was tracked in git --
+  committed before `.gitignore` existed, and gitignore does nothing
+  for already-tracked files.
+- `.env.example` (the template) carried a live, write-scoped Monday
+  API token.
+Fixed: `.env` untracked (`git rm --cached`, local copy kept),
+`.env.example` scrubbed + refreshed to current vars.  Code side is
+closed.  **User rotated the exposed credentials** -- that's the real
+remediation; untracking only stops future leakage.
+
+### Proposal reject (the safe half of approval)
+- `reject_proposal(session, proposal_id, reason, decided_by)` -- pure
+  DB, no external system touched.  Flips PENDING -> REJECTED, stamps
+  decided_at / decided_by / rejection_reason.
+- Guards, all explicit errors (never silent no-ops): bad UUID,
+  not-found, and -- critically -- only PENDING proposals can be
+  rejected.  Rejecting an already ACCEPTED/REJECTED/SUPERSEDED
+  proposal fails loudly and leaves status untouched.
+- CLI: `project_db proposals reject <id> [--reason ...] [--by ...]`.
+  `--by` defaults to the OS username for a real audit trail.
+- 12 new tests (353 total).  Live-verified on the real DB: rejected a
+  seeded proposal via the CLI, confirmed the double-reject guard
+  fires, cleaned up.
+
+### Deliberately NOT done yet -- `accept`
+`accept` writes back to Monday (a real external mutation) -- the
+single riskiest piece of Phase 3.  Held for its own focused session.
+Groundwork done: studied `MondayConnector.sync_back` in full.  Key
+finding for next session: sync_back commits its own session
+internally, so `accept` must do the Monday write FIRST and flip the
+proposal status only on a True return -- never the reverse.
+
+### State at EOD
+- **353 tests** passing.
+- Approval loop: list / show / reject done; accept + write-back next.
+
+---
+
 ## 2026-05-17 — Session 3b (part 1): the proposal engine
 
 **Theme:** The LLM stops being a demo and starts producing

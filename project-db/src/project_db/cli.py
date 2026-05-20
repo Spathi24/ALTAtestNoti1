@@ -591,8 +591,14 @@ def cmd_propose(args: argparse.Namespace) -> int:
 
 
 def cmd_proposals(args: argparse.Namespace) -> int:
-    """View LLM proposals: `proposals list` / `proposals show <id>`."""
-    from project_db.ai import get_proposal_detail, list_proposals
+    """View and decide on LLM proposals: list / show / reject.
+
+    (`accept` -- which writes back to Monday -- is built in a separate,
+    carefully-staged session.)
+    """
+    import getpass
+
+    from project_db.ai import get_proposal_detail, list_proposals, reject_proposal
     from project_db.db.models import ProposalStatus
 
     with session_scope() as s:
@@ -617,6 +623,25 @@ def cmd_proposals(args: argparse.Namespace) -> int:
                 print(f"FAIL: no proposal with id {args.proposal_id!r}", file=sys.stderr)
                 return 2
             print(json.dumps(detail, indent=2, default=str))
+            return 0
+
+        if args.proposals_action == "reject":
+            # decided_by: an explicit --by wins, else the OS user, for a
+            # real audit trail without needing an auth system.
+            decided_by = args.by or getpass.getuser()
+            result = reject_proposal(
+                s, args.proposal_id, reason=args.reason, decided_by=decided_by,
+            )
+            if not result.get("ok"):
+                print(f"FAIL: {result.get('error')}", file=sys.stderr)
+                return 2
+            print(
+                f"OK: proposal {result['proposal_id']} "
+                f"{result['previous_status']} -> {result['new_status']} "
+                f"(by {result['decided_by']})"
+            )
+            if result.get("rejection_reason"):
+                print(f"  reason: {result['rejection_reason']}")
             return 0
 
     return 0
@@ -684,6 +709,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--kind", help="Filter by field_name, e.g. timeline")
     ps = proposals_sub.add_parser("show", help="Show one proposal in full detail")
     ps.add_argument("proposal_id", help="Proposal canonical UUID")
+    pr = proposals_sub.add_parser(
+        "reject", help="Reject a PENDING proposal (status -> REJECTED; no Monday write)",
+    )
+    pr.add_argument("proposal_id", help="Proposal canonical UUID")
+    pr.add_argument("--reason", help="Why it was rejected (stored on the proposal)")
+    pr.add_argument("--by", help="Who rejected it (default: OS username)")
     proposals.set_defaults(func=cmd_proposals)
 
     lt = sub.add_parser(

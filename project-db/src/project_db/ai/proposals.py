@@ -427,6 +427,65 @@ def list_proposals(
     return out
 
 
+def reject_proposal(
+    session: Session,
+    proposal_id: Any,
+    *,
+    reason: str | None = None,
+    decided_by: str | None = None,
+) -> dict[str, Any]:
+    """Flip a PENDING proposal to REJECTED.
+
+    Pure DB -- no external system is touched.  This is the safe half of
+    the approval loop; `accept` (which writes back to Monday) is a
+    separate, carefully-staged piece.
+
+    Guards (all return ``{"ok": False, "error": ...}``):
+      - proposal id must be a valid UUID
+      - proposal must exist
+      - proposal must currently be PENDING.  Rejecting something already
+        ACCEPTED / REJECTED / SUPERSEDED is an explicit error, not a
+        silent no-op -- the caller should know the state didn't change.
+
+    On success returns ``{"ok": True, ...}`` and sets status=REJECTED,
+    decided_at, decided_by, rejection_reason.  Flushes but does not
+    commit -- the caller owns the transaction.
+    """
+    try:
+        pid = uuid.UUID(str(proposal_id))
+    except (ValueError, TypeError):
+        return {"ok": False, "error": f"not a valid UUID: {proposal_id!r}"}
+
+    p = session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+    if p is None:
+        return {"ok": False, "error": f"no proposal with id {proposal_id}"}
+
+    if p.status != ProposalStatus.PENDING:
+        current = p.status.value if hasattr(p.status, "value") else str(p.status)
+        return {
+            "ok": False,
+            "error": (
+                f"proposal is {current}, not PENDING -- only PENDING "
+                f"proposals can be rejected"
+            ),
+        }
+
+    p.status = ProposalStatus.REJECTED
+    p.decided_at = datetime.utcnow()
+    p.decided_by = decided_by
+    p.rejection_reason = reason
+    session.flush()
+
+    return {
+        "ok": True,
+        "proposal_id": str(p.canonical_id),
+        "previous_status": "PENDING",
+        "new_status": "REJECTED",
+        "decided_by": decided_by,
+        "rejection_reason": reason,
+    }
+
+
 def get_proposal_detail(
     session: Session, proposal_id: Any
 ) -> dict[str, Any] | None:

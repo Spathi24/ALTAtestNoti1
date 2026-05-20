@@ -6,6 +6,7 @@ from project_db.ai.proposals import (
     generate_timeline_proposals,
     get_proposal_detail,
     list_proposals,
+    reject_proposal,
 )
 from project_db.ai.providers import (
     AnthropicProvider,
@@ -40,4 +41,5 @@ __all__ = [
     "get_default_provider",
     "get_proposal_detail",
     "list_proposals",
+    "reject_proposal",
 ]
