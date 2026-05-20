@@ -12,7 +12,7 @@ corrections to what Monday says is happening.
   `ask`. **Done pending live verification of all 5.**
 - Phase 3 (Tier-2 LLM proposals): next.
 
-**311-test suite.** Day-by-day work log in
+**343-test suite.** Day-by-day work log in
 **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
@@ -191,6 +191,13 @@ project_db llm-test Rockland                # assemble context + call configured
 project_db llm-test 5768-5770 --verbose     # also dump prompts, timing, tokens
 project_db llm-test Rockland --token-budget 8000 --max-docs 1 \
                               --max-output-tokens 200   # shrink for slow local models
+
+# --- LLM proposals (Phase 3b) ---
+project_db propose timelines "923 Rockland"   # LLM proposes dates -> Proposal table
+project_db proposals list                     # all proposals, newest first
+project_db proposals list --status pending    # filter by status
+project_db proposals show <proposal-uuid>     # full detail + source documents
+# (proposals accept/reject land next session -- accept writes back to Monday)
 
 # --- Admin / diagnostic ---
 project_db init-db                          # one-time table create + seed org
@@ -457,7 +464,8 @@ The current focus. The phased plan lives in
 
 **Phase 3 — Tier-2 LLM proposals (in progress)**
 - [x] Session 3a: `LLMProvider` abstraction (mock + anthropic + openai-compatible) + `assemble_project_context` + `llm-test` smoke CLI + Monday `activity_logs` delta sync
-- [ ] Session 3b: real prompts (timeline / scope / anomalies) → Proposal rows + approval CLI
+- [x] Session 3b pt.1: proposal engine + timeline-extraction prompt + `propose` / `proposals list/show` CLI
+- [ ] Session 3b pt.2: `proposals accept/reject` (Monday write-back) + scope & anomaly prompts
 - [ ] Session 3c: fine-tuning corpus exporter + personality config + local-backend swap
 
 **Phase 4 — Approval workflow**

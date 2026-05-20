@@ -101,18 +101,28 @@ being set up.  Build provider-agnostic infrastructure FIRST.
 - [ ] ~~Monday `activity_logs(from, to)` delta-sync~~ — moved to start
       of 3b so 3a stayed model-layer-focused
 
-**Session 3b — Monday delta sync + Proposal writer + approval CLI**
-- [ ] `MondayConnector.delta_sync_via_activity_log(from_ts)` — poll
-      `Board.activity_logs(from, to, ...)`, dedupe item_ids, refetch
-      changed items.  Sync state via ExternalId cursor pattern.
-- [ ] Prompt: timeline extraction — JSON list of `{task_canonical_id, proposed_start, proposed_end, confidence, source_doc_id, reasoning}`
-- [ ] Prompt: scope reconciliation — JSON list of `{scope_item, in_monday: bool, suggested_task_title, confidence}`
-- [ ] Prompt: anomaly detection — JSON list of `{anomaly_type, description, severity}`
-- [ ] CLI: `project_db propose timelines / scope / anomalies / all <project_id>`
-- [ ] CLI: `project_db proposals list / show / accept / reject` — accept
-      hooks `MondayConnector.sync_back`
-- [ ] Auto-supersede on new proposals for the same `(entity_id, field_name)`
-- [ ] Full test coverage with `MockLLMProvider`
+**Session 3b part 1 — Proposal engine (DONE 2026-05-17)**
+- [x] `generate_timeline_proposals()` — context → LLM → validated `Proposal` rows
+- [x] Timeline-extraction prompt (instruction-at-tail; LLM references tasks by integer index, never UUID)
+- [x] Per-item validation: index range, date parse, end≥start, confidence clamp; bad items recorded not raised
+- [x] Auto-supersede prior PENDING proposals for the same `(entity_type, entity_id, field_name)`
+- [x] `list_proposals()` / `get_proposal_detail()` read side
+- [x] CLI: `propose timelines`, `proposals list`, `proposals show`
+- [x] 32 tests on MockLLMProvider; live-verified on 923 Rockland
+- [x] ~~Monday delta sync~~ — already shipped in Session 3a (`sync monday --delta`)
+
+**Session 3b part 2 — Approval actions + remaining prompts (NEXT)**
+- [ ] CLI: `proposals accept <id>` — flips status, triggers Monday write-back via `MondayConnector.sync_back`
+- [ ] CLI: `proposals reject <id> [--reason "..."]`
+- [ ] Prompt: scope reconciliation — `{scope_item, in_monday: bool, suggested_task_title, confidence}`
+- [ ] Prompt: anomaly detection — `{anomaly_type, description, severity}`
+- [ ] CLI: `propose scope / anomalies / all <project>`
+- [ ] Tests: accept→write-back (mocked Monday client), reject, double-accept idempotency
+
+**Session 3b note:** prompt *quality* is unvalidated until a real model
+(Claude API / Mac mini) is behind the provider.  The engine is built
+and fully tested against `MockLLMProvider`; quality tuning is a
+deliberate later pass, not a gap.
 
 **Session 3c — Fine-tuning corpus + personality + local backend**
 - [ ] `project_db export-corpus` — DocumentText + Monday data dumped as

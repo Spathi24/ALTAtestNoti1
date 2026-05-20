@@ -525,6 +525,103 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_propose(args: argparse.Namespace) -> int:
+    """Generate LLM proposals for a project -> Proposal table (PENDING).
+
+    `project_db propose timelines <project>` reads the project's contract
+    text + dateless tasks and proposes start/end dates.  Nothing is
+    written to Monday -- proposals wait in the Proposal table for a human
+    to accept/reject via `project_db proposals`.
+
+    `scope` and `anomalies` land in a later session; today only
+    `timelines` is implemented.
+    """
+    from project_db.ai import (
+        LLMProviderError,
+        generate_timeline_proposals,
+        get_default_provider,
+    )
+    from project_db.ai.views import _resolve_project
+
+    kind = args.kind.lower()
+    if kind not in ("timeline", "timelines"):
+        print(f"FAIL: unknown propose kind {args.kind!r}.", file=sys.stderr)
+        print("Available today: timelines  (scope / anomalies come later)", file=sys.stderr)
+        return 2
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        provider = get_default_provider()
+    except LLMProviderError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        print(f"Provider: {provider.name}")
+        print(f"Project:  {project.name}  ({project.canonical_id})")
+        print("Generating timeline proposals (this calls the LLM)...")
+        try:
+            batch = generate_timeline_proposals(s, provider, project.canonical_id)
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(batch.summary())
+        for p in batch.proposals:
+            val = json.loads(p.proposed_value)
+            conf = f"{p.confidence:.2f}" if p.confidence is not None else "?"
+            print(f"  - {p.canonical_id}")
+            print(f"      task:   {val.get('task_title')}")
+            print(f"      dates:  {val.get('start_date')} -> {val.get('end_date')}")
+            print(f"      conf:   {conf}")
+        if batch.errors:
+            print("  malformed items rejected:")
+            for e in batch.errors:
+                print(f"    - {e}")
+    return 0
+
+
+def cmd_proposals(args: argparse.Namespace) -> int:
+    """View LLM proposals: `proposals list` / `proposals show <id>`."""
+    from project_db.ai import get_proposal_detail, list_proposals
+    from project_db.db.models import ProposalStatus
+
+    with session_scope() as s:
+        if args.proposals_action == "list":
+            status = None
+            if args.status:
+                try:
+                    status = ProposalStatus[args.status.upper()]
+                except KeyError:
+                    valid = ", ".join(x.value for x in ProposalStatus)
+                    print(f"FAIL: unknown status {args.status!r}. Valid: {valid}",
+                          file=sys.stderr)
+                    return 2
+            rows = list_proposals(s, status=status, kind=args.kind)
+            print(f"{len(rows)} proposal(s)")
+            print(json.dumps(rows, indent=2, default=str))
+            return 0
+
+        if args.proposals_action == "show":
+            detail = get_proposal_detail(s, args.proposal_id)
+            if detail is None:
+                print(f"FAIL: no proposal with id {args.proposal_id!r}", file=sys.stderr)
+                return 2
+            print(json.dumps(detail, indent=2, default=str))
+            return 0
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -568,6 +665,26 @@ def build_parser() -> argparse.ArgumentParser:
         "gdrive-auth",
         help="One-time browser login for Google Drive (OAuth Desktop credentials only)",
     ).set_defaults(func=cmd_gdrive_auth)
+
+    propose = sub.add_parser(
+        "propose",
+        help="Generate LLM proposals for a project (writes PENDING Proposal rows)",
+    )
+    propose.add_argument("kind", help="What to propose: timelines")
+    propose.add_argument("project", help="Project name fragment or canonical UUID")
+    propose.set_defaults(func=cmd_propose)
+
+    proposals = sub.add_parser("proposals", help="View LLM proposals")
+    proposals_sub = proposals.add_subparsers(dest="proposals_action", required=True)
+    pl = proposals_sub.add_parser("list", help="List proposals (newest first)")
+    pl.add_argument(
+        "--status",
+        help="Filter: pending | accepted | rejected | superseded",
+    )
+    pl.add_argument("--kind", help="Filter by field_name, e.g. timeline")
+    ps = proposals_sub.add_parser("show", help="Show one proposal in full detail")
+    ps.add_argument("proposal_id", help="Proposal canonical UUID")
+    proposals.set_defaults(func=cmd_proposals)
 
     lt = sub.add_parser(
         "llm-test",

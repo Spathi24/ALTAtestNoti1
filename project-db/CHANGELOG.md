@@ -9,6 +9,67 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-17 — Session 3b (part 1): the proposal engine
+
+**Theme:** The LLM stops being a demo and starts producing
+operationally useful output -- structured proposals in the Proposal
+table, gated for human review.  Per STRATEGY.md: advisor, never actor.
+
+### Proposal engine (`src/project_db/ai/proposals.py`)
+- `generate_timeline_proposals(session, provider, project_id)` —
+  assembles project context, builds the timeline prompt, calls the
+  LLM, validates each returned item, writes `Proposal` rows (PENDING).
+- **Timeline extraction prompt** — the flagship per STRATEGY.md
+  (only ~11% of Monday tasks have dates; the contracts hold the real
+  schedule).  Reads dateless tasks + contract text, proposes
+  start/end dates with evidence-based reasoning.
+- `ProposalBatch` result object — created / superseded / rejected
+  counts, errors, skip reason.  `.summary()` for the CLI.
+- Read side: `list_proposals()` (status/kind filters) and
+  `get_proposal_detail()` (resolves polymorphic target + source docs).
+
+### Design decisions
+- **LLM references tasks by integer INDEX, never UUID.**  Models
+  reliably miscopy 36-char UUIDs; we map index -> canonical Task.
+- **Instruction at the TAIL** of the prompt (the 2026-05-16 lesson).
+- **Every LLM item validated** before becoming a Proposal: index in
+  range, dates parseable, end >= start, confidence clamped to [0,1].
+  Bad items go to `ProposalBatch.errors`, never crash the batch.
+- **Auto-supersede**: a new proposal for the same
+  (entity_type, entity_id, field_name) flips prior PENDING ones to
+  SUPERSEDED, so the reviewer only sees the latest.
+- Skip paths: no dateless tasks, or no extracted document text to
+  reason from -> clean no-op with a reason, not an error.
+
+### CLI
+- `project_db propose timelines <project>` — generate proposals.
+- `project_db proposals list [--status] [--kind]` — newest-first.
+- `project_db proposals show <proposal_id>` — full detail incl.
+  parsed value, source documents, decision audit fields.
+
+### Verification
+- 32 new tests (343 total), all against MockLLMProvider -- offline,
+  deterministic.  Covers happy path, every skip/error path, supersede,
+  validation, read side, CLI parsing.
+- Live: ran the engine against 923 Rockland (115 dateless tasks,
+  3 docs with extracted text) with a mock provider -- created a real
+  Proposal row, read it back via list + show, then cleaned up.
+- Live: CLI `propose` + `proposals list` plumbing exercised.
+
+### NOT done (Session 3b part 2)
+- `proposals accept / reject` -- the accept path writes back to
+  Monday via `sync_back`, deserves its own focused session.
+- `scope` and `anomaly` prompts -- same engine shape, more of it.
+- Prompt-quality tuning -- needs a real model (Claude API / Mac mini);
+  the engine is built and tested, quality is a later pass.
+
+### State at EOD
+- **343 tests** passing.
+- Phase 3b half complete: proposals generate + view.  Approval
+  actions + remaining prompts are the next session.
+
+---
+
 ## 2026-05-16 (afternoon) — Session 3a close-out: delta sync + LLM smoke
 
 **Theme:** Wrap up 3a with the deferred Monday delta-sync work and a
