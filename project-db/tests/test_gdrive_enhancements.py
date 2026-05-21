@@ -23,112 +23,137 @@ import pytest
 
 class TestExtractCivicNumbers:
     def test_single_civic_number(self):
-        from project_db.connectors.gdrive.connector import _extract_civic_numbers
-        assert _extract_civic_numbers("1455 Rue St. Mathieu") == {"1455"}
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("1455 Rue St. Mathieu") == {"1455"}
 
     def test_dash_separated_range(self):
-        from project_db.connectors.gdrive.connector import _extract_civic_numbers
-        assert _extract_civic_numbers("5768-5770 St Laurent") == {"5768", "5770"}
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("5768-5770 St Laurent") == {"5768", "5770"}
 
     def test_space_separated_range(self):
-        from project_db.connectors.gdrive.connector import _extract_civic_numbers
-        assert _extract_civic_numbers("5768 5770 St Laurent") == {"5768", "5770"}
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("5768 5770 St Laurent") == {"5768", "5770"}
 
     def test_with_unit_suffix(self):
-        from project_db.connectors.gdrive.connector import _extract_civic_numbers
-        assert _extract_civic_numbers("923 Rockland (3rd Floor unit)") == {"923"}
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("923 Rockland (3rd Floor unit)") == {"923"}
 
     def test_no_civic_number(self):
-        from project_db.connectors.gdrive.connector import _extract_civic_numbers
-        assert _extract_civic_numbers("Active Projects") == set()
-        assert _extract_civic_numbers("05. INTELLIGENCE") == set()
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("Active Projects") == set()
+        assert extract_civic_numbers("05. INTELLIGENCE") == set()
 
     def test_empty_string(self):
-        from project_db.connectors.gdrive.connector import _extract_civic_numbers
-        assert _extract_civic_numbers("") == set()
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("") == set()
+
+    def test_two_digit_lead_prefix_is_not_a_civic(self):
+        # "25-1001 580 Rue Viau": the "25-1001" lead-tracking prefix must NOT
+        # be read as a civic, or two unrelated leads collide on a shared "25".
+        from project_db.identity.matcher import extract_civic_numbers
+        assert extract_civic_numbers("25-1001 580 Rue Viau") == set()
+        assert extract_civic_numbers("25-1000 Triplex Rue Hadley") == set()
 
 
 # ---------------------------------------------------------------------------
-# Matcher: civic-first preference over substring
+# Folder taxonomy: deterministic project-folder + category detection
+# (this replaced the deleted substring/civic _match_project_by_name)
 # ---------------------------------------------------------------------------
 
 
-class TestMatcherCivicFirst:
-    def test_specific_civic_beats_generic_substring(self, session, org, client_factory):
-        """923 Rockland folder should match 923 Rockland project, NOT generic 'Rockland'."""
-        from project_db.connectors.gdrive.connector import _match_project_by_name
+class TestFolderTaxonomy:
+    def test_project_bucket_detection(self):
+        from project_db.connectors.gdrive.connector import _project_bucket_for_path
+        assert _project_bucket_for_path("01. PROJECTS/ACTIVE/923 Rockland") == "ACTIVE"
+        assert _project_bucket_for_path("01. PROJECTS/INACTIVE/2150 Tupper") == "INACTIVE"
+        assert _project_bucket_for_path("01. PROJECTS/LEADS/Bates") == "LEADS"
+
+    def test_non_project_paths_are_not_buckets(self):
+        from project_db.connectors.gdrive.connector import _project_bucket_for_path
+        assert _project_bucket_for_path("01. PROJECTS/ACTIVE") is None          # too shallow
+        assert _project_bucket_for_path("01. PROJECTS/ACTIVE/X/Contracts") is None  # too deep
+        assert _project_bucket_for_path("00. COMPANY/2. DOCUMENTS") is None
+        assert _project_bucket_for_path("") is None
+        assert _project_bucket_for_path(None) is None
+
+    def test_category_classification(self):
+        from project_db.connectors.gdrive.connector import _category_for_path
+        assert _category_for_path("01. PROJECTS/ACTIVE/923 Rockland") == "projects"
+        assert _category_for_path("00. COMPANY/2. DOCUMENTS") == "company"
+        assert _category_for_path("02. REAL ESTATE/4. UNDERWRITING") == "real_estate"
+        assert _category_for_path("03. CONSTRUCTION/1. RESOURCES") == "construction"
+        assert _category_for_path("05. INTELLIGENCE/BIM") == "intelligence"
+        assert _category_for_path(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Project discovery: a Drive project folder IS a canonical Project,
+# files link by physical folder ancestry (never by name guessing)
+# ---------------------------------------------------------------------------
+
+
+class TestProjectFolderDiscovery:
+    @staticmethod
+    def _folder(fid: str, name: str, parent: str) -> dict:
+        return {
+            "id": fid, "name": name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent],
+        }
+
+    def test_folders_become_projects_files_link_by_ancestry(self, session, org):
+        """923 and 927 are SEPARATE folders -> separate projects; their files
+        link to their own folder's project and are never cross-linked."""
+        from project_db.connectors.gdrive.client import GDriveClient
+        from project_db.connectors.gdrive.connector import GDriveConnector
         from project_db.db.models import Project
+        from project_db.db.models.docs import Document
         from project_db.db.models.work import ProjectStatus
 
-        c = client_factory(name="C")
-        # Both exist: a generic "Rockland" and a civic-specific "923 Rockland".
-        rockland = Project(
-            name="Rockland", code="R", status=ProjectStatus.ACTIVE,
-            client_id=c.canonical_id,
+        svc = MagicMock()
+        list_mock = MagicMock()
+        # Depth-first walk order: root, 01.PROJECTS, ACTIVE, 923, 927, 00.COMPANY.
+        list_mock.execute.side_effect = [
+            {"files": [self._folder("p", "01. PROJECTS", "root"),
+                       self._folder("co", "00. COMPANY", "root")], "nextPageToken": None},
+            {"files": [self._folder("a", "ACTIVE", "p")], "nextPageToken": None},
+            {"files": [self._folder("f923", "923 Rockland (3rd Floor unit)", "a"),
+                       self._folder("f927", "927 Rockland (Ground Floor unit)", "a")],
+             "nextPageToken": None},
+            {"files": [_rich_file_payload("doc923")], "nextPageToken": None},
+            {"files": [_rich_file_payload("doc927")], "nextPageToken": None},
+            {"files": [_rich_file_payload("doccompany")], "nextPageToken": None},
+        ]
+        svc.files.return_value.list.return_value = list_mock
+        svc.changes.return_value.getStartPageToken.return_value.execute.return_value = {
+            "startPageToken": "tok"
+        }
+
+        connector = GDriveConnector(
+            session=session, organization_id=org.canonical_id,
+            config={"_client": GDriveClient(service=svc), "root_folder": "root"},
         )
-        rockland_923 = Project(
-            name="923 Rockland", code="R923", status=ProjectStatus.ACTIVE,
-            client_id=c.canonical_id,
-        )
-        session.add_all([rockland, rockland_923])
-        session.commit()
+        connector.sync()
 
-        # Folder "923 Rockland (3rd Floor)" should match civic-specific.
-        match_id = _match_project_by_name(
-            session, org.canonical_id, "923 Rockland (3rd Floor)"
-        )
-        assert match_id == rockland_923.canonical_id
+        # Two distinct projects, named after their folders, status from bucket.
+        p923 = session.query(Project).filter_by(
+            name="923 Rockland (3rd Floor unit)").one()
+        p927 = session.query(Project).filter_by(
+            name="927 Rockland (Ground Floor unit)").one()
+        assert p923.canonical_id != p927.canonical_id
+        assert p923.status == ProjectStatus.ACTIVE
 
-    def test_civic_match_handles_different_street_renderings(
-        self, session, org, client_factory
-    ):
-        """Folder '1455 Rue St. Mathieu' should match project '1455 Saint Mathieu'."""
-        from project_db.connectors.gdrive.connector import _match_project_by_name
-        from project_db.db.models import Project
-        from project_db.db.models.work import ProjectStatus
+        # Each file links to ITS OWN project folder -- never cross-linked.
+        d923 = session.query(Document).filter_by(storage_ref="doc923").one()
+        d927 = session.query(Document).filter_by(storage_ref="doc927").one()
+        assert d923.project_id == p923.canonical_id
+        assert d927.project_id == p927.canonical_id
+        assert d923.category == "projects"
 
-        c = client_factory(name="C")
-        p = Project(
-            name="1455 Saint Mathieu", code="MAT", status=ProjectStatus.ACTIVE,
-            client_id=c.canonical_id,
-        )
-        session.add(p)
-        session.commit()
-
-        match_id = _match_project_by_name(session, org.canonical_id, "1455 Rue St. Mathieu")
-        assert match_id == p.canonical_id
-
-    def test_substring_fallback_when_no_civic(self, session, org, client_factory):
-        """Folder name with no civic still resolves via substring match."""
-        from project_db.connectors.gdrive.connector import _match_project_by_name
-        from project_db.db.models import Project
-        from project_db.db.models.work import ProjectStatus
-
-        c = client_factory(name="C")
-        p = Project(
-            name="Amazon deal", code="AMZ", status=ProjectStatus.ACTIVE,
-            client_id=c.canonical_id,
-        )
-        session.add(p)
-        session.commit()
-
-        match_id = _match_project_by_name(session, org.canonical_id, "Amazon")
-        assert match_id == p.canonical_id
-
-    def test_no_match_returns_none(self, session, org, client_factory):
-        from project_db.connectors.gdrive.connector import _match_project_by_name
-        from project_db.db.models import Project
-        from project_db.db.models.work import ProjectStatus
-
-        c = client_factory(name="C")
-        session.add(Project(
-            name="923 Rockland", code="R", status=ProjectStatus.ACTIVE,
-            client_id=c.canonical_id,
-        ))
-        session.commit()
-
-        # Folder with civic that doesn't match any project.
-        assert _match_project_by_name(session, org.canonical_id, "9999 Nowhere") is None
+        # A company-knowledge file: no project, but a category.
+        dco = session.query(Document).filter_by(storage_ref="doccompany").one()
+        assert dco.project_id is None
+        assert dco.category == "company"
 
 
 # ---------------------------------------------------------------------------

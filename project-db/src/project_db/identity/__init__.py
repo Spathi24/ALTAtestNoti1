@@ -4,6 +4,9 @@ from project_db.identity.matcher import (
     ExactFieldMatcher,
     FuzzyFieldMatcher,
     NoMatcher,
+    ProjectMatcher,
+    extract_civic_numbers,
+    normalize_name,
 )
 from project_db.identity.resolver import IdentityResolver, ResolveResult
 
@@ -13,5 +16,8 @@ __all__ = [
     "FuzzyFieldMatcher",
     "IdentityResolver",
     "NoMatcher",
+    "ProjectMatcher",
     "ResolveResult",
+    "extract_civic_numbers",
+    "normalize_name",
 ]

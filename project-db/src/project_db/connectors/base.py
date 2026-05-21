@@ -101,6 +101,34 @@ class BaseConnector(ABC):
         self.report.errors.append(msg)
         logger.error("[%s] %s", self.source.value, msg)
 
+    def _unknown_client_id(self) -> Any:
+        """Return the per-org 'Unknown Client' placeholder, creating it once.
+
+        ``Project.client_id`` is NOT NULL, but a Drive folder carries no
+        client information.  Drive-discovered projects use this placeholder
+        until a Monday sync matches in and supplies the real client.  Same
+        name + org as Monday's own placeholder, so both connectors share
+        one Client row rather than creating duplicates.
+        """
+        from project_db.db.models import Client
+
+        placeholder = (
+            self.session.query(Client)
+            .filter_by(name="Unknown Client", organization_id=self.organization_id)
+            .first()
+        )
+        if placeholder is None:
+            placeholder = Client(
+                name="Unknown Client", organization_id=self.organization_id
+            )
+            self.session.add(placeholder)
+            self.session.flush()
+            logger.info(
+                "[%s] Created 'Unknown Client' placeholder (canonical_id=%s)",
+                self.source.value, placeholder.canonical_id,
+            )
+        return placeholder.canonical_id
+
     def _finalize(self) -> SyncReport:
         self.report.completed_at = datetime.utcnow()
         logger.info(self.report.summary())

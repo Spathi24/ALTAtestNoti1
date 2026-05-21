@@ -33,11 +33,23 @@ def _find_env_file() -> Path | None:
 
 
 try:
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 
     _env_file = _find_env_file()
     if _env_file:
-        load_dotenv(_env_file, override=False)  # real env vars take precedence
+        # Selective load.  A value from .env fills in a variable that is
+        # ABSENT or present-but-EMPTY in the environment -- but it never
+        # clobbers a non-empty value already set.  Rationale:
+        #   - Fixes the common footgun where a shell profile exports an
+        #     empty `VAR=` and that empty string silently shadows the
+        #     real value in .env (this bit us with ANTHROPIC_API_KEY).
+        #   - Still lets a genuine, non-empty environment variable win
+        #     over the file -- a real CI/Docker secret, or a test's
+        #     conftest.py override -- which plain override=True would
+        #     wrongly overwrite.
+        for _key, _value in dotenv_values(_env_file).items():
+            if _value is not None and not os.environ.get(_key):
+                os.environ[_key] = _value
 except ImportError:
     pass  # python-dotenv not installed — rely purely on environment variables
 

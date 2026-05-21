@@ -76,6 +76,57 @@ probabilistic outputs.
 
 ---
 
+## Phase 2.5 — Foundation Correctness (2026-05-21)
+
+**Why this exists.** A direct DB audit found the canonical data was wrong at
+the root: 6 "projects" for ~3 real ones (923 Rockland split in two; demo
+"deal" rows minted as projects), 60% of Drive documents linked to nothing,
+and mislinks (927 Rockland's files attached to a phantom "Rockland" project).
+Root cause: project identity came from "whatever Monday created", and Drive
+documents matched into it via a **substring** test — `"Rockland"` matched
+`"927 Rockland"`. Every report and every LLM proposal was reasoning over a
+broken skeleton. Building more AI on that is the "running in circles" loop.
+
+**Governing principle.** *This phase does not add intelligence. It only makes
+identity, provenance, and linkage deterministic. Any uncertainty must surface
+in `doctor`, not be guessed in code.*
+
+- [x] Drive folder tree (`01. PROJECTS/{ACTIVE,INACTIVE,LEADS}/<name>/`) becomes
+      the project registry — each project folder IS one canonical Project,
+      created keyed by folder id (two folders never merge).
+- [x] Documents link to projects by **physical folder ancestry** — deterministic.
+      `_match_project_by_name` substring matcher **deleted**.
+- [x] `Document.category` — every Drive file gets a home (project, or a
+      company-knowledge category: company / real_estate / construction /
+      intelligence).
+- [x] `ProjectMatcher` (civic-number then exact-name, unique-hit-only, no
+      fuzzy/substring) — used by Monday to match boards INTO Drive projects.
+- [x] `_classify_board` fails closed: a board matching no allowlisted rule is
+      skipped, never guessed into a Project.
+- [x] `project_db doctor` — read-only trust instrument (provenance, doc/task
+      counts, mislink/orphan/duplicate flags).
+- [x] `project_db rebuild` — re-derive the canonical DB from the sources;
+      preflight-checks connectors before wiping; preserves Document +
+      DocumentText; exports Proposals to JSON first.
+- [x] 387 tests green (substring/civic matching tests replaced with
+      deterministic folder-taxonomy + ProjectMatcher tests).
+- [x] **Exit test — PASSED (2026-05-21):** `project_db rebuild --yes` then
+      `project_db doctor`. 21 projects = 19 real Drive folders + 2 demo
+      Monday "deal" rows (flagged for the user to delete in Monday).
+      **554 / 554 project documents linked, 0 mislinks** (was 300).
+      All 750 documents categorized: projects 554 / real_estate 84 /
+      intelligence 47 / company 43 / construction 14 / 8 with no folder
+      path. "923 Rockland (3rd Floor unit)" and "927 Rockland (Ground
+      Floor unit)" are correctly separate projects; the phantom "Rockland"
+      is gone (its Monday portfolio board is skipped by fail-closed
+      classification).
+
+**Paused until the foundation is verified clean:** Phase 3 `scope` / `anomaly`
+prompts and the Phase 6 frontend. Building more brain on wrong data is the
+exact loop this phase exists to break.
+
+---
+
 ## Phase 3 — Tier-2 AI (LLM proposals)
 
 Goal: the LLM reads a project's contract text plus its current Monday
@@ -119,8 +170,16 @@ being set up.  Build provider-agnostic infrastructure FIRST.
 - [ ] CLI: `propose scope / anomalies / all <project>`
 
 **Before the loop is *proven* (not just built):**
-- [ ] One real `accept` against the live Monday workspace (needs user sign-off — it mutates a real task)
-- [ ] Prompt-quality validation pass (needs a real model — Claude API / Mac mini)
+- [x] One real `accept` against the live Monday workspace (DONE 2026-05-21
+      — proposal `8a39b20c` accepted by nsaro; `project_timeline` on
+      Monday item 11941695903 went null → 2026-05-10, confirmed in
+      Monday's activity log)
+- [x] Provider wired to a real model (DONE 2026-05-21 — Anthropic API,
+      `claude-haiku-4-5` for cost-efficient testing; `ANTHROPIC_MODEL`
+      env var added; live-verified on 1455 Saint Mathieu + 923 Rockland)
+- [ ] Full prompt-quality validation pass — first real-model runs look
+      sound (evidence-cited, honest confidence), but rejection-rate
+      tuning over many projects is still owed
 
 **Session 3b note:** prompt *quality* is unvalidated until a real model
 (Claude API / Mac mini) is behind the provider.  The engine is built
@@ -185,6 +244,39 @@ least three times a week. If not, see STRATEGY.md §7.
 
 ---
 
+## Phase 6 — Minimal UI (read-only window)
+
+Goal: a thin, *visible* interface so non-CLI stakeholders — the PM, and
+the people they report to — can SEE what ALTA produces without opening
+a terminal. This is a demo / visibility layer, not a new product
+surface.
+
+**Strategy guardrails (per STRATEGY.md).** This does NOT replace the
+CLI workflow Phase 5 validates, does NOT add a new backend paradigm,
+does NOT touch the schema, and adds no new connectors. It is a
+read-(mostly-)only view over reports and proposals that already exist
+and are already tested. Operating principle #8 ("no new tech") is
+respected: a single thin web framework, nothing more.
+
+- [ ] Thin local web app (FastAPI or Flask) serving the existing
+      `ai.views` reports — `project_overview`, `docs_for_project`,
+      `tasks_without_dates` — as HTML pages. No new business logic; the
+      routes call functions that already exist.
+- [ ] Proposal review screen: list PENDING proposals, open one with its
+      reasoning + source-document evidence, and Accept / Reject buttons
+      that call the SAME `accept_proposal` / `reject_proposal` the CLI
+      uses (so the human-in-the-loop guarantees are identical).
+- [ ] `project_db serve` — runs on localhost; no hosting, no auth, no
+      multi-user. Single-machine, single-user, exactly like the CLI.
+- [ ] Can be pulled forward if superiors need a demo before Phase 5
+      finishes — it has no dependency on Phase 5's outcome.
+
+**Phase 6 exit test:** a non-technical stakeholder opens the local URL,
+reads a project overview, and accepts or rejects a proposal without
+ever touching a terminal.
+
+---
+
 ## Future architecture notes (post-Phase-5)
 
 These are user-articulated directions worth preserving so future
@@ -203,6 +295,21 @@ They share state through the canonical DB (`ProjectContext`,
 the `LLMProvider` interface -- just instantiate two providers and
 config-switch which one a given call uses.  Likely env-var pattern:
 `LLM_PROVIDER_FAST` + `LLM_PROVIDER_DEEP`.
+
+**Company-wide Drive content (beyond per-project folders).**  Drive
+holds far more than the project folders.  There are subfolders for
+company-level concerns — HR, document templates, insurance
+certificates, vendor master files, estimating standards, safety docs,
+and more.  Today the pipeline only extracts and reasons over documents
+that link to a Project; that non-project corpus is untouched.  It is a
+real future input for: (a) a company-knowledge `ask` mode — "what is
+our standard payment-terms clause?", "which insurance certificate
+expires next?"; (b) template-vs-actual comparison — does a project's
+contract follow the company's standard contract template; (c) the
+fine-tuning corpus.  It needs its own lightweight classifier
+(folder → category) rather than the civic-number project linker, and a
+home in the schema that is NOT the `Project` FK.  Not next; noted so a
+future session does not re-derive it.
 
 **RAG layer.**  Vector embeddings over `DocumentText` for
 similarity-based retrieval.  Complements `assemble_project_context`

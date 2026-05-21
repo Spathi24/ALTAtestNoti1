@@ -24,6 +24,7 @@ import pytest
 from project_db.ai.proposals import (
     _clamp_confidence,
     _coerce_item_list,
+    _match_source_document,
     _parse_date,
     accept_proposal,
     generate_timeline_proposals,
@@ -140,6 +141,42 @@ class TestCoerceItemList:
     def test_garbage(self):
         assert _coerce_item_list("nope") == []
         assert _coerce_item_list(None) == []
+
+
+class TestMatchSourceDocument:
+    """Source-document matching is an anti-hallucination gate: a cited
+    document that matches NOTHING we supplied is a hallucination signal."""
+
+    _DOCS = {
+        "Alta Construction Group - contract.pdf": "id-1",
+        "Tony Estimate.pdf": "id-2",
+    }
+
+    def test_exact_match(self):
+        assert _match_source_document(
+            "Tony Estimate.pdf", self._DOCS) == "id-2"
+
+    def test_case_insensitive_match(self):
+        assert _match_source_document(
+            "tony estimate.pdf", self._DOCS) == "id-2"
+
+    def test_unambiguous_substring_match(self):
+        # The model abbreviates -- "the contract" -> the contract doc.
+        assert _match_source_document("contract", self._DOCS) == "id-1"
+
+    def test_ambiguous_substring_returns_none(self):
+        # ".pdf" is in both names -- we will not guess which.
+        assert _match_source_document(".pdf", self._DOCS) is None
+
+    def test_no_match_returns_none(self):
+        # A document we never supplied -- the hallucination case.
+        assert _match_source_document(
+            "Fabricated Contract.pdf", self._DOCS) is None
+
+    def test_none_and_nonstring(self):
+        assert _match_source_document(None, self._DOCS) is None
+        assert _match_source_document(123, self._DOCS) is None
+        assert _match_source_document("", self._DOCS) is None
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +298,47 @@ class TestGenerateTimelineProposals:
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.proposals[0].confidence == 1.0
+
+    def test_hallucinated_source_flagged_as_warning(self, session, timeline_fixture):
+        """A cited source document we never supplied -> proposal still
+        created (a human may know the dates), but flagged in
+        batch.warnings as a possible hallucination -- NOT an error."""
+        provider = _mock([
+            {"task_index": 0, "proposed_start": "2026-06-01",
+             "proposed_end": "2026-06-07", "confidence": 0.8,
+             "reasoning": "the schedule says so",
+             "source_document": "A Document We Never Gave The Model.pdf"},
+        ])
+        batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1          # still created
+        assert not batch.errors                  # not rejected
+        assert any("hallucination" in w for w in batch.warnings)
+
+    def test_missing_reasoning_flagged_as_warning(self, session, timeline_fixture):
+        """No reasoning violates the evidence-citation rule -> flagged."""
+        provider = _mock([
+            {"task_index": 0, "proposed_start": "2026-06-01",
+             "proposed_end": "2026-06-07", "confidence": 0.8,
+             "reasoning": "", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        assert any("no reasoning" in w for w in batch.warnings)
+
+    def test_well_evidenced_proposal_has_no_warnings(self, session, timeline_fixture):
+        """Happy path: matched source + reasoning present -> zero warnings."""
+        provider = _mock([
+            {"task_index": 0, "proposed_start": "2026-06-01",
+             "proposed_end": "2026-06-07", "confidence": 0.9,
+             "reasoning": "Contract says demo runs June 1-7.",
+             "source_document": "Contract.pdf"},
+        ])
+        batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        assert not batch.warnings
 
     def test_auto_supersede_prior_pending(self, session, timeline_fixture):
         """Second run for the same task supersedes the first proposal.

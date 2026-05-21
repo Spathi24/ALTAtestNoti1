@@ -17,9 +17,14 @@ env/
 *.sqlite3
 *.db
 
+# Runtime artifacts — `project_db rebuild` exports proposals here before re-deriving
+proposals_backup_*.json
+
 # Environment / secrets
 .env
 *.env.local
+secrets/
+*.client_secret*.json
 
 # Editor
 .vscode/

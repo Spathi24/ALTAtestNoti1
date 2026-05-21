@@ -56,8 +56,16 @@ class IdentityResolver:
         attrs: dict[str, Any],
         matcher: EntityMatcher | None = None,
         payload_hash: str | None = None,
+        create_only_attrs: set[str] | None = None,
     ) -> ResolveResult:
-        """Main entrypoint. See module docstring."""
+        """Main entrypoint. See module docstring.
+
+        ``create_only_attrs`` names attributes applied only when the entity is
+        first created -- never overwritten on a later sync of the same record.
+        Use it for identity fields owned by one source: e.g. a Project's
+        ``name`` is owned by its Drive folder, so a Monday sync must not
+        rename it.
+        """
         entity_type = entity_class.__name__
         matcher = matcher or NoMatcher()
 
@@ -84,8 +92,11 @@ class IdentityResolver:
             # (e.g. v0.2 added board_id to Monday URLs).
             if external_url is not None and existing.external_url != external_url:
                 existing.external_url = external_url
-            # Update mutable attributes
+            # Update mutable attributes (skip create-only identity fields,
+            # which belong to whichever source first created the row).
             for key, value in attrs.items():
+                if create_only_attrs and key in create_only_attrs:
+                    continue
                 if hasattr(entity, key):
                     setattr(entity, key, value)
             return ResolveResult(
@@ -115,6 +126,20 @@ class IdentityResolver:
                 source.value,
                 external_key,
             )
+        else:
+            # Matched an existing canonical entity (another source, or a row
+            # whose ExternalId was dropped by `rebuild`).  Apply the incoming
+            # attrs so the canonical row reflects this source -- skipping
+            # create-only identity fields, exactly as the exact-id path does.
+            # Without this, a `rebuild` (which wipes ExternalId rows and so
+            # forces every preserved Document down this matched path) would
+            # never re-apply project_id / category, leaving every document
+            # unlinked and uncategorised.
+            for key, value in attrs.items():
+                if create_only_attrs and key in create_only_attrs:
+                    continue
+                if hasattr(matched_entity, key):
+                    setattr(matched_entity, key, value)
 
         # Register ExternalId
         ext = ExternalId(

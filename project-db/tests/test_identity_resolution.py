@@ -9,12 +9,14 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session
 
-from project_db.db.models import Client, ExternalId, SourceSystem
+from project_db.db.models import Client, ExternalId, Project, SourceSystem
+from project_db.db.models.work import ProjectStatus
 from project_db.identity import (
     ExactFieldMatcher,
     FuzzyFieldMatcher,
     IdentityResolver,
     NoMatcher,
+    ProjectMatcher,
 )
 
 
@@ -103,6 +105,86 @@ class TestFuzzyFieldMatcher:
         assert result is None
 
 
+class TestProjectMatcher:
+    """ProjectMatcher is deterministic: civic number, then exact normalized
+    name -- each on a UNIQUE hit only.  No substring, no fuzzy, no guessing."""
+
+    @staticmethod
+    def _project(session: Session, client, name: str) -> Project:
+        p = Project(
+            name=name, status=ProjectStatus.ACTIVE, client_id=client.canonical_id
+        )
+        session.add(p)
+        session.flush()
+        return p
+
+    def test_civic_number_match(self, session: Session, client_factory):
+        """Monday board '5768-5770 St Laurent' matches Drive '5768 St-Laurent'."""
+        c = client_factory(name="C")
+        drive = self._project(session, c, "5768 St-Laurent")
+
+        result = ProjectMatcher().find_match(
+            session=session, entity_class=Project,
+            candidate_attrs={"name": "5768-5770 St Laurent"},
+        )
+        assert result is not None
+        assert result.canonical_id == drive.canonical_id
+
+    def test_exact_name_match_when_no_civic(self, session: Session, client_factory):
+        c = client_factory(name="C")
+        drive = self._project(session, c, "Cherrier")
+
+        result = ProjectMatcher().find_match(
+            session=session, entity_class=Project,
+            candidate_attrs={"name": "Cherrier"},
+        )
+        assert result is not None
+        assert result.canonical_id == drive.canonical_id
+
+    def test_no_substring_match(self, session: Session, client_factory):
+        """'Bates' must NOT match '183 Chemin Bates' -- substring matching is
+        the exact bug this rebuild removed."""
+        c = client_factory(name="C")
+        self._project(session, c, "183 Chemin Bates")
+
+        result = ProjectMatcher().find_match(
+            session=session, entity_class=Project,
+            candidate_attrs={"name": "Bates"},
+        )
+        assert result is None
+
+    def test_different_civic_never_matches(self, session: Session, client_factory):
+        """927 must never match 923 -- the precise mislink the rebuild fixes."""
+        c = client_factory(name="C")
+        self._project(session, c, "923 Rockland (3rd Floor unit)")
+
+        result = ProjectMatcher().find_match(
+            session=session, entity_class=Project,
+            candidate_attrs={"name": "927 Rockland (Ground Floor unit)"},
+        )
+        assert result is None
+
+    def test_ambiguous_civic_does_not_guess(self, session: Session, client_factory):
+        """Two projects share civic 5768 -> ambiguous -> no civic match; the
+        name pass also fails -> None.  The matcher never guesses between them."""
+        c = client_factory(name="C")
+        self._project(session, c, "5768 St-Laurent")
+        self._project(session, c, "5768 Other Street")
+
+        result = ProjectMatcher().find_match(
+            session=session, entity_class=Project,
+            candidate_attrs={"name": "5768 Elsewhere"},
+        )
+        assert result is None
+
+    def test_no_projects_returns_none(self, session: Session):
+        result = ProjectMatcher().find_match(
+            session=session, entity_class=Project,
+            candidate_attrs={"name": "Anything"},
+        )
+        assert result is None
+
+
 # =====================================================================
 # Resolver
 # =====================================================================
@@ -184,6 +266,99 @@ class TestIdentityResolverMatching:
         )
         assert result.was_created is True
         assert result.was_matched is False
+
+
+class TestResolverCreateOnlyAttrs:
+    def test_create_only_field_not_overwritten_on_update(
+        self, session: Session, org
+    ):
+        """A create-only attr is set at creation but never overwritten when the
+        same external record re-syncs -- e.g. a Drive-owned project name that
+        a later Monday sync must not rename."""
+        resolver = IdentityResolver(session)
+        first = resolver.resolve_or_create(
+            source=SourceSystem.GOOGLE_DRIVE,
+            external_key="folder:abc",
+            external_url=None,
+            entity_class=Client,
+            attrs={"name": "Drive Name", "organization_id": org.canonical_id},
+        )
+        second = resolver.resolve_or_create(
+            source=SourceSystem.GOOGLE_DRIVE,
+            external_key="folder:abc",
+            external_url=None,
+            entity_class=Client,
+            attrs={"name": "Changed Name", "organization_id": org.canonical_id},
+            create_only_attrs={"name"},
+        )
+        assert second.entity.canonical_id == first.entity.canonical_id
+        assert second.entity.name == "Drive Name"  # create-only -> NOT overwritten
+
+    def test_non_create_only_field_still_updates(self, session: Session, org):
+        """Fields outside create_only_attrs update normally."""
+        resolver = IdentityResolver(session)
+        resolver.resolve_or_create(
+            source=SourceSystem.MONDAY,
+            external_key="m1",
+            external_url=None,
+            entity_class=Client,
+            attrs={
+                "name": "N", "email": "old@x.com",
+                "organization_id": org.canonical_id,
+            },
+        )
+        second = resolver.resolve_or_create(
+            source=SourceSystem.MONDAY,
+            external_key="m1",
+            external_url=None,
+            entity_class=Client,
+            attrs={
+                "name": "N", "email": "new@x.com",
+                "organization_id": org.canonical_id,
+            },
+            create_only_attrs={"name"},
+        )
+        assert second.entity.email == "new@x.com"
+
+    def test_matched_entity_receives_attrs(self, session: Session, org):
+        """When the matcher (not exact-id) finds an existing entity, the
+        incoming attrs ARE applied to it.
+
+        This is the exact path `rebuild` relies on: it wipes ExternalId rows,
+        so every preserved row misses Step 1 and is found by the matcher in
+        Step 2.  If Step 2 did not apply attrs, a rebuild would leave every
+        Document unlinked -- the bug this test guards against.
+        """
+        resolver = IdentityResolver(session)
+        first = resolver.resolve_or_create(
+            source=SourceSystem.MONDAY,
+            external_key="m1",
+            external_url=None,
+            entity_class=Client,
+            attrs={
+                "name": "Acme", "email": "old@x.com",
+                "organization_id": org.canonical_id,
+            },
+        )
+        # Simulate `rebuild`: drop the ExternalId, keep the Client row.
+        session.query(ExternalId).delete()
+        session.flush()
+        # Re-sync: Step 1 misses, the matcher matches by name, and the new
+        # email MUST land on the matched row.
+        second = resolver.resolve_or_create(
+            source=SourceSystem.MONDAY,
+            external_key="m1",
+            external_url=None,
+            entity_class=Client,
+            attrs={
+                "name": "Acme", "email": "new@x.com",
+                "organization_id": org.canonical_id,
+            },
+            matcher=ExactFieldMatcher(["name"]),
+        )
+        assert second.was_matched is True
+        assert second.entity.canonical_id == first.entity.canonical_id
+        assert second.entity.email == "new@x.com"
 
 
 class TestIdentityResolverDeduplication:

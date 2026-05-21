@@ -32,6 +32,7 @@ SQLITE_DOCUMENT_COLUMNS: dict[str, str] = {
     "drive_id": "VARCHAR",
     "parent_folder_id": "VARCHAR",
     "folder_path": "VARCHAR",
+    "category": "VARCHAR",
     "owner_email": "VARCHAR",
     "is_trashed": "BOOLEAN NOT NULL DEFAULT 0",
     "source_meta_json": "TEXT",

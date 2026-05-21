@@ -14,7 +14,7 @@ Design rules:
     (canceled projects still need to be reasoned about).
 
 The ``token_budget`` knob is in characters/4 by the same heuristic the
-extractors use.  Default 100k tokens fits comfortably in Claude/Qwen
+extractors use.  Default 150k tokens fits comfortably in Claude's 200k
 context; tune up for newer models, down for fine-tuned 8k-context ones.
 """
 from __future__ import annotations
@@ -41,7 +41,12 @@ _CHARS_PER_TOKEN = 4
 # Per-document cap when fitting many docs into a context block: keep the
 # first N chars of each, so we get a sample of every contract rather
 # than the full text of one and zero of the others.
-_PER_DOC_CHAR_CAP_DEFAULT = 8000
+# 16k chars ≈ 4k tokens ≈ the first ~5 pages of a document -- enough to
+# carry a contract's schedule/scope sections with their surrounding
+# context, not just an out-of-context fragment.  The genuinely long
+# (50+ page) contracts still get truncated; relevant-chunk retrieval
+# (RAG) is the post-Phase-5 fix for those, tracked in ROADMAP.md.
+_PER_DOC_CHAR_CAP_DEFAULT = 16000
 
 
 @dataclass
@@ -144,9 +149,9 @@ def assemble_project_context(
     session: Session,
     project_id: Any,
     *,
-    token_budget: int = 100_000,
+    token_budget: int = 150_000,
     per_doc_char_cap: int = _PER_DOC_CHAR_CAP_DEFAULT,
-    max_documents_with_text: int = 25,
+    max_documents_with_text: int = 30,
 ) -> ProjectContext:
     """Build a ``ProjectContext`` for one project.
 

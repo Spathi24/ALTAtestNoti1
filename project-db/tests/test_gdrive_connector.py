@@ -243,36 +243,52 @@ class TestGDriveConnectorFullSync:
 
         assert count_after_second == count_after_first
 
-    def test_sync_links_document_to_project(self, gdrive_connector, session, org):
-        """Files under a folder whose name matches a Project get project_id set."""
+    def test_sync_links_document_to_project(self, session, org):
+        """A file under 01. PROJECTS/<bucket>/<name> links to the Project the
+        connector creates from that folder -- by ancestry, not name guessing."""
+        from project_db.connectors.gdrive.client import GDriveClient
+        from project_db.connectors.gdrive.connector import GDriveConnector
         from project_db.db.models import Project
         from project_db.db.models.docs import Document
-        from project_db.db.models.work import ProjectStatus
 
-        # Create a project matching the mock folder name "923 Rockland"
-        client_row = __import__("project_db.db.models", fromlist=["Client"]).Client(
-            name="Test Client", organization_id=org.canonical_id
+        def _folder(fid, name, parent):
+            return {
+                "id": fid, "name": name,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [parent],
+            }
+
+        svc = MagicMock()
+        list_mock = MagicMock()
+        # root -> 01. PROJECTS -> ACTIVE -> 923 Rockland -> file
+        list_mock.execute.side_effect = [
+            {"files": [_folder("p", "01. PROJECTS", "root")], "nextPageToken": None},
+            {"files": [_folder("a", "ACTIVE", "p")], "nextPageToken": None},
+            {"files": [_folder("r", "923 Rockland", "a")], "nextPageToken": None},
+            {"files": [_make_file("file1", "Scope.pdf", folder_id="r")], "nextPageToken": None},
+        ]
+        svc.files.return_value.list.return_value = list_mock
+        svc.changes.return_value.getStartPageToken.return_value.execute.return_value = {
+            "startPageToken": "tok"
+        }
+
+        connector = GDriveConnector(
+            session=session,
+            organization_id=org.canonical_id,
+            config={"_client": GDriveClient(service=svc), "root_folder": "root"},
         )
-        session.add(client_row)
-        session.flush()
-        project = Project(
-            name="923 Rockland",
-            code="TEST-ROCK",
-            status=ProjectStatus.ACTIVE,
-            client_id=client_row.canonical_id,
-        )
-        session.add(project)
-        session.commit()
+        connector.sync()
 
-        gdrive_connector.sync()
-
-        # The file inside folder1 ("923 Rockland") should be linked.
+        # The connector created the project from the folder...
+        project = session.query(Project).filter_by(name="923 Rockland").one()
+        # ...and the file under it is linked by ancestry.
         linked = (
             session.query(Document)
             .filter(Document.project_id == project.canonical_id)
             .all()
         )
-        assert len(linked) >= 1
+        assert len(linked) == 1
+        assert linked[0].storage_ref == "file1"
 
     def test_sync_stores_cursor(self, gdrive_connector, session):
         """After a full sync, the changes page token is persisted."""
@@ -386,13 +402,13 @@ class TestGDriveConnectorRegistry:
 
 class TestFolderNameNormalization:
     def test_normalize_name_strips_punctuation(self):
-        from project_db.connectors.gdrive.connector import _normalize_name
-        assert _normalize_name("5768-5770 St. Laurent (Reno)") == "5768 5770 st laurent reno"
+        from project_db.identity.matcher import normalize_name
+        assert normalize_name("5768-5770 St. Laurent (Reno)") == "5768 5770 st laurent reno"
 
     def test_normalize_name_collapses_whitespace(self):
-        from project_db.connectors.gdrive.connector import _normalize_name
-        assert _normalize_name("923  Rockland   Ave") == "923 rockland ave"
+        from project_db.identity.matcher import normalize_name
+        assert normalize_name("923  Rockland   Ave") == "923 rockland ave"
 
     def test_normalize_name_lowercases(self):
-        from project_db.connectors.gdrive.connector import _normalize_name
-        assert _normalize_name("ALTA Group") == "alta group"
+        from project_db.identity.matcher import normalize_name
+        assert normalize_name("ALTA Group") == "alta group"

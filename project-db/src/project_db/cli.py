@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import uuid
+from typing import Any
 
 # Importing config triggers python-dotenv to load .env into os.environ.
 # Must happen before any os.environ.get(...) calls below.
@@ -34,6 +35,7 @@ from project_db.db.models import (  # noqa: F401 — needed for metadata to know
     Organization,
     Project,
     Property,
+    Proposal,
     SourceSystem,
     Task,
     User,
@@ -583,6 +585,10 @@ def cmd_propose(args: argparse.Namespace) -> int:
             print(f"      task:   {val.get('task_title')}")
             print(f"      dates:  {val.get('start_date')} -> {val.get('end_date')}")
             print(f"      conf:   {conf}")
+        if batch.warnings:
+            print("  flagged for review (created, but scrutinise before accepting):")
+            for w in batch.warnings:
+                print(f"    ! {w}")
         if batch.errors:
             print("  malformed items rejected:")
             for e in batch.errors:
@@ -699,6 +705,294 @@ def cmd_proposals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(_: argparse.Namespace) -> int:
+    """Audit canonical-data integrity (read-only).
+
+    Surfaces the failure modes the foundation rebuild targets: phantom or
+    duplicate projects, documents linked to the wrong project, orphaned
+    files.  Run it after `rebuild` to confirm the data is sound.
+    """
+    from sqlalchemy import func
+
+    from project_db.identity.matcher import extract_civic_numbers
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    flags: list[str] = []
+    with session_scope() as s:
+        projects = s.query(Project).order_by(Project.name).all()
+        print(f"=== PROJECTS ({len(projects)}) ===")
+        civic_seen: dict[str, list[str]] = {}
+        proj_by_id: dict[Any, Any] = {}
+        for p in projects:
+            proj_by_id[p.canonical_id] = p
+            exts = (
+                s.query(ExternalId)
+                .filter(ExternalId.canonical_id == p.canonical_id)
+                .all()
+            )
+            drive = [
+                e for e in exts
+                if e.source == SourceSystem.GOOGLE_DRIVE
+                and (e.external_key or "").startswith("folder:")
+            ]
+            monday = [e for e in exts if e.source == SourceSystem.MONDAY]
+            ndoc = (
+                s.query(Document)
+                .filter(
+                    Document.project_id == p.canonical_id,
+                    Document.is_trashed.is_(False),
+                )
+                .count()
+            )
+            ntask = s.query(Task).filter(Task.project_id == p.canonical_id).count()
+            status = getattr(p.status, "value", p.status)
+            src = []
+            if drive:
+                src.append(f"Drive x{len(drive)}")
+            if monday:
+                src.append(f"Monday x{len(monday)}")
+            print(f"  {p.name}")
+            print(
+                f"      status={status}  docs={ndoc}  tasks={ntask}  "
+                f"source={', '.join(src) or 'NONE'}"
+            )
+            if not drive:
+                flags.append(
+                    f"{p.name!r}: no Drive folder -- Monday-only. If it is a "
+                    f"real project, give it a folder under 01. PROJECTS/"
+                    f"<ACTIVE|INACTIVE|LEADS>/; otherwise it is a stray board "
+                    f"to remove in Monday."
+                )
+            if ndoc == 0 and ntask == 0:
+                flags.append(f"{p.name!r}: 0 documents and 0 tasks -- empty record")
+            for civic in extract_civic_numbers(p.name or ""):
+                civic_seen.setdefault(civic, []).append(p.name)
+
+        for civic, names in sorted(civic_seen.items()):
+            if len(names) > 1:
+                flags.append(
+                    f"civic number {civic} shared by {len(names)} projects: {names}"
+                )
+
+        # Mislinked documents -- linked to a project that is not their
+        # Drive-folder ancestor.  After a clean rebuild this must be 0.
+        mislinked = 0
+        for d in (
+            s.query(Document)
+            .filter(Document.project_id.isnot(None), Document.is_trashed.is_(False))
+            .all()
+        ):
+            p = proj_by_id.get(d.project_id)
+            if p is None or not d.folder_path:
+                continue
+            if p.name not in [seg.strip() for seg in d.folder_path.split("/")]:
+                mislinked += 1
+        if mislinked:
+            flags.append(
+                f"{mislinked} document(s) linked to a project that is NOT "
+                f"their Drive-folder ancestor (mislink)"
+            )
+
+        total = s.query(Document).filter(Document.is_trashed.is_(False)).count()
+        linked = (
+            s.query(Document)
+            .filter(Document.project_id.isnot(None), Document.is_trashed.is_(False))
+            .count()
+        )
+        print(f"\n=== DOCUMENTS ({total} live) ===")
+        print(f"  linked to a project: {linked}")
+        rows = (
+            s.query(Document.category, func.count(Document.canonical_id))
+            .filter(Document.is_trashed.is_(False))
+            .group_by(Document.category)
+            .all()
+        )
+        for cat, n in sorted(rows, key=lambda r: -(r[1] or 0)):
+            print(f"  category={cat or '(none)'}: {n}")
+        orphans = (
+            s.query(Document)
+            .filter(
+                Document.project_id.is_(None),
+                Document.category.is_(None),
+                Document.is_trashed.is_(False),
+            )
+            .count()
+        )
+        if orphans:
+            flags.append(
+                f"{orphans} document(s) with neither a project nor a category "
+                f"(orphans -- usually files with no folder_path)"
+            )
+
+        print(f"\n=== FLAGS ({len(flags)}) ===")
+        if not flags:
+            print("  none -- canonical data looks sound.")
+        else:
+            for flag in flags:
+                print(f"  ! {flag}")
+    return 0
+
+
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    """Re-derive the canonical DB from the sources (Drive first, then Monday).
+
+    The canonical DB is a projection of the source systems, so the clean
+    way to fix accumulated drift is to re-derive it:
+      - DROPS all connector-derived rows (projects, tasks, leads, deals,
+        clients, external-ids, proposals, ...).
+      - PRESERVES Document + DocumentText -- documents re-match by their
+        stable Drive file id, so extracted text is NOT lost.
+      - re-syncs Google Drive FIRST (Drive folders define the projects),
+        then Monday (boards match into those projects).
+
+    Proposals are dropped: they reference Task ids that change on
+    re-derivation, and any existing ones were generated over pre-rebuild
+    (incorrect) data anyway.  Destructive -- requires --yes.
+    """
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        n_proj = s.query(Project).count()
+        n_prop = s.query(Proposal).count()
+        n_doc = s.query(Document).count()
+
+    if not args.yes:
+        print("rebuild will RE-DERIVE the canonical database:")
+        print(
+            f"  - drop {n_proj} project(s), all tasks / leads / deals / "
+            f"clients / external-ids"
+        )
+        print(
+            f"  - export {n_prop} proposal(s) to JSON, then drop them"
+        )
+        print(f"  - preserve {n_doc} document(s) and their extracted text")
+        print("  - re-sync Google Drive, then Monday")
+        print("\nRe-run to proceed:  project_db rebuild --yes")
+        return 1
+
+    from datetime import datetime
+    from pathlib import Path
+
+    from sqlalchemy import inspect as sa_inspect, text
+
+    # --- Preflight -------------------------------------------------------
+    # Build every connector BEFORE touching the database.  Constructing the
+    # Drive connector refreshes its OAuth token, so a dead credential is
+    # caught here -- and the rebuild aborts with the DB completely untouched
+    # rather than half-wiped.  Drive runs FIRST: its folders define project
+    # identity; Monday boards then match into those projects.
+    with session_scope() as s:
+        if s.query(Organization).count() == 0:
+            s.add(Organization(name="Default Org"))
+        org_id = s.query(Organization).first().canonical_id
+
+    sync_plan: list[tuple[str, Any]] = []
+    for label, source in (
+        ("Google Drive", SourceSystem.GOOGLE_DRIVE),
+        ("Monday", SourceSystem.MONDAY),
+    ):
+        try:
+            connector_cls = get_connector_class(source)
+            with session_scope() as s:
+                connector_cls(session=s, organization_id=org_id)  # construct only
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"FAIL preflight: cannot initialise the {label} connector.",
+                file=sys.stderr,
+            )
+            print(f"  {exc}", file=sys.stderr)
+            print(
+                "\nThe database was NOT modified -- nothing was wiped.",
+                file=sys.stderr,
+            )
+            if source == SourceSystem.GOOGLE_DRIVE:
+                print(
+                    "  The Google Drive token looks expired/revoked. Run:\n"
+                    "      project_db gdrive-auth\n"
+                    "  then re-run:  project_db rebuild --yes",
+                    file=sys.stderr,
+                )
+            return 2
+        sync_plan.append((label, connector_cls))
+    print("[rebuild] preflight OK -- all connectors reachable.")
+
+    # --- Export proposals (the one piece of human-authored data) ---------
+    with session_scope() as s:
+        proposal_dump = [
+            {col.name: getattr(p, col.name) for col in Proposal.__table__.columns}
+            for p in s.query(Proposal).all()
+        ]
+    if proposal_dump:
+        backup = (
+            Path(__file__).resolve().parent.parent.parent
+            / f"proposals_backup_{datetime.utcnow():%Y%m%d_%H%M%S}.json"
+        )
+        backup.write_text(
+            json.dumps(proposal_dump, indent=2, default=str), encoding="utf-8"
+        )
+        print(f"[rebuild] exported {len(proposal_dump)} proposal(s) -> {backup}")
+
+    # --- Wipe connector-derived rows -------------------------------------
+    derived = [
+        "proposal", "task", "invoice", "daily_log", "project",
+        "lead", "deal", "client", "vendor", "property", "user",
+        "external_id",
+    ]
+    existing = set(sa_inspect(engine).get_table_names())
+
+    print("[rebuild] wiping connector-derived tables...")
+    with engine.begin() as conn:
+        is_sqlite = engine.dialect.name == "sqlite"
+        if is_sqlite:
+            conn.execute(text("PRAGMA foreign_keys=OFF"))
+        # Detach preserved Documents from rows about to be deleted so no
+        # foreign key dangles once FK enforcement is back on.
+        conn.execute(
+            text(
+                "UPDATE document SET project_id=NULL, deal_id=NULL, "
+                "client_id=NULL, category=NULL"
+            )
+        )
+        for table in derived:
+            if table in existing:
+                conn.execute(text(f'DELETE FROM "{table}"'))
+        if is_sqlite:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+    print("[rebuild] wipe complete.")
+
+    with session_scope() as s:
+        if s.query(Organization).count() == 0:
+            s.add(Organization(name="Default Org"))
+
+    # --- Re-sync (connectors already preflight-validated) ----------------
+    for label, connector_cls in sync_plan:
+        print(f"[rebuild] syncing {label}...")
+        try:
+            with session_scope() as s:
+                org = s.query(Organization).first()
+                connector = connector_cls(session=s, organization_id=org.canonical_id)
+                report = connector.sync()
+            print(f"  {report.summary()}")
+            for err in report.errors[:10]:
+                print(f"    - {err}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  FAIL: {label} sync errored: {exc}", file=sys.stderr)
+            print(
+                "  DB is mid-rebuild -- fix the issue and re-run "
+                "`project_db rebuild --yes`.",
+                file=sys.stderr,
+            )
+            return 1
+
+    print("\n[rebuild] done.  Run `project_db doctor` to verify.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -801,6 +1095,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dump system prompt, user prompt excerpt, context, and timing metadata",
     )
     lt.set_defaults(func=cmd_llm_test)
+
+    sub.add_parser(
+        "doctor",
+        help="Audit canonical-data integrity (read-only): phantom/duplicate "
+             "projects, mislinked or orphaned documents",
+    ).set_defaults(func=cmd_doctor)
+
+    rebuild = sub.add_parser(
+        "rebuild",
+        help="Re-derive the canonical DB from Drive + Monday (drops derived "
+             "rows, preserves documents + extracted text). Requires --yes.",
+    )
+    rebuild.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm the destructive re-derivation (required to proceed)",
+    )
+    rebuild.set_defaults(func=cmd_rebuild)
 
     ec = sub.add_parser(
         "extract-content",

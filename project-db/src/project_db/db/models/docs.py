@@ -9,6 +9,9 @@ metadata to answer real questions without re-hitting the API:
   - drive_id:          shared-drive id (None for personal My Drive files)
   - parent_folder_id:  first parent folder id (re-linkable to projects)
   - folder_path:       human-readable breadcrumb like "Active/923 Rockland/Contracts"
+  - category:          which top-level Drive area the file lives in
+                       (projects / company / real_estate / construction /
+                       intelligence) — set deterministically from folder_path
   - owner_email:       so we know who owns it
   - is_trashed:        soft-delete signal from Drive
   - source_meta_json:  raw payload for anything we don't promote to a column
@@ -37,6 +40,10 @@ class Document(Base, CanonicalMixin):
     drive_id = Column(String, nullable=True)
     parent_folder_id = Column(String, nullable=True)
     folder_path = Column(String, nullable=True)
+    # Top-level Drive area: projects / company / real_estate / construction /
+    # intelligence.  Project files also carry project_id; non-project files
+    # have project_id NULL and rely on category for their home.
+    category = Column(String, nullable=True)
     owner_email = Column(String, nullable=True)
     is_trashed = Column(Boolean, nullable=False, default=False)
     source_meta_json = Column(Text, nullable=True)

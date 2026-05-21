@@ -4,12 +4,15 @@ Syncs file metadata from Google Drive into the canonical Document table.
 Content extraction (for LLM use) is a later phase -- this connector is
 metadata-only until we have live credentials and a confirmed folder structure.
 
-Linking strategy (two stages):
-  1. Folder-name match (primary).  The root folder contains one subfolder per
-     project.  Normalize the subfolder name and match against Project.name.
-     Cache the (folder_id -> project_id) mapping in ExternalId once resolved.
-  2. Content fallback.  Files under unrecognized folders are stored without a
-     project link and flagged for manual review via storage_ref.
+Linking strategy (deterministic -- folder ancestry, no name guessing):
+  Drive's folder tree IS the project registry.  A folder sitting exactly at
+  ``01. PROJECTS/<ACTIVE|INACTIVE|LEADS>/<name>`` is one canonical Project;
+  the connector CREATES it (keyed by folder id -- two folders are never
+  merged).  Every file beneath a project folder inherits that project_id by
+  ancestry.  Files outside the projects tree (00. COMPANY, 02. REAL ESTATE,
+  03. CONSTRUCTION, 05. INTELLIGENCE) get a `category` instead of a project.
+  Monday boards later match INTO these Drive-defined projects -- see
+  identity/matcher.py:ProjectMatcher.
 
 Delta sync:
   On the first sync, we store a Drive changes-page-token in a one-row
@@ -26,19 +29,16 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import unicodedata
 from datetime import datetime
 from typing import Any
-
-from sqlalchemy.orm import Session
 
 from project_db.connectors.base import BaseConnector, SyncReport
 from project_db.connectors.gdrive.client import GDriveClient
 from project_db.connectors.gdrive.content_pipeline import extract_and_store
 from project_db.db.models import ExternalId, Project, SourceSystem
 from project_db.db.models.docs import Document
-from project_db.identity.matcher import ExactFieldMatcher
+from project_db.db.models.work import ProjectStatus
+from project_db.identity.matcher import ExactFieldMatcher, normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -63,86 +63,65 @@ def _parse_rfc3339(value: str | None) -> datetime | None:
         return None
 
 
-def _normalize_name(name: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace.
+# --- Drive folder taxonomy -------------------------------------------------
+#
+# Project folders live exactly three levels deep:
+#     01. PROJECTS / <bucket> / <project folder>
+# Everything else is company knowledge, classified by its top-level area.
 
-    '5768-5770 St. Laurent (Reno)' -> '5768 5770 st laurent reno'
+# Bucket folder name (under "01. PROJECTS") -> default ProjectStatus.
+_PROJECT_BUCKETS: dict[str, ProjectStatus] = {
+    "ACTIVE": ProjectStatus.ACTIVE,
+    "INACTIVE": ProjectStatus.COMPLETED,
+    "LEADS": ProjectStatus.PROPOSED,
+}
+
+# Keyword (in the normalized top-level folder name) -> document category.
+_CATEGORY_KEYWORDS: list[tuple[str, str]] = [
+    ("projects", "projects"),
+    ("company", "company"),
+    ("real estate", "real_estate"),
+    ("construction", "construction"),
+    ("intelligence", "intelligence"),
+]
+
+
+def _path_parts(folder_path: str | None) -> list[str]:
+    """Split a folder breadcrumb into its non-empty segments."""
+    return [p for p in (folder_path or "").split("/") if p]
+
+
+def _project_bucket_for_path(folder_path: str | None) -> str | None:
+    """Return the bucket name if ``folder_path`` IS a project folder, else None.
+
+    A project folder sits exactly at  <projects-area>/<bucket>/<project>:
+    three segments, the first containing "projects", the second one of
+    ACTIVE / INACTIVE / LEADS.  Numeric folder prefixes ("01. ") are
+    tolerated -- the first segment is matched on normalized text.
     """
-    # Normalize unicode -> ASCII approximation
-    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
-    name = name.lower()
-    name = re.sub(r"[^\w\s]", " ", name)  # strip punctuation
-    name = re.sub(r"\s+", " ", name).strip()
-    return name
-
-
-# Civic numbers in our portfolio are always 3-5 digits.  Requiring 3+ avoids
-# false matches on section-header folders like "01. PROJECTS", "05. INTELLIGENCE".
-_CIVIC_NUMBER_RE = re.compile(r"^\s*(\d{3,5})(?:[-\s]+(\d{3,5}))?\b")
-
-
-def _extract_civic_numbers(name: str) -> set[str]:
-    """Pull leading civic number(s) from an address-like name.
-
-    '1455 Rue St. Mathieu'        -> {'1455'}
-    '5768-5770 St Laurent'        -> {'5768', '5770'}
-    '923 Rockland (Ground Floor)' -> {'923'}
-    'Active Projects'             -> set()  (no leading number)
-    """
-    m = _CIVIC_NUMBER_RE.match(name or "")
-    if not m:
-        return set()
-    nums = {m.group(1)}
-    if m.group(2):
-        nums.add(m.group(2))
-    return nums
-
-
-def _match_project_by_name(
-    session: Session,
-    organization_id: Any,
-    folder_name: str,
-) -> Any | None:
-    """Try to link a Drive folder to a canonical Project.
-
-    Two strategies, tried in order (civic FIRST -- it's the more specific
-    signal for address-style folders):
-      1. Leading civic-number match -- "923 Rockland" beats generic "Rockland"
-         because "923" is a hard match.  Handles renderings like
-         "1455 Rue St. Mathieu" -> project "1455 Saint Mathieu".
-      2. Normalized substring match -- fallback for non-address folder names
-         and projects without civic numbers.
-
-    Returns project.canonical_id or None.
-    """
-    needle = _normalize_name(folder_name)
-    if not needle:
+    parts = _path_parts(folder_path)
+    if len(parts) != 3:
         return None
+    if "projects" not in normalize_name(parts[0]):
+        return None
+    bucket = parts[1].strip().upper()
+    return bucket if bucket in _PROJECT_BUCKETS else None
 
-    folder_civics = _extract_civic_numbers(folder_name)
-    projects = session.query(Project).all()
 
-    # Pass 1: civic-number match (tight when both sides have a civic).
-    if folder_civics:
-        for project in projects:
-            project_civics = _extract_civic_numbers(project.name or "")
-            if project_civics and (folder_civics & project_civics):
-                logger.info(
-                    "[GDRIVE] folder %r -> Project %r (civic match: %s)",
-                    folder_name, project.name, folder_civics & project_civics,
-                )
-                return project.canonical_id
+def _category_for_path(folder_path: str | None) -> str | None:
+    """Classify a document by its top-level Drive area.
 
-    # Pass 2: normalized substring match (looser fallback).
-    for project in projects:
-        haystack = _normalize_name(project.name or "")
-        if haystack and (needle == haystack or needle in haystack or haystack in needle):
-            logger.info(
-                "[GDRIVE] folder %r -> Project %r (name match)",
-                folder_name, project.name,
-            )
-            return project.canonical_id
-
+    "01. PROJECTS/ACTIVE/923 Rockland/Contracts" -> "projects"
+    "00. COMPANY/2. DOCUMENTS"                   -> "company"
+    "02. REAL ESTATE/4. UNDERWRITING"            -> "real_estate"
+    """
+    parts = _path_parts(folder_path)
+    if not parts:
+        return None
+    top = normalize_name(parts[0])
+    for keyword, category in _CATEGORY_KEYWORDS:
+        if keyword in top:
+            return category
     return None
 
 
@@ -320,13 +299,12 @@ class GDriveConnector(BaseConnector):
     ) -> None:
         """Recursive folder traversal.
 
-        Tries to resolve every folder name to a canonical Project (cached so
-        each folder is checked once per run).  Project folders can sit at any
-        depth -- e.g. "01. PROJECTS/ACTIVE/5768 St-Laurent" only matches at
-        depth 3.  Once a folder resolves, every file below it inherits that
-        project_id.  Inner folders that themselves match (e.g. a sub-project
-        nested under a parent project) override the parent's resolution for
-        their own subtree.
+        A folder is a project folder iff its path is exactly
+        ``01. PROJECTS/<bucket>/<name>`` (see ``_project_bucket_for_path``).
+        Entering one creates/resolves its canonical Project; every file
+        beneath it inherits that project_id by ancestry.  Folders elsewhere
+        simply inherit their parent's project_id (None outside the projects
+        tree) -- documents there are classified by ``category`` instead.
         """
         if depth > self._MAX_DEPTH:
             logger.warning("[GDRIVE] Max depth %d exceeded at %s", self._MAX_DEPTH, folder_path)
@@ -346,12 +324,18 @@ class GDriveConnector(BaseConnector):
 
         for item in items:
             if item.get("mimeType") == _FOLDER_MIME:
-                # Try to resolve this folder name to a canonical Project.
-                # If it doesn't match, inherit the parent's project_id (which
-                # itself may have matched higher up the tree).
-                matched = self._resolve_folder_to_project(item["id"], item["name"])
-                child_project_id = matched if matched is not None else project_id
                 child_path = f"{folder_path}/{item['name']}" if folder_path else item["name"]
+                # A folder at  01. PROJECTS/<bucket>/<name>  IS a project --
+                # create/resolve its canonical Project.  Any other folder
+                # just inherits whatever project its parent resolved (None
+                # outside the projects tree).
+                bucket = _project_bucket_for_path(child_path)
+                if bucket is not None:
+                    child_project_id = self._resolve_project_folder(
+                        item["id"], item["name"], bucket,
+                    )
+                else:
+                    child_project_id = project_id
                 self._walk(
                     folder_id=item["id"],
                     folder_path=child_path,
@@ -391,12 +375,17 @@ class GDriveConnector(BaseConnector):
                 continue
 
             if file_data:
-                project_id = self._resolve_folder_to_project_from_file(file_data)
                 parent_id = (file_data.get("parents") or [None])[0]
+                # The delta path lacks the full tree, so it cannot resolve
+                # folder ancestry.  project_id / folder_path / category are
+                # passed as None -- and None never clobbers an existing
+                # value (see _upsert_document) -- so a delta sync refreshes
+                # file metadata while the next full sync / `rebuild` repairs
+                # linkage.
                 self._upsert_document(
                     file_data,
-                    project_id=project_id,
-                    folder_path=None,  # unknown in delta path; next full sync repairs
+                    project_id=None,
+                    folder_path=None,
                     parent_folder_id=parent_id,
                 )
 
@@ -467,6 +456,12 @@ class GDriveConnector(BaseConnector):
         }
         if project_id is not None:
             attrs["project_id"] = project_id
+        # Category is derived from the top-level Drive area.  Set only when
+        # known (the full-sync path supplies folder_path); None is omitted so
+        # a delta sync never wipes a category set by an earlier full sync.
+        category = _category_for_path(folder_path)
+        if category is not None:
+            attrs["category"] = category
 
         try:
             result = self.resolver.resolve_or_create(
@@ -517,15 +512,27 @@ class GDriveConnector(BaseConnector):
             logger.info("[GDRIVE] Marked Document %s as removed", file_id)
 
     # ------------------------------------------------------------------
-    # Project linking
+    # Project discovery -- a Drive project folder IS a canonical Project
     # ------------------------------------------------------------------
 
-    def _resolve_folder_to_project(self, folder_id: str, folder_name: str) -> Any | None:
-        """Return canonical project_id for a Drive subfolder, or None."""
+    def _resolve_project_folder(
+        self, folder_id: str, folder_name: str, bucket: str,
+    ) -> Any:
+        """Return the canonical project_id for a Drive project folder.
+
+        Each project folder maps to exactly ONE canonical Project, keyed by
+        ``folder:<folder_id>``.  There is NO fuzzy matching between folders:
+        two sibling folders are two distinct projects, full stop -- this is
+        what makes linkage deterministic and is why "927 Rockland" can never
+        again be confused with "923 Rockland".
+
+        Idempotent: the folder's ExternalId is checked first, so a project's
+        name / status are written once at creation and never churned on a
+        later re-sync (Monday owns operational status from then on).
+        """
         if folder_id in self._folder_project_cache:
             return self._folder_project_cache[folder_id]
 
-        # Check if we already registered this folder->project mapping.
         ext = (
             self.session.query(ExternalId)
             .filter_by(
@@ -539,34 +546,26 @@ class GDriveConnector(BaseConnector):
             self._folder_project_cache[folder_id] = ext.canonical_id
             return ext.canonical_id
 
-        # Try folder-name match.
-        project_id = _match_project_by_name(
-            self.session, self.organization_id, folder_name
+        # New project folder -> create a canonical Project.  No matcher is
+        # passed (resolver default = NoMatcher): folders never merge.
+        result = self.resolver.resolve_or_create(
+            source=self.source,
+            external_key=f"folder:{folder_id}",
+            external_url=f"https://drive.google.com/drive/folders/{folder_id}",
+            entity_class=Project,
+            attrs={
+                "name": folder_name,
+                "status": _PROJECT_BUCKETS[bucket],
+                "client_id": self._unknown_client_id(),
+            },
         )
-        if project_id is not None:
-            # Persist the mapping so future syncs skip the name match.
-            link = ExternalId(
-                source=self.source,
-                entity_type="Project",
-                external_key=f"folder:{folder_id}",
-                external_url=None,
-                canonical_id=project_id,
-            )
-            self.session.add(link)
-            self.session.flush()
-
-        self._folder_project_cache[folder_id] = project_id
-        return project_id
-
-    def _resolve_folder_to_project_from_file(self, file: dict[str, Any]) -> Any | None:
-        """Resolve project_id from a file's parents list (delta sync path)."""
-        parents = file.get("parents") or []
-        for parent_id in parents:
-            if parent_id in self._folder_project_cache:
-                return self._folder_project_cache[parent_id]
-            # Can't resolve without the folder name -- return None and let it
-            # be an unlinked document.  The next full sync will repair linkage.
-        return None
+        self._record_result(result.was_created, result.was_matched)
+        self._folder_project_cache[folder_id] = result.entity.canonical_id
+        logger.info(
+            "[GDRIVE] project folder %r -> Project %s (%s)",
+            folder_name, result.entity.canonical_id, bucket,
+        )
+        return result.entity.canonical_id
 
     # ------------------------------------------------------------------
     # Cursor persistence  (stored as a synthetic ExternalId row)

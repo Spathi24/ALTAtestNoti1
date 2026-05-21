@@ -48,7 +48,7 @@ from project_db.db.models import (
     TaskStatus,
     User,
 )
-from project_db.identity.matcher import ExactFieldMatcher
+from project_db.identity.matcher import ExactFieldMatcher, ProjectMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,8 @@ DEFAULT_BOARD_MAPPING: list[dict[str, Any]] = [
     {"pattern": r"^\d+[-\s].+", "entity": "ProjectBoard"},
 ]
 
-# Workspace names whose boards should always be treated as job/property boards
-# even if their name doesn't match the address pattern above.
-PROJECT_MANAGEMENT_WORKSPACES: set[str] = {"Project Management"}
+# NOTE: board classification is allowlist-only (see _classify_board).  A board
+# that matches no rule above is skipped, never guessed into a Project.
 
 
 # ---------------------------------------------------------------------------
@@ -375,10 +374,13 @@ class MondayConnector(BaseConnector):
                 if re.match(r"(?i)subitems?\s+of\b", board["name"]):
                     logger.debug("Skipping subitem mirror board %r", board["name"])
                     continue
-                ws_name = (board.get("workspace") or {}).get("name", "")
-                entity_type = self._classify_board(board["name"], ws_name)
+                entity_type = self._classify_board(board["name"])
                 if entity_type is None:
-                    logger.debug("Skipping board %r (no pattern match)", board["name"])
+                    logger.info(
+                        "[MONDAY] skipped board %r -- no board_mapping rule "
+                        "matched (add a rule to ingest it)",
+                        board["name"],
+                    )
                     continue
 
                 if delta and not self._board_has_changes(board["id"]):
@@ -503,15 +505,16 @@ class MondayConnector(BaseConnector):
     # Board classification & sync dispatch
     # ------------------------------------------------------------------
 
-    def _classify_board(self, name: str, workspace_name: str = "") -> str | None:
-        # Boards in the Project Management workspace that don't match CRM patterns
-        # are job/property boards -- board itself is the project.
-        if workspace_name in PROJECT_MANAGEMENT_WORKSPACES:
-            for rule in self.board_mapping:
-                if re.search(rule["pattern"], name):
-                    return rule["entity"]
-            return "ProjectBoard"
+    def _classify_board(self, name: str) -> str | None:
+        """Classify a board to an entity type via the board_mapping allowlist.
 
+        Fail closed: a board matching NO rule returns None and is skipped.
+        Only an explicit allowlisted rule may cause a board to mint or
+        attach project / CRM entities -- this stops a future board (a stray
+        portfolio board, a "New Deal - Construction" board) from silently
+        polluting the canonical projects.  The sync logs every skipped
+        board so the gap is visible and a rule can be added deliberately.
+        """
         for rule in self.board_mapping:
             if re.search(rule["pattern"], name):
                 return rule["entity"]
@@ -592,7 +595,10 @@ class MondayConnector(BaseConnector):
             external_url=f"https://view.monday.com/boards/{board['id']}/pulses/{item['id']}",
             entity_class=Project,
             attrs=attrs,
-            matcher=ExactFieldMatcher(["name"]),
+            # Attach to the Drive-defined Project (civic / exact name).
+            # create_only_attrs keeps the Drive folder name authoritative.
+            matcher=ProjectMatcher(),
+            create_only_attrs={"name"},
         )
         self._record_result(result.was_created, result.was_matched)
 
@@ -707,7 +713,11 @@ class MondayConnector(BaseConnector):
             external_url=f"https://view.monday.com/boards/{board['id']}",
             entity_class=Project,
             attrs=project_attrs,
-            matcher=ExactFieldMatcher(["name"]),
+            # ProjectMatcher attaches this board to the Drive-defined Project
+            # (civic / exact name).  create_only_attrs keeps the Drive folder
+            # name authoritative -- Monday never renames a matched project.
+            matcher=ProjectMatcher(),
+            create_only_attrs={"name"},
         )
         self._record_result(project_result.was_created, project_result.was_matched)
         project_id = project_result.entity.canonical_id

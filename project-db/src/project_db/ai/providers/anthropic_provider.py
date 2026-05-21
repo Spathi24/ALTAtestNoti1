@@ -31,8 +31,16 @@ from project_db.ai.providers.base import (
 
 logger = logging.getLogger(__name__)
 
-# Reasonable default; override per-call via the `model` argument.
-_DEFAULT_MODEL = "claude-sonnet-4-5"
+# Reasonable default; override with ANTHROPIC_MODEL env var or per-call `model` arg.
+# Use a cheaper model (e.g. claude-3-5-haiku-20241022) for cost-sensitive testing.
+_DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+
+
+def _resolve_default_model(explicit: str) -> str:
+    """Return the model to use, checking ANTHROPIC_MODEL env var first."""
+    if explicit != _DEFAULT_MODEL:
+        return explicit          # caller passed an explicit override
+    return os.environ.get("ANTHROPIC_MODEL", _DEFAULT_MODEL)
 
 
 class AnthropicProvider(LLMProvider):
@@ -61,7 +69,7 @@ class AnthropicProvider(LLMProvider):
                     "or set the env var."
                 )
             self._client = Anthropic(api_key=key)
-        self._default_model = default_model
+        self._default_model = _resolve_default_model(default_model)
 
     def complete(
         self,

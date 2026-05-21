@@ -9,6 +9,67 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-21 — Phase 2.5: Foundation Correctness (project identity rebuilt)
+
+**Theme:** A direct database audit found the canonical data was wrong at the
+root -- project identity was unstable, so every report and every LLM proposal
+was reasoning over garbage. Fixed the ingestion layer, not the AI.
+
+### The disease
+- 6 "projects" for ~3 real ones: "923 Rockland" split into two records;
+  demo "deal" rows minted as projects.
+- 60% of Drive documents (450 / 750) linked to no project at all.
+- Mislinks: 18 documents from the "927 Rockland" folder were attached to a
+  phantom "Rockland" project.
+- Root cause: project identity came from "whatever Monday created", and Drive
+  documents matched into it via a **substring** test -- "Rockland" matched
+  "927 Rockland".
+
+### The fix -- the Drive folder tree IS the project registry
+- A folder at `01. PROJECTS/{ACTIVE,INACTIVE,LEADS}/<name>/` is one canonical
+  Project, created keyed by folder id. Two folders never merge.
+- Documents link to projects by **physical folder ancestry** -- fully
+  deterministic. The `_match_project_by_name` substring matcher is deleted.
+- `Document.category` -- every Drive file gets a home (a project, or a
+  company-knowledge category: company / real_estate / construction /
+  intelligence).
+- `ProjectMatcher` (civic-number then exact-name, unique-hit-only, no
+  fuzzy/substring) lets Monday boards match INTO Drive projects.
+- `_classify_board` fails closed: a board matching no allowlisted rule is
+  skipped + logged, never guessed into a Project (this kills the phantom
+  "Rockland" and a stray "New Board").
+- `resolve_or_create`: a matched (not newly-created) entity now also receives
+  its attrs -- the path `rebuild` depends on. Without it, every preserved
+  Document stayed unlinked (caught in live verification, then fixed).
+- `create_only_attrs` -- Monday never renames a Drive-authoritative project.
+
+### Tooling
+- `project_db doctor` -- read-only trust instrument: project provenance,
+  document/task counts, and mislink / orphan / duplicate-civic flags.
+- `project_db rebuild` -- re-derive the canonical DB from the sources;
+  preflight-checks every connector before wiping anything; preserves
+  Document + DocumentText; exports Proposals to JSON first.
+
+### Also today
+- Anthropic provider wired live (`claude-haiku-4-5` for cost-efficient
+  testing); added `ANTHROPIC_MODEL` env var and selective `.env` loading.
+
+### Verification
+- **388 tests** passing. Substring/civic matching tests replaced with
+  deterministic folder-taxonomy + `ProjectMatcher` tests; added a regression
+  test for the matched-path attrs bug.
+- Live `rebuild` + `doctor`: 21 projects (19 real Drive folders + 2 demo
+  Monday "deal" rows), **554 / 554 project documents linked, 0 mislinks**
+  (was 300), all 750 documents categorized. "923 Rockland" and "927 Rockland"
+  are correctly separate projects.
+
+### State at EOD
+- The foundation is correct and verifiable. Phase 3 scope/anomaly prompts and
+  the Phase 6 frontend stay paused -- the brain now has a sound skeleton to
+  build on.
+
+---
+
 ## 2026-05-18 (later) — Session 3b (part 2b): accept + Monday write-back
 
 **Theme:** The riskiest piece of Phase 3 -- the one path that mutates

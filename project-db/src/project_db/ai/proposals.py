@@ -63,7 +63,16 @@ class ProposalBatch:
     superseded_count: int = 0
     llm_raw_item_count: int = 0
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     skipped_reason: str | None = None  # set when the run was a no-op
+
+    """``errors``   -- items REJECTED (never became a Proposal): bad index,
+                       unparseable dates, end-before-start, etc.
+       ``warnings`` -- items that WERE created but tripped an
+                       anti-hallucination check (no evidence cited, or a
+                       source document the model named that we never
+                       actually supplied).  The reviewer should look
+                       harder at these before accepting."""
 
     @property
     def created_count(self) -> int:
@@ -72,13 +81,16 @@ class ProposalBatch:
     def summary(self) -> str:
         if self.skipped_reason:
             return f"[{self.kind}] {self.project_name}: skipped -- {self.skipped_reason}"
-        return (
+        line = (
             f"[{self.kind}] {self.project_name}: "
             f"{self.created_count} proposal(s) created, "
             f"{self.superseded_count} superseded, "
             f"{len(self.errors)} item(s) rejected as malformed "
             f"(LLM returned {self.llm_raw_item_count})"
         )
+        if self.warnings:
+            line += f", {len(self.warnings)} flagged for review"
+        return line
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +103,9 @@ def generate_timeline_proposals(
     provider: LLMProvider,
     project_id: Any,
     *,
-    token_budget: int = 80_000,
-    max_documents_with_text: int = 15,
-    max_output_tokens: int = 2000,
+    token_budget: int = 150_000,
+    max_documents_with_text: int = 30,
+    max_output_tokens: int = 3000,
 ) -> ProposalBatch:
     """Read a project's contract text + dateless tasks, propose start/end dates.
 
@@ -189,10 +201,27 @@ def _build_timeline_prompt(
         sub = " [subitem]" if t.get("is_subitem") else ""
         lines.append(f"[{i}] {t.get('title', '(untitled)')}{sub}")
 
-    # Document bodies -- the evidence.
+    # Document bodies -- the evidence.  Each document is introduced with
+    # its name, Drive folder path, and type so the model can tell a
+    # signed contract in /Active/<project>/Contracts from a vendor quote
+    # or a permit, and weigh the evidence accordingly.  A truncated body
+    # is labelled as such -- otherwise the model could read the absence
+    # of a date in a cut-off document as evidence there is no date.
     lines.append(f"\n=== DOCUMENT TEXT ({len(ctx.document_texts)} document(s)) ===")
     for d in ctx.document_texts:
-        lines.append(f"\n--- {d['name']} ---")
+        header = f"\n--- DOCUMENT: {d['name']}"
+        if d.get("folder_path"):
+            header += f"  |  Drive folder: {d['folder_path']}"
+        if d.get("mime_type"):
+            header += f"  |  type: {d['mime_type']}"
+        header += " ---"
+        lines.append(header)
+        if d.get("truncated"):
+            lines.append(
+                f"(NOTE: only the first {len(d['text'])} characters of this "
+                f"document are shown -- it continues beyond this point.  "
+                f"Do not treat the absence of later content as meaningful.)"
+            )
         lines.append(d["text"])
 
     context_block = "\n".join(lines)
@@ -210,8 +239,10 @@ def _build_timeline_prompt(
         '      "proposed_start": "YYYY-MM-DD",\n'
         '      "proposed_end": "YYYY-MM-DD",\n'
         '      "confidence": <float 0.0-1.0>,\n'
-        '      "reasoning": "<why these dates, citing the document evidence>",\n'
-        '      "source_document": "<exact document name the evidence came from>"\n'
+        '      "reasoning": "<why these dates -- quote or paraphrase the '
+        'specific document text that is your evidence>",\n'
+        '      "source_document": "<the exact name of ONE document from the '
+        'DOCUMENT TEXT section above that this evidence came from>"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
@@ -260,9 +291,35 @@ def _persist_timeline_items(
         confidence = _clamp_confidence(raw_item.get("confidence"))
         reasoning = str(raw_item.get("reasoning") or "").strip()
         source_doc_name = raw_item.get("source_document")
+
+        # Resolve the cited source to a real document.  An unmatched
+        # citation is the strongest hallucination signal we have: the
+        # model claims evidence from a document we never showed it.
         source_doc_ids: list[str] = []
-        if source_doc_name and source_doc_name in doc_id_by_name:
-            source_doc_ids.append(doc_id_by_name[source_doc_name])
+        matched_id = _match_source_document(source_doc_name, doc_id_by_name)
+        if matched_id:
+            source_doc_ids.append(matched_id)
+
+        # --- anti-hallucination checks: warn, don't reject --------------
+        # The proposal is still created (a human may know the dates are
+        # right) but it is flagged so the reviewer scrutinises it.
+        if not reasoning:
+            batch.warnings.append(
+                f"task_index={idx} ({_safe_title(dateless, idx)}): "
+                f"proposal cites no reasoning -- the prompt requires evidence"
+            )
+        if not source_doc_name:
+            batch.warnings.append(
+                f"task_index={idx} ({_safe_title(dateless, idx)}): "
+                f"proposal names no source document"
+            )
+        elif matched_id is None:
+            batch.warnings.append(
+                f"task_index={idx} ({_safe_title(dateless, idx)}): cited "
+                f"source {source_doc_name!r} is not among the documents "
+                f"shown to the model -- possible hallucination, verify "
+                f"before accepting"
+            )
 
         task = dateless[idx]
         task_cid = task.get("canonical_id")
@@ -325,6 +382,45 @@ def _coerce_item_list(raw: Any) -> list[Any]:
     if isinstance(raw, list):
         return raw
     return []
+
+
+def _safe_title(dateless: list[dict[str, Any]], idx: int) -> str:
+    """Best-effort task title for a warning message.  Never raises."""
+    if 0 <= idx < len(dateless):
+        return str(dateless[idx].get("title") or "untitled")
+    return "?"
+
+
+def _match_source_document(
+    name: Any, doc_id_by_name: dict[str, str]
+) -> str | None:
+    """Resolve an LLM-cited source-document name to a canonical id, or None.
+
+    ``None`` means the cited name matches NO document we supplied -- the
+    caller treats that as a possible hallucination and flags the proposal.
+
+    Matching is deliberately generous because models abbreviate ("the
+    contract" for "Alta Construction Group - contract.pdf"): exact, then
+    case-insensitive exact, then an UNAMBIGUOUS substring match in either
+    direction.  An ambiguous substring (2+ candidate documents) returns
+    None -- we will not guess which document the evidence came from.
+    """
+    if not name or not isinstance(name, str):
+        return None
+    cited = name.strip()
+    if cited in doc_id_by_name:
+        return doc_id_by_name[cited]
+    lowered = {k.lower(): v for k, v in doc_id_by_name.items()}
+    if cited.lower() in lowered:
+        return lowered[cited.lower()]
+    cl = cited.lower()
+    hits = {
+        v for k, v in doc_id_by_name.items()
+        if cl in k.lower() or k.lower() in cl
+    }
+    if len(hits) == 1:
+        return next(iter(hits))
+    return None
 
 
 def _parse_date(value: Any) -> date | None:
