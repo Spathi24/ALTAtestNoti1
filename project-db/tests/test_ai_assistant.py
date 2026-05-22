@@ -8,9 +8,11 @@ import pytest
 from sqlalchemy.orm import Session
 
 from project_db.ai import AiAssistant, REPORT_REGISTRY
+from project_db.ai.providers import LLMProvider, LLMProviderError, MockLLMProvider
 from project_db.ai.views import (
     report_active_projects,
     report_ar_aging,
+    report_database_overview,
     report_deal_pipeline_value,
     report_entity_external_ids,
 )
@@ -130,3 +132,85 @@ class TestAiReportIntegration:
         rows = report_active_projects(session)
         assert len(rows) > 0
         assert all("name" in r for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Database overview snapshot -- the context for the LLM `ask` fallback
+# ---------------------------------------------------------------------------
+
+
+class TestDatabaseOverview:
+    def test_overview_shape_and_totals(self, session: Session, populated_db):
+        ov = report_database_overview(session)
+        for key in (
+            "generated_on", "totals", "projects", "tasks", "deals",
+            "leads", "clients", "invoices", "documents_by_category",
+        ):
+            assert key in ov, f"missing section: {key}"
+        assert ov["totals"]["projects"] == 2
+        assert ov["totals"]["invoices"] == 2
+        names = {p["name"] for p in ov["projects"]}
+        assert "Website Redesign" in names
+        assert "Mobile App" in names
+
+    def test_overview_is_json_serializable(self, session: Session, populated_db):
+        import json
+
+        json.dumps(report_database_overview(session))  # must not raise
+
+    def test_overview_rolls_up_project_counts(
+        self, session: Session, client_factory, project_factory, task_factory
+    ):
+        p = project_factory(name="Counted Job", client=client_factory(name="CC"))
+        task_factory(title="dated", project=p, start_date=date(2026, 6, 1))
+        task_factory(title="dateless", project=p)
+
+        ov = report_database_overview(session)
+        row = next(r for r in ov["projects"] if r["name"] == "Counted Job")
+        assert row["task_count"] == 2
+        assert row["tasks_without_dates"] == 1
+
+    def test_overview_empty_db(self, session: Session):
+        ov = report_database_overview(session)
+        assert ov["totals"]["projects"] == 0
+        assert ov["projects"] == []
+        assert ov["tasks"] == []
+
+
+# ---------------------------------------------------------------------------
+# LLM `ask` fallback -- answer_with_llm (no canned report matched)
+# ---------------------------------------------------------------------------
+
+
+class TestAnswerWithLlm:
+    def test_returns_llm_mode_with_provider_text(
+        self, session: Session, populated_db
+    ):
+        provider = MockLLMProvider(responses=["We have 2 active projects."])
+        resp = AiAssistant(session).answer_with_llm("how many projects?", provider)
+        assert resp.mode == "llm"
+        assert resp.used_report is None
+        assert resp.answer == "We have 2 active projects."
+
+    def test_feeds_db_snapshot_and_question_to_provider(
+        self, session: Session, populated_db
+    ):
+        provider = MockLLMProvider(responses=["ok"])
+        AiAssistant(session).answer_with_llm("what is going on here", provider)
+        assert len(provider.calls) == 1
+        sent = provider.calls[0]["messages"][0].content
+        assert "DATABASE SNAPSHOT" in sent
+        assert "what is going on here" in sent
+        # Real canonical data reached the prompt.
+        assert "Website Redesign" in sent
+
+    def test_provider_error_is_handled_gracefully(self, session: Session):
+        class _Boom(LLMProvider):
+            name = "boom"
+
+            def complete(self, **kwargs):
+                raise LLMProviderError("kaboom")
+
+        resp = AiAssistant(session).answer_with_llm("q", _Boom())
+        assert resp.mode == "llm"
+        assert "kaboom" in resp.answer

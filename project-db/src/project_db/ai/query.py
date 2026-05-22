@@ -15,12 +15,14 @@ docs/ROADMAP.md Phase 3 for the prompts and table designs.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from project_db.ai.providers import LLMMessage, LLMProvider, LLMProviderError
 from project_db.ai.views import REPORT_REGISTRY
 
 
@@ -75,7 +77,7 @@ def extract_project_ref(question: str) -> str | None:
 
 @dataclass
 class AiResponse:
-    mode: str            # "canned" | "sql" | "rag"
+    mode: str            # "canned" | "llm" | "sql" | "rag"
     answer: Any
     used_report: str | None = None
 
@@ -155,4 +157,55 @@ class AiAssistant:
             mode="canned",
             used_report=name,
             answer=REPORT_REGISTRY[name](self.session, **kwargs),
+        )
+
+    def answer_with_llm(self, question: str, provider: LLMProvider) -> AiResponse:
+        """Answer a free-form question with an LLM over the whole-DB snapshot.
+
+        The escalation path when ``ask`` matches no canned report.  ``provider``
+        should be a small/fast model (Haiku tier, via ``get_fast_provider``) --
+        the work is reading and summarizing the canonical database, not the
+        analytical reasoning reserved for proposal generation.  The model sees
+        ONLY the structured snapshot and is told not to invent beyond it.
+        """
+        from project_db.ai.views import report_database_overview
+
+        snapshot = report_database_overview(self.session)
+        system = (
+            "You are ALTA, the operations assistant for a construction "
+            "company.  Answer the user's question using ONLY the JSON "
+            "database snapshot provided -- it is the company's complete "
+            "canonical operational record: projects, tasks, deals, leads, "
+            "clients, invoices, and a document-category breakdown.\n\n"
+            "Rules:\n"
+            "- Use only facts present in the snapshot.  Never invent "
+            "projects, tasks, numbers, or dates.\n"
+            "- If the snapshot does not contain the answer, say so plainly.\n"
+            "- The snapshot has no document/contract TEXT.  If the question "
+            "needs contract content, say so and point to "
+            "`project_db daily <project>`.\n"
+            "- Be concise and specific: cite concrete names and numbers.\n"
+            "- 'generated_on' is today's date; judge overdue / upcoming "
+            "relative to it."
+        )
+        # Instruction at the TAIL: if the snapshot ever overflows the context
+        # window, a front-loaded instruction is the first thing truncated.
+        user = (
+            f"DATABASE SNAPSHOT (JSON):\n{json.dumps(snapshot, default=str)}\n\n"
+            "---\n\n"
+            f"QUESTION: {question}\n\n"
+            "Answer using only the snapshot above."
+        )
+        try:
+            resp = provider.complete(
+                messages=[LLMMessage(role="user", content=user)],
+                system=system,
+                max_tokens=1024,
+            )
+        except LLMProviderError as exc:
+            return AiResponse(
+                mode="llm", used_report=None, answer=f"LLM call failed: {exc}",
+            )
+        return AiResponse(
+            mode="llm", used_report=None, answer=resp.content.strip(),
         )

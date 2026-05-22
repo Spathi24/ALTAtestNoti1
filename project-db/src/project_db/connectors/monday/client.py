@@ -169,18 +169,19 @@ class MondayClient:
         limit: int = PAGE_LIMIT,
         include_subitems: bool = False,
     ) -> list[dict[str, Any]]:
-        """Fetch items on a board with explicit board-column values.
+        """Fetch items on a board with their column values (+ subitems).
 
-        Monday's API can return an incomplete/default set of column_values when
-        the query does not name the columns. We first fetch the board schema,
-        then request column_values(ids: $column_ids) so Status, Timeline,
-        Duration, Priority, etc. are actually included when present on the board.
+        IMPORTANT: Monday OMITS column_values for any column that has no
+        value on a given item -- naming the column ids in ``ids:`` does NOT
+        force empty columns to appear.  On portfolio/mirror boards the real
+        per-task Status / Timeline are NOT stored on the task row at all;
+        they live as mirror columns on a linked portfolio item.  See
+        ``connector.apply_portfolio_mirror_overlay``, which backfills them
+        onto every task AND subitem.
 
-        Note: this method always does a full board pull -- `updated_after`
-        was removed from `items_page` in API-Version 2026-07.  For delta
-        sync see ``list_activity_logs`` plus ``MondayConnector.sync(delta=True)``,
-        which uses the activity log to skip boards with no changes since
-        the last run.
+        This method always does a full board pull -- ``updated_after`` was
+        removed from ``items_page`` in API-Version 2026-07.  For delta sync
+        see ``list_activity_logs`` plus ``MondayConnector.sync(delta=True)``.
         """
         columns = self.list_board_columns(board_id)
         column_ids = [c["id"] for c in columns if c.get("id")]

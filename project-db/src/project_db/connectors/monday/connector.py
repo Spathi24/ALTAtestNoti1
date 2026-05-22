@@ -115,10 +115,16 @@ MIRROR_TITLE_MAP: dict[str, tuple[str, str, str]] = {
 
 
 def _collect_linked_item_ids(items: list[dict[str, Any]]) -> list[str]:
-    """De-duplicated, ordered list of board_relation linked_item_ids."""
+    """De-duplicated, ordered list of board_relation linked_item_ids.
+
+    Recurses into subitems -- on these boards a subitem carries its own
+    board_relation link to the portfolio, and most real tasks ARE subitems,
+    so a top-level-only scan misses the link for the bulk of the board.
+    """
     seen: set[str] = set()
     ordered: list[str] = []
-    for item in items:
+
+    def _scan(item: dict[str, Any]) -> None:
         for cv in item.get("column_values") or []:
             if cv.get("type") not in ("board_relation", "dependency"):
                 continue
@@ -127,6 +133,11 @@ def _collect_linked_item_ids(items: list[dict[str, Any]]) -> list[str]:
                 if sid not in seen:
                     seen.add(sid)
                     ordered.append(sid)
+        for sub in item.get("subitems") or []:
+            _scan(sub)
+
+    for item in items:
+        _scan(item)
     return ordered
 
 
@@ -262,33 +273,51 @@ def apply_portfolio_mirror_overlay(
     if not overlay:
         return items
 
+    def _inject(item: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        """Add synthetic mirror column_values to an item, RECURSING into its
+        subitems.  Most real tasks on these boards are subitems, so a
+        top-level-only pass leaves the bulk of the board unenriched.
+
+        Native column_values always win -- a synthetic value is added only
+        for a column id the row does not already populate.  Returns
+        (item_or_copy, number_of_tasks_enriched).
+        """
+        count = 0
+        result = item
+        extra = overlay.get(str(item.get("id") or "")) or []
+        if extra:
+            existing_cvs = list(item.get("column_values") or [])
+            existing_ids = {cv.get("id") for cv in existing_cvs}
+            additions = [cv for cv in extra if cv.get("id") not in existing_ids]
+            if additions:
+                result = dict(item)
+                result["column_values"] = existing_cvs + additions
+                count += 1
+        subitems = item.get("subitems")
+        if subitems:
+            new_subitems: list[dict[str, Any]] = []
+            for sub in subitems:
+                new_sub, sub_count = _inject(sub)
+                new_subitems.append(new_sub)
+                count += sub_count
+            if result is item:
+                result = dict(item)
+            result["subitems"] = new_subitems
+        return result, count
+
     enriched: list[dict[str, Any]] = []
     injected = 0
     for item in items:
-        task_id = str(item.get("id") or "")
-        extra = overlay.get(task_id) or []
-        if not extra:
-            enriched.append(item)
-            continue
-        existing_cvs = list(item.get("column_values") or [])
-        existing_ids = {cv.get("id") for cv in existing_cvs}
-        # Only inject for ids the row doesn't already populate. Native data
-        # always wins; the overlay is just a backfill.
-        additions = [cv for cv in extra if cv.get("id") not in existing_ids]
-        if not additions:
-            enriched.append(item)
-            continue
-        new_item = dict(item)
-        new_item["column_values"] = existing_cvs + additions
+        new_item, count = _inject(item)
         enriched.append(new_item)
-        injected += 1
+        injected += count
 
     if injected:
         board_label = (board or {}).get("name") or (board or {}).get("id") or "<unknown>"
         logger.info(
-            "Mirror overlay: enriched %d/%d tasks on board %r from %d portfolio item(s)",
+            "Mirror overlay: enriched %d task(s) (items + subitems) on board "
+            "%r from %d portfolio item(s)",
             injected,
-            len(items),
             board_label,
             len(linked_items),
         )

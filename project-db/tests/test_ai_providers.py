@@ -27,6 +27,7 @@ from project_db.ai.providers import (
     MockLLMProvider,
     OpenAICompatibleProvider,
     get_default_provider,
+    get_fast_provider,
 )
 from project_db.ai.providers.base import LLMProvider
 
@@ -340,6 +341,60 @@ class TestGetDefaultProvider:
         monkeypatch.setenv("LLM_PROVIDER", "bogus")
         with pytest.raises(LLMProviderError):
             get_default_provider()
+
+
+class TestGetFastProvider:
+    """get_fast_provider resolves the same backend as get_default_provider
+    but pins Anthropic to a small/fast (Haiku) model -- used by the `ask`
+    LLM fallback so summarization-grade questions don't pay Sonnet prices."""
+
+    def test_explicit_mock(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "mock")
+        assert isinstance(get_fast_provider(), MockLLMProvider)
+
+    def test_falls_back_to_mock_without_anthropic_key(self, monkeypatch):
+        monkeypatch.delenv("LLM_PROVIDER", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        assert isinstance(get_fast_provider(), MockLLMProvider)
+
+    def test_unknown_provider_raises(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "bogus")
+        with pytest.raises(LLMProviderError):
+            get_fast_provider()
+
+    def test_anthropic_pinned_to_haiku(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("ANTHROPIC_MODEL_FAST", raising=False)
+        try:
+            import anthropic  # noqa: F401
+        except ImportError:
+            pytest.skip("anthropic SDK not installed in this env")
+        provider = get_fast_provider()
+        assert isinstance(provider, AnthropicProvider)
+        # The fast provider must NOT be on the Sonnet-tier default.
+        assert "haiku" in provider._default_model.lower()
+
+    def test_anthropic_model_fast_env_override(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("ANTHROPIC_MODEL_FAST", "claude-custom-fast")
+        try:
+            import anthropic  # noqa: F401
+        except ImportError:
+            pytest.skip("anthropic SDK not installed in this env")
+        assert get_fast_provider()._default_model == "claude-custom-fast"
+
+    def test_default_provider_not_dragged_to_fast_model(self, monkeypatch):
+        """Regression: get_default_provider (proposals) must stay Sonnet-tier."""
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        try:
+            import anthropic  # noqa: F401
+        except ImportError:
+            pytest.skip("anthropic SDK not installed in this env")
+        assert "haiku" not in get_default_provider()._default_model.lower()
 
 
 # ---------------------------------------------------------------------------

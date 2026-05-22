@@ -33,6 +33,7 @@ from project_db.ai.views import (
 from project_db.db.models import (
     Client,
     DailyLog,
+    Deal,
     Document,
     DocumentText,
     Invoice,
@@ -41,6 +42,7 @@ from project_db.db.models import (
     Task,
     TaskStatus,
 )
+from project_db.db.models.crm import LeadStage
 from project_db.db.models.work import ProjectStatus
 
 
@@ -290,6 +292,31 @@ class TestMissingDocuments:
         result = report_missing_documents(session)
         for p in result["projects"]:
             assert p["name"] != "923 Rockland"
+
+    def test_empty_crm_deal_placeholder_is_not_flagged(
+        self, session, client_factory
+    ):
+        c = client_factory(name="CRM Client")
+        session.add(
+            Deal(
+                name="Amazon deal",
+                value=Decimal("55000.00"),
+                stage=LeadStage.WON,
+                client_id=c.canonical_id,
+            )
+        )
+        session.add(
+            Project(
+                name="Project - Amazon deal",
+                code="MONDAY-123",
+                status=ProjectStatus.PROPOSED,
+                client_id=c.canonical_id,
+            )
+        )
+        session.commit()
+
+        result = report_missing_documents(session)
+        assert result["missing_count"] == 0
 
     def test_completed_projects_not_in_scope(self, session, client_factory):
         c = client_factory(name="C")

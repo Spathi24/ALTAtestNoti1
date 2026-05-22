@@ -177,11 +177,39 @@ def cmd_ask(args: argparse.Namespace) -> int:
     with session_scope() as s:
         assistant = AiAssistant(s)
         response = assistant.ask(question)
+
+        # No canned report matched -> escalate to the fast (Haiku) LLM, which
+        # reads the whole canonical-DB snapshot and answers in prose.  Canned
+        # reports stay instant + deterministic; only the fall-through spends a
+        # token.
+        if response.used_report is None:
+            from project_db.ai import LLMProviderError, get_fast_provider
+
+            try:
+                provider = get_fast_provider()
+            except LLMProviderError as exc:
+                print("[mode=canned]")
+                print(
+                    "No canned report matched, and no LLM is configured for "
+                    f"free-form questions.\n  ({exc})\n"
+                    "Try:  project_db ask help"
+                )
+                return 0
+            print(
+                f"[asking {provider.name} -- reading the database snapshot...]",
+                file=sys.stderr,
+            )
+            response = assistant.answer_with_llm(question, provider)
+
         print(f"[mode={response.mode}", end="")
         if response.used_report:
             print(f" report={response.used_report}", end="")
         print("]")
-        print(json.dumps(response.answer, indent=2, default=str))
+        # Canned reports return JSON-shaped data; the LLM returns prose.
+        if isinstance(response.answer, str):
+            print(response.answer)
+        else:
+            print(json.dumps(response.answer, indent=2, default=str))
     return 0
 
 
@@ -596,12 +624,159 @@ def cmd_propose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_pending_proposals(rows: list[dict[str, Any]]) -> None:
+    """Render the PENDING proposal list for interactive accept/reject.
+
+    Shown when the user runs `proposals accept` / `reject` with no id, so
+    they can see what is open and copy an id to act on.
+    """
+    print(f"{len(rows)} pending proposal(s):\n")
+    for r in rows:
+        conf = r.get("confidence")
+        conf_s = f"{conf:.2f}" if isinstance(conf, (int, float)) else "?"
+        label = r.get("entity_label") or r.get("entity_type")
+        proj = r.get("project_name") or "?"
+        print(f"  {r['proposal_id']}")
+        print(f"      [{r['field_name']}] {proj} / {label}   confidence={conf_s}")
+        val = r.get("proposed_value")
+        if isinstance(val, dict):
+            start, end = val.get("start_date"), val.get("end_date")
+            if start or end:
+                print(f"      proposed: {start} -> {end}")
+            reasoning = (val.get("reasoning") or "").strip()
+            if reasoning:
+                snippet = reasoning if len(reasoning) <= 140 else reasoning[:137] + "..."
+                print(f"      reasoning: {snippet}")
+        print()
+    print("Decide:")
+    print("  project_db proposals accept <id>            write one change to Monday")
+    print("  project_db proposals accept <id> --dry-run  preview the write")
+    print("  project_db proposals reject <id> [--reason \"...\"]")
+    print("  project_db proposals accept all --yes       accept every pending proposal")
+    print("  project_db proposals reject all --yes       reject every pending proposal")
+
+
+def _accept_all(
+    session: Any, *, decided_by: str, dry_run: bool, assume_yes: bool
+) -> int:
+    """Accept every PENDING proposal.  Returns a process exit code.
+
+    --dry-run previews every write and needs no confirmation.  A real bulk
+    write to Monday is gated behind --yes, because it mutates an external
+    system once per proposal.
+    """
+    from project_db.ai import accept_proposal, list_proposals
+    from project_db.db.models import ProposalStatus
+
+    rows = list_proposals(session, status=ProposalStatus.PENDING)
+    if not rows:
+        print("No pending proposals.")
+        return 0
+
+    if dry_run:
+        print(f"DRY RUN -- previewing {len(rows)} pending proposal(s):\n")
+        for r in rows:
+            result = accept_proposal(session, r["proposal_id"], dry_run=True)
+            if result.get("ok"):
+                print(f"  {r['proposal_id']}  {result['task_title']}")
+                print(
+                    f"      would write ({result['field']}): "
+                    f"{json.dumps(result['would_write'])}"
+                )
+            else:
+                print(f"  {r['proposal_id']}  SKIP -- {result.get('error')}")
+        print("\nNothing was written.  Re-run with --yes to apply.")
+        return 0
+
+    if not assume_yes:
+        print(f"accept all would write {len(rows)} proposal(s) back to Monday:")
+        for r in rows:
+            label = r.get("entity_label") or r.get("entity_type")
+            print(f"  - {r['proposal_id']}  {r.get('project_name') or '?'} / {label}")
+        print("\nRe-run to proceed:  project_db proposals accept all --yes")
+        print("Preview first:      project_db proposals accept all --dry-run")
+        return 1
+
+    # Build the Monday connector ONCE, reuse it for every write.
+    from project_db.connectors.monday.connector import MondayConnector
+
+    org = session.query(Organization).first()
+    if org is None:
+        print("FAIL: no organization. Run init-db first.", file=sys.stderr)
+        return 2
+    try:
+        connector = MondayConnector(session=session, organization_id=org.canonical_id)
+    except Exception as exc:  # noqa: BLE001
+        print(f"FAIL: could not build Monday connector: {exc}", file=sys.stderr)
+        return 2
+
+    accepted = failed = 0
+    for r in rows:
+        result = accept_proposal(
+            session, r["proposal_id"], writeback=connector, decided_by=decided_by,
+        )
+        if result.get("ok"):
+            accepted += 1
+            print(
+                f"  OK    {r['proposal_id']}  {result['task_title']}  "
+                f"-> {json.dumps(result['wrote_to_monday'])}"
+            )
+        else:
+            failed += 1
+            print(f"  FAIL  {r['proposal_id']}  {result.get('error')}")
+    print(f"\naccepted {accepted}, failed {failed} (by {decided_by})")
+    return 0 if failed == 0 else 1
+
+
+def _reject_all(
+    session: Any, *, decided_by: str, reason: str | None, assume_yes: bool
+) -> int:
+    """Reject every PENDING proposal.  Returns a process exit code.
+
+    Reject is pure-DB (no Monday write), but REJECTED is terminal -- so the
+    bulk action is still gated behind --yes.
+    """
+    from project_db.ai import list_proposals, reject_proposal
+    from project_db.db.models import ProposalStatus
+
+    rows = list_proposals(session, status=ProposalStatus.PENDING)
+    if not rows:
+        print("No pending proposals.")
+        return 0
+
+    if not assume_yes:
+        print(f"reject all would reject {len(rows)} pending proposal(s):")
+        for r in rows:
+            label = r.get("entity_label") or r.get("entity_type")
+            print(f"  - {r['proposal_id']}  {r.get('project_name') or '?'} / {label}")
+        print("\nRe-run to proceed:  project_db proposals reject all --yes")
+        return 1
+
+    rejected = failed = 0
+    for r in rows:
+        result = reject_proposal(
+            session, r["proposal_id"], reason=reason, decided_by=decided_by,
+        )
+        if result.get("ok"):
+            rejected += 1
+        else:
+            failed += 1
+            print(f"  FAIL  {r['proposal_id']}  {result.get('error')}")
+    print(f"rejected {rejected}, failed {failed} (by {decided_by})")
+    return 0 if failed == 0 else 1
+
+
 def cmd_proposals(args: argparse.Namespace) -> int:
     """View and decide on LLM proposals: list / show / reject / accept.
 
     `accept` is the only action that mutates an external system -- it
     writes the proposed change back to Monday before flipping the
     proposal status.  Use `accept --dry-run` to preview the write first.
+
+    `accept` / `reject` with NO proposal id print the pending list so the
+    user can choose.  `accept all` / `reject all` act on every pending
+    proposal at once -- both require `--yes` to proceed (a real bulk write
+    to Monday, or a terminal bulk status change).
     """
     import getpass
 
@@ -641,8 +816,26 @@ def cmd_proposals(args: argparse.Namespace) -> int:
             # decided_by: an explicit --by wins, else the OS user, for a
             # real audit trail without needing an auth system.
             decided_by = args.by or getpass.getuser()
+            target = (args.proposal_id or "").strip()
+
+            # Omitted id -> show the pending list so the user can choose.
+            if not target:
+                rows = list_proposals(s, status=ProposalStatus.PENDING)
+                if not rows:
+                    print("No pending proposals.")
+                    return 0
+                _print_pending_proposals(rows)
+                return 0
+
+            # `reject all` -> bulk reject every pending proposal (--yes gated).
+            if target.lower() == "all":
+                return _reject_all(
+                    s, decided_by=decided_by, reason=args.reason,
+                    assume_yes=args.yes,
+                )
+
             result = reject_proposal(
-                s, args.proposal_id, reason=args.reason, decided_by=decided_by,
+                s, target, reason=args.reason, decided_by=decided_by,
             )
             if not result.get("ok"):
                 print(f"FAIL: {result.get('error')}", file=sys.stderr)
@@ -658,10 +851,28 @@ def cmd_proposals(args: argparse.Namespace) -> int:
 
         if args.proposals_action == "accept":
             decided_by = args.by or getpass.getuser()
+            target = (args.proposal_id or "").strip()
+
+            # Omitted id -> show the pending list so the user can choose.
+            if not target:
+                rows = list_proposals(s, status=ProposalStatus.PENDING)
+                if not rows:
+                    print("No pending proposals.")
+                    return 0
+                _print_pending_proposals(rows)
+                return 0
+
+            # `accept all` -> bulk accept.  --dry-run previews every write;
+            # a real bulk write to Monday is gated behind --yes.
+            if target.lower() == "all":
+                return _accept_all(
+                    s, decided_by=decided_by, dry_run=args.dry_run,
+                    assume_yes=args.yes,
+                )
 
             # Dry-run never builds a connector and never touches Monday.
             if args.dry_run:
-                result = accept_proposal(s, args.proposal_id, dry_run=True)
+                result = accept_proposal(s, target, dry_run=True)
                 if not result.get("ok"):
                     print(f"FAIL: {result.get('error')}", file=sys.stderr)
                     return 2
@@ -688,7 +899,7 @@ def cmd_proposals(args: argparse.Namespace) -> int:
                 return 2
 
             result = accept_proposal(
-                s, args.proposal_id, writeback=connector, decided_by=decided_by,
+                s, target, writeback=connector, decided_by=decided_by,
             )
             if not result.get("ok"):
                 print(f"FAIL: {result.get('error')}", file=sys.stderr)
@@ -705,6 +916,145 @@ def cmd_proposals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_daily(args: argparse.Namespace) -> int:
+    """One-screen daily review for a project.
+
+    The default path is intentionally read-only: it summarizes the current DB
+    truth, pending proposals, and unresolved dateless tasks.  The LLM is called
+    only when the user passes ``--propose-timelines`` so token spend remains an
+    explicit decision.
+    """
+    from project_db.ai import (
+        LLMProviderError,
+        generate_timeline_proposals,
+        get_default_provider,
+        list_proposals,
+    )
+    from project_db.ai.views import (
+        _resolve_project,
+        report_budget_vs_contract,
+        report_missing_documents,
+        report_project_overview,
+        report_tasks_without_dates,
+    )
+    from project_db.db.models import ProposalStatus
+
+    project_ref = " ".join(args.project) if isinstance(args.project, list) else args.project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        project = _resolve_project(s, project_ref)
+        if project is None:
+            print(f"FAIL: no project matched {project_ref!r}", file=sys.stderr)
+            return 2
+
+        if args.propose_timelines:
+            try:
+                provider = get_default_provider()
+            except LLMProviderError as exc:
+                print(f"FAIL: {exc}", file=sys.stderr)
+                return 2
+            print(f"[daily] generating timeline proposals with {provider.name}...")
+            try:
+                batch = generate_timeline_proposals(
+                    s,
+                    provider,
+                    project.canonical_id,
+                    token_budget=int(args.token_budget),
+                    max_documents_with_text=int(args.max_docs),
+                    max_output_tokens=int(args.max_output_tokens),
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"FAIL: {exc}", file=sys.stderr)
+                return 1
+            print(batch.summary())
+            for warning in batch.warnings:
+                print(f"  ! {warning}")
+            for error in batch.errors:
+                print(f"  - rejected: {error}")
+            print()
+
+        overview = report_project_overview(s, str(project.canonical_id))
+        dateless = report_tasks_without_dates(s, str(project.canonical_id))
+        budget = report_budget_vs_contract(s, str(project.canonical_id))
+        missing_docs = report_missing_documents(s)
+        pending = [
+            row for row in list_proposals(s, status=ProposalStatus.PENDING)
+            if row.get("project_name") == project.name
+        ]
+
+        stats = overview.get("stats", {})
+        project_info = overview.get("project", {})
+        print("=== DAILY REVIEW ===")
+        print(f"Project: {project_info.get('name')} ({project_info.get('status')})")
+        print(f"ID:      {project_info.get('canonical_id')}")
+        print()
+        print("Snapshot")
+        print(f"  tasks:            {stats.get('task_count', 0)}")
+        print(f"  tasks no dates:   {stats.get('tasks_without_dates', 0)}")
+        print(f"  documents:        {stats.get('document_count', 0)}")
+        print(f"  invoices:         {stats.get('invoice_count', 0)}")
+        print(f"  pending proposals:{len(pending):>4}")
+
+        contract_amount = budget.get("contract_amount_estimate")
+        monday_budget = budget.get("monday_budget")
+        if contract_amount is not None or monday_budget is not None:
+            print()
+            print("Budget / Contract")
+            print(f"  monday budget:    {monday_budget}")
+            print(f"  contract estimate: {contract_amount}")
+            if budget.get("flagged"):
+                print(f"  ! divergence above {budget.get('divergence_threshold')}")
+
+        print()
+        print("Pending Proposals")
+        if pending:
+            for row in pending[: int(args.limit)]:
+                print(
+                    f"  - {row['proposal_id']} [{row['field_name']}] "
+                    f"{row.get('entity_label') or row['entity_type']} "
+                    f"conf={row.get('confidence')}"
+                )
+            if len(pending) > int(args.limit):
+                print(f"  ... {len(pending) - int(args.limit)} more")
+            print("  Review: project_db proposals show <proposal-id>")
+        else:
+            print("  none")
+
+        tasks = dateless.get("tasks", [])
+        print()
+        print("Unresolved Dateless Tasks")
+        if tasks:
+            for task in tasks[: int(args.limit)]:
+                label = task.get("monday_status_label") or task.get("status") or "?"
+                print(f"  - [{label}] {task.get('title')}")
+            if len(tasks) > int(args.limit):
+                print(f"  ... {len(tasks) - int(args.limit)} more")
+            if not args.propose_timelines:
+                print(
+                    "  Generate proposals: "
+                    f"project_db daily \"{project.name}\" --propose-timelines"
+                )
+        else:
+            print("  none")
+
+        missing_ids = {
+            row.get("canonical_id") for row in missing_docs.get("projects", [])
+        }
+        print()
+        print("Trust Checks")
+        if str(project.canonical_id) in missing_ids:
+            print("  ! no contract-shaped document found for this project")
+        else:
+            print("  contract/document check: ok")
+        print("  full audit: project_db doctor")
+
+    return 0
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     """Audit canonical-data integrity (read-only).
 
@@ -714,6 +1064,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     """
     from sqlalchemy import func
 
+    from project_db.ai.views import _crm_deal_for_project_placeholder
     from project_db.identity.matcher import extract_civic_numbers
 
     engine = get_engine()
@@ -748,25 +1099,29 @@ def cmd_doctor(_: argparse.Namespace) -> int:
                 .count()
             )
             ntask = s.query(Task).filter(Task.project_id == p.canonical_id).count()
+            crm_deal = _crm_deal_for_project_placeholder(s, p)
+            is_crm_deal_placeholder = bool(crm_deal and ndoc == 0 and ntask == 0)
             status = getattr(p.status, "value", p.status)
             src = []
             if drive:
                 src.append(f"Drive x{len(drive)}")
             if monday:
                 src.append(f"Monday x{len(monday)}")
+            if is_crm_deal_placeholder:
+                src.append(f"CRM deal: {crm_deal.name}")
             print(f"  {p.name}")
             print(
                 f"      status={status}  docs={ndoc}  tasks={ntask}  "
                 f"source={', '.join(src) or 'NONE'}"
             )
-            if not drive:
+            if not drive and not is_crm_deal_placeholder:
                 flags.append(
                     f"{p.name!r}: no Drive folder -- Monday-only. If it is a "
                     f"real project, give it a folder under 01. PROJECTS/"
                     f"<ACTIVE|INACTIVE|LEADS>/; otherwise it is a stray board "
                     f"to remove in Monday."
                 )
-            if ndoc == 0 and ntask == 0:
+            if ndoc == 0 and ntask == 0 and not is_crm_deal_placeholder:
                 flags.append(f"{p.name!r}: 0 documents and 0 tasks -- empty record")
             for civic in extract_civic_numbers(p.name or ""):
                 civic_seen.setdefault(civic, []).append(p.name)
@@ -1025,6 +1380,42 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("question", nargs="+")
     ask.set_defaults(func=cmd_ask)
 
+    daily = sub.add_parser(
+        "daily",
+        help="One-screen daily project review; read-only unless --propose-timelines",
+    )
+    daily.add_argument("project", nargs="+", help="Project name fragment or UUID")
+    daily.add_argument(
+        "--propose-timelines",
+        action="store_true",
+        help="Call the configured LLM and write PENDING timeline proposals",
+    )
+    daily.add_argument(
+        "--limit",
+        default=10,
+        type=int,
+        help="Max pending proposals / dateless tasks to print (default 10)",
+    )
+    daily.add_argument(
+        "--token-budget",
+        default=20_000,
+        type=int,
+        help="LLM context token budget when --propose-timelines is used",
+    )
+    daily.add_argument(
+        "--max-docs",
+        default=30,
+        type=int,
+        help="Max document bodies for timeline proposal generation",
+    )
+    daily.add_argument(
+        "--max-output-tokens",
+        default=3000,
+        type=int,
+        help="LLM output cap for timeline proposal generation",
+    )
+    daily.set_defaults(func=cmd_daily)
+
     le = sub.add_parser(
         "list-external", help="Show all external IDs for one canonical entity"
     )
@@ -1058,19 +1449,33 @@ def build_parser() -> argparse.ArgumentParser:
     pr = proposals_sub.add_parser(
         "reject", help="Reject a PENDING proposal (status -> REJECTED; no Monday write)",
     )
-    pr.add_argument("proposal_id", help="Proposal canonical UUID")
+    pr.add_argument(
+        "proposal_id", nargs="?",
+        help="Proposal UUID, or 'all'. Omit to list pending proposals.",
+    )
     pr.add_argument("--reason", help="Why it was rejected (stored on the proposal)")
     pr.add_argument("--by", help="Who rejected it (default: OS username)")
+    pr.add_argument(
+        "--yes", action="store_true",
+        help="Required to confirm 'reject all'",
+    )
     pa = proposals_sub.add_parser(
         "accept",
         help="Accept a PENDING proposal -- writes the change back to Monday",
     )
-    pa.add_argument("proposal_id", help="Proposal canonical UUID")
+    pa.add_argument(
+        "proposal_id", nargs="?",
+        help="Proposal UUID, or 'all'. Omit to list pending proposals.",
+    )
     pa.add_argument(
         "--dry-run", action="store_true",
         help="Preview the Monday write without applying it or changing status",
     )
     pa.add_argument("--by", help="Who accepted it (default: OS username)")
+    pa.add_argument(
+        "--yes", action="store_true",
+        help="Required to confirm 'accept all'",
+    )
     proposals.set_defaults(func=cmd_proposals)
 
     lt = sub.add_parser(
@@ -1131,6 +1536,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default stdout to a legacy code page (cp1252) that
+    # mangles the em-dashes / arrows LLM `ask` answers are full of.  Force
+    # UTF-8 so prose output renders correctly; harmless for ASCII output.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)

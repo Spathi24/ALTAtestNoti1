@@ -5,14 +5,23 @@ A unified data layer that pulls live data from all of the company's SaaS tools
 you query across all of them — or have an LLM read your contracts and propose
 corrections to what Monday says is happening.
 
-**v0.3 status:**
+**Current status (2026-05-22):**
 - Phase 1 (Brain foundation): DocumentText sidecar + Proposal table +
   content extractors + Drive reconciliation. **Done.**
-- Phase 2 (Tier-1 deterministic reports): 5 new canned reports wired into
-  `ask`. **Done pending live verification of all 5.**
-- Phase 3 (Tier-2 LLM proposals): next.
+- Phase 2 (Tier-1 deterministic reports): 5 canned reports wired into
+  `ask` and verified against the live DB. **Done.**
+- Phase 2.5 (Foundation correctness): Drive folders now define project
+  identity; documents link by physical folder ancestry; substring matching is
+  gone; `doctor` and `rebuild` exist. **Done, with minor cleanup flags.**
+- Phase 3 (Tier-2 LLM proposals): timeline proposals, list/show, and
+  accept/reject write-back exist. Scope/anomaly prompts and broad proposal
+  quality validation are next.
+- Current live DB snapshot: 21 projects, 750 Drive documents, 554 project
+  documents linked, 153 Monday tasks, 83 tasks without dates, 0 active proposal
+  rows. Deal-derived Google/Amazon placeholders are recognized as CRM deals;
+  the remaining live `doctor` warning is 8 Drive files with no project/category.
 
-**343-test suite.** Day-by-day work log in
+**415-test suite.** Day-by-day work log in
 **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
@@ -73,6 +82,13 @@ Conservative scope rules; soft-delete only per STRATEGY.md.
 ✅ **5 new canned reports** — `project_overview`, `docs_for_project`,
 `tasks_without_dates`, `missing_documents`, `budget_vs_contract`.
 All importable from `project_db.ai.views` for the Phase 3 LLM tool layer.
+✅ **`ask` LLM fallback** — a question that matches no canned report is
+answered by a fast model (Haiku) reading a whole-database snapshot
+(`report_database_overview`). Canned reports stay instant + deterministic;
+only the fall-through spends a token. `propose` keeps the deeper model.
+✅ **Bulk proposal review** — `proposals accept` / `reject` with no id list
+the pending queue so you can choose; `accept all` / `reject all` act on
+every pending proposal at once, both gated behind `--yes`.
 
 ### What's New in v0.2
 
@@ -81,11 +97,9 @@ column cache • Google Drive connector live (750 docs, 300 linked) •
 QuickBooks connector code complete • Drive delta sync via
 `changes.list` cursor.
 
-🟡 Monday sync is full-pull at the moment. `updated_after` on `items_page`
-was removed in API-Version 2026-07, but `Board.activity_logs(from, to, ...)`
-is a viable poll-based delta path that we haven't built yet, and
-`create_webhook` is a scriptable mutation we can use once we have hosting.
-At ~20s full pull on 154 tasks, neither is urgent today.
+✅ Monday delta sync now uses `Board.activity_logs(from, to, ...)` through
+`project_db sync monday --delta`. Webhook receivers are still deferred; the
+blocker is hosting a public HTTPS endpoint, not Monday API capability.
 
 **See [docs/STRATEGY.md](docs/STRATEGY.md) for the strategic direction,
 [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan, and
@@ -174,7 +188,7 @@ project_db extract-content                      # default: every doc missing tex
 project_db extract-content --project <UUID>     # restrict to one project
 project_db extract-content --overwrite          # re-extract everything
 
-# --- Ask (canned reports) ---
+# --- Ask (canned reports + LLM fallback) ---
 project_db ask "what active projects do we have?"
 project_db ask "what deals are in the pipeline?"
 project_db ask "show ar aging"
@@ -185,6 +199,10 @@ project_db ask "tasks without dates for project Rockland"
 project_db ask "which projects are missing documents"
 project_db ask "budget vs contract for project Rockland"
 project_db ask "help"                       # list every routed pattern
+project_db ask "which project looks most at risk?"   # no canned match ->
+                                            # fast (Haiku) LLM reads the DB snapshot
+project_db daily "923 Rockland"             # one-screen PM/developer review
+project_db daily "923 Rockland" --propose-timelines  # optional LLM proposal run
 
 # --- LLM smoke (Phase 3a) ---
 project_db llm-test Rockland                # assemble context + call configured LLM
@@ -197,7 +215,12 @@ project_db propose timelines "923 Rockland"   # LLM proposes dates -> Proposal t
 project_db proposals list                     # all proposals, newest first
 project_db proposals list --status pending    # filter by status
 project_db proposals show <proposal-uuid>     # full detail + source documents
-# (proposals accept/reject land next session -- accept writes back to Monday)
+project_db proposals accept                   # no id -> list pending, pick one
+project_db proposals accept <proposal-uuid> --dry-run  # preview Monday write-back
+project_db proposals accept <proposal-uuid>            # write approved change to Monday
+project_db proposals accept all --yes         # accept every pending proposal
+project_db proposals reject <proposal-uuid> --reason "not supported by contract"
+project_db proposals reject all --yes         # reject every pending proposal
 
 # --- Admin / diagnostic ---
 project_db init-db                          # one-time table create + seed org
@@ -438,12 +461,23 @@ project-db/
 - [x] **Column Cache** — One column-schema fetch per board per run
 - [x] **QuickBooks Connector** — Invoices, estimates, customers (live test pending)
 - [x] **Ripple Effects** — Infrastructure for cross-system updates
-- [ ] **Delta Sync (via `activity_logs`)** — `updated_after` is gone, but `Board.activity_logs(from, to)` is a viable poll-based alternative we haven't built; ~half-session of work
+- [x] **Delta Sync (via `activity_logs`)** — `project_db sync monday --delta`
+  skips boards with no activity since the saved cursor
 
 ### ✅ v0.2.5 — Google Drive live (done)
 
-- [x] **Google Drive Connector** — 750 documents, full metadata, project linking via civic-number match
+- [x] **Google Drive Connector** — 750 documents, full metadata, recursive sync
 - [x] **One consolidated SQLite location** — absolute path in `.env`
+
+### ✅ v0.2.6 — Foundation correctness (done)
+
+- [x] **Drive folder registry** — project folders define canonical Projects
+- [x] **Deterministic document linking** — documents link by physical folder
+  ancestry, not substring name matching
+- [x] **`doctor` / `rebuild`** — audit and re-derive the canonical DB
+- [x] **Deal/project trust cleanup** — Google and Amazon are deals, not
+  construction projects; reports and `doctor` recognize those empty CRM
+  placeholders when matching `deal` rows exist
 
 ### 🧠 v0.3 — The Brain (per [STRATEGY.md](docs/STRATEGY.md))
 
@@ -456,7 +490,7 @@ The current focus. The phased plan lives in
 - [x] `extract-content` CLI — idempotent, project-scoped, with `--overwrite`
 - [x] Drive sync reconciliation — soft-mark vanished files
 
-**Phase 2 — Tier-1 reports (done, pending full live verification)**
+**Phase 2 — Tier-1 reports (done, live verified)**
 - [x] `project_overview`, `docs_for_project`, `tasks_without_dates`,
   `missing_documents`, `budget_vs_contract`
 - [x] Wired into `ask` via keyword + project-ref extraction
@@ -465,17 +499,25 @@ The current focus. The phased plan lives in
 **Phase 3 — Tier-2 LLM proposals (in progress)**
 - [x] Session 3a: `LLMProvider` abstraction (mock + anthropic + openai-compatible) + `assemble_project_context` + `llm-test` smoke CLI + Monday `activity_logs` delta sync
 - [x] Session 3b pt.1: proposal engine + timeline-extraction prompt + `propose` / `proposals list/show` CLI
-- [ ] Session 3b pt.2: `proposals accept/reject` (Monday write-back) + scope & anomaly prompts
+- [x] Session 3b pt.2a: `proposals accept/reject` with Monday write-back
+- [ ] Session 3b pt.2b: scope & anomaly prompts, plus better handling for
+  dateless tasks where the model correctly refuses to invent past dates
 - [ ] Session 3c: fine-tuning corpus exporter + personality config + local-backend swap
 
 **Phase 4 — Approval workflow**
-- [ ] `proposals list / show / accept / reject`
-- [ ] Accept triggers Monday write-back via existing `sync_back`
-- [ ] Auto-supersede on new proposals for the same field
+- [x] `proposals list / show / accept / reject`
+- [x] Accept triggers Monday write-back via existing `sync_back`
+- [x] Auto-supersede on new proposals for the same field
+- [x] Add a daily review command that makes this usable without remembering
+  the whole CLI surface
 
 **Phase 5 — Adoption**
 - [ ] One PM, one project, daily run for two weeks
-- [ ] `project_db daily <project_id>` — sync + extract + propose in one command
+- [x] `project_db daily <project_id>` — read-only project review by default;
+  `--propose-timelines` intentionally spends LLM tokens to create proposals
+- [ ] Minimal local UI for report/proposal review; this can move forward
+  before adoption is complete because the CLI surface is already hard to
+  navigate even for the developer
 - [ ] Decision point at 4-6 weeks: is it being used?
 
 ### 🛑 Deferred (per STRATEGY.md)
@@ -525,6 +567,8 @@ LLM_PROVIDER=mock                 # mock | anthropic | openai-compatible
 
 # Anthropic provider:
 ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929   # "deep" model: propose / analysis
+ANTHROPIC_MODEL_FAST=claude-haiku-4-5        # "fast" model: the `ask` LLM fallback
 
 # OpenAI-compatible provider -- works with Ollama, vLLM, llama.cpp,
 # LM Studio, OpenAI itself.  When the Mac mini ships, point BASE_URL

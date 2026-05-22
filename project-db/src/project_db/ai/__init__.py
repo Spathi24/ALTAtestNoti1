@@ -18,6 +18,7 @@ from project_db.ai.providers import (
     MockLLMProvider,
     OpenAICompatibleProvider,
     get_default_provider,
+    get_fast_provider,
 )
 from project_db.ai.query import AiAssistant, AiResponse, extract_project_ref
 from project_db.ai.views import REPORT_REGISTRY
@@ -41,6 +42,7 @@ __all__ = [
     "extract_project_ref",
     "generate_timeline_proposals",
     "get_default_provider",
+    "get_fast_provider",
     "get_proposal_detail",
     "list_proposals",
     "reject_proposal",

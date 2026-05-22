@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # Bump when the prompt text or output schema changes -- lets us tell
 # which proposals came from which prompt generation.
-TIMELINE_PROMPT_VERSION = "timeline-v1"
+TIMELINE_PROMPT_VERSION = "timeline-v2"
 
 
 @dataclass
@@ -103,17 +103,27 @@ def generate_timeline_proposals(
     provider: LLMProvider,
     project_id: Any,
     *,
-    token_budget: int = 150_000,
+    # Kept well under the Anthropic tier's 50k input-tokens-per-minute
+    # rate limit -- small enough that even a complete_json retry (which
+    # resends the whole prompt) still fits inside one minute's budget.
+    # Raise this when the API tier's rate limit is raised.
+    token_budget: int = 20_000,
     max_documents_with_text: int = 30,
     max_output_tokens: int = 3000,
 ) -> ProposalBatch:
-    """Read a project's contract text + dateless tasks, propose start/end dates.
+    """Propose forward-looking start/end dates for a project's dateless tasks.
+
+    Anchored: the model is given today's date and the project's already-
+    dated tasks (its known schedule), so a proposal is bounded by the
+    project's real window instead of floating free -- which is how a 2022
+    tenant-lease date once landed on a renovation task.
 
     Returns a ``ProposalBatch``.  Proposals are flushed to the session
     but NOT committed -- the caller (CLI) owns the transaction.
 
     A run is a no-op (``skipped_reason`` set) when the project has no
-    tasks missing dates, or no extracted document text to reason from.
+    dateless tasks, or nothing to anchor on (no document text AND no
+    already-dated tasks).
     """
     ctx = assemble_project_context(
         session, project_id,
@@ -128,22 +138,30 @@ def generate_timeline_proposals(
         prompt_version=TIMELINE_PROMPT_VERSION,
     )
 
-    # Tasks with zero date signal -- the ones worth proposing for.
+    # Split tasks: dateless ones are what we propose for; dated ones are
+    # the ANCHOR -- the project's known schedule, fed to the model so a
+    # proposal stays bounded by the project's real window.
     dateless = [
         t for t in ctx.tasks
         if not t.get("start_date") and not t.get("end_date") and not t.get("due_date")
     ]
+    dated = [
+        t for t in ctx.tasks
+        if t.get("start_date") or t.get("end_date") or t.get("due_date")
+    ]
     if not dateless:
         batch.skipped_reason = "no tasks are missing dates"
         return batch
-    if not ctx.document_texts:
+    if not ctx.document_texts and not dated:
         batch.skipped_reason = (
-            "no extracted document text -- nothing to base a timeline on "
-            "(run extract-content for this project's documents first)"
+            "nothing to anchor a timeline on -- no extracted document text "
+            "and no already-dated tasks (run extract-content first, or set "
+            "dates on a few tasks in Monday)"
         )
         return batch
 
-    system, user = _build_timeline_prompt(ctx, dateless)
+    today = date.today()
+    system, user = _build_timeline_prompt(ctx, dateless, dated, today)
 
     try:
         raw = provider.complete_json(
@@ -159,54 +177,87 @@ def generate_timeline_proposals(
     items = _coerce_item_list(raw)
     batch.llm_raw_item_count = len(items)
 
-    _persist_timeline_items(session, batch, items, dateless, ctx)
+    _persist_timeline_items(session, batch, items, dateless, ctx, today)
     return batch
 
 
 def _build_timeline_prompt(
-    ctx: ProjectContext, dateless: list[dict[str, Any]]
+    ctx: ProjectContext,
+    dateless: list[dict[str, Any]],
+    dated: list[dict[str, Any]],
+    today: date,
 ) -> tuple[str, str]:
-    """Construct (system, user) for timeline extraction.
+    """Construct (system, user) for forward-looking timeline proposals.
 
-    Dateless tasks are enumerated with integer indices.  The LLM
-    references those indices in its output -- never a UUID.
+    Dateless tasks are enumerated with integer indices; the LLM references
+    those indices in its output -- never a UUID.
+
+    The prompt is ANCHORED: it shows the model today's date and the
+    project's already-dated tasks (the KNOWN SCHEDULE), so a proposed date
+    is bounded by the project's real window.  Free-floating extraction is
+    how a 2022 tenant-lease term once landed on a renovation task.
     """
     system = (
-        "You are a construction project analyst.  You read a project's "
-        "Monday task list and its contract / scope-of-work documents, and "
-        "you propose start and end dates for tasks that currently have no "
-        "dates.\n\n"
+        "You are a construction project scheduler.  Some of a project's "
+        "Monday tasks have no dates; you propose start and end dates for "
+        "them -- FORWARD-LOOKING schedule dates, not a record of past work.\n\n"
         "Hard rules:\n"
-        "- Propose dates ONLY when the document text gives real evidence "
-        "for them (an explicit date, a sequence, a duration, a phase "
-        "ordering).  Do not guess.\n"
-        "- It is correct and expected to return FEWER proposals than there "
-        "are dateless tasks.  Returning an empty list is a valid answer.\n"
-        "- Every proposal must cite the evidence in its 'reasoning' field.\n"
-        "- proposed_end must be on or after proposed_start.\n"
+        "- ANCHOR every proposed date to the KNOWN SCHEDULE (the tasks that "
+        "already have dates) and to today's date.  A date outside the "
+        "project's real window is wrong.\n"
+        "- Valid evidence is EITHER (a) the task's place in the schedule "
+        "sequence -- a dateless task between two dated tasks can be timed "
+        "from its neighbours -- OR (b) an explicit forward schedule in a "
+        "document (a contract milestone, a scope-of-work start date).\n"
+        "- NOT evidence: the date an invoice was issued, a work report was "
+        "filed, a tenant lease term, or any record of work already DONE.  "
+        "Those are history, not a schedule -- ignore them.\n"
+        "- The evidence must describe the SPECIFIC task you are dating, not "
+        "merely the same category of work.\n"
+        "- Propose ONLY for tasks that are upcoming or in progress.  If a "
+        "task looks already complete, or you have no real anchor for it, do "
+        "NOT propose -- returning fewer proposals, or none, is correct.\n"
+        "- proposed_start and proposed_end must both be on or after today; "
+        "proposed_end on or after proposed_start.\n"
+        "- Every proposal must cite its specific evidence in 'reasoning'.\n"
         "- Output STRICT JSON only.  No prose, no markdown fences."
     )
 
-    # Project header.
     lines: list[str] = []
-    lines.append("=== PROJECT ===")
+    lines.append(f"=== TODAY ===\n{today.isoformat()}")
+
+    lines.append("\n=== PROJECT ===")
     for k in ("name", "code", "status", "start_date", "end_date"):
         v = ctx.project.get(k)
         if v:
             lines.append(f"{k}: {v}")
 
-    # Dateless tasks, enumerated.
-    lines.append("\n=== TASKS MISSING DATES (reference these by index) ===")
+    # Known schedule -- the anchor.  Every proposed date is checked, by the
+    # model and then again by the server, against this window.
+    lines.append(
+        f"\n=== KNOWN SCHEDULE -- tasks that already have dates "
+        f"({len(dated)}) ==="
+    )
+    if dated:
+        for t in dated:
+            start = t.get("start_date") or "?"
+            end = t.get("end_date") or t.get("due_date") or "?"
+            lines.append(f"- {t.get('title', '(untitled)')}: {start} -> {end}")
+    else:
+        lines.append(
+            "(none -- this project has no dated tasks yet.  Rely on explicit "
+            "document schedule statements, and keep every date on or after "
+            "today.)"
+        )
+
+    lines.append("\n=== TASKS NEEDING DATES (reference these by index) ===")
     for i, t in enumerate(dateless):
         sub = " [subitem]" if t.get("is_subitem") else ""
         lines.append(f"[{i}] {t.get('title', '(untitled)')}{sub}")
 
-    # Document bodies -- the evidence.  Each document is introduced with
-    # its name, Drive folder path, and type so the model can tell a
-    # signed contract in /Active/<project>/Contracts from a vendor quote
-    # or a permit, and weigh the evidence accordingly.  A truncated body
-    # is labelled as such -- otherwise the model could read the absence
-    # of a date in a cut-off document as evidence there is no date.
+    # Document bodies -- secondary evidence.  Each is introduced with its
+    # Drive folder path and type so the model can tell a contract from an
+    # invoice or a lease.  A truncated body is labelled as such.
     lines.append(f"\n=== DOCUMENT TEXT ({len(ctx.document_texts)} document(s)) ===")
     for d in ctx.document_texts:
         header = f"\n--- DOCUMENT: {d['name']}"
@@ -229,9 +280,14 @@ def _build_timeline_prompt(
     user = (
         f"{context_block}\n\n"
         "---\n\n"
-        "INSTRUCTION: Using ONLY the document text above, propose start and "
-        "end dates for the tasks listed under 'TASKS MISSING DATES'.  "
-        "Reference each task by its integer index.  Return strict JSON:\n\n"
+        "INSTRUCTION: Propose FORWARD-LOOKING start and end dates for the "
+        "tasks under 'TASKS NEEDING DATES'.  Anchor every date to the KNOWN "
+        "SCHEDULE window and to today's date.  Use only real evidence: a "
+        "task's place in the schedule sequence, or an explicit forward "
+        "schedule in a document.  Ignore invoice dates, work-report dates, "
+        "lease terms, and every record of completed work.  Skip any task "
+        "that is already finished or that you cannot anchor.  Reference each "
+        "task by its integer index.  Return strict JSON:\n\n"
         "{\n"
         '  "proposals": [\n'
         "    {\n"
@@ -239,15 +295,14 @@ def _build_timeline_prompt(
         '      "proposed_start": "YYYY-MM-DD",\n'
         '      "proposed_end": "YYYY-MM-DD",\n'
         '      "confidence": <float 0.0-1.0>,\n'
-        '      "reasoning": "<why these dates -- quote or paraphrase the '
-        'specific document text that is your evidence>",\n'
-        '      "source_document": "<the exact name of ONE document from the '
-        'DOCUMENT TEXT section above that this evidence came from>"\n'
+        '      "reasoning": "<the specific evidence: which dated neighbour '
+        'tasks, or which document and what schedule it states>",\n'
+        '      "source_document": "<exact document name, or empty string if '
+        'the evidence is the schedule sequence rather than a document>"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
-        "If the documents give no basis to date any task, return "
-        '{"proposals": []}.'
+        'If no task can be anchored, return {"proposals": []}.'
     )
     return system, user
 
@@ -258,8 +313,13 @@ def _persist_timeline_items(
     items: list[Any],
     dateless: list[dict[str, Any]],
     ctx: ProjectContext,
+    today: date,
 ) -> None:
-    """Validate each LLM item and turn the good ones into Proposal rows."""
+    """Validate each LLM item and turn the good ones into Proposal rows.
+
+    A timeline entirely in the past is rejected: proposals are
+    forward-looking, so a past end date means the task is already done.
+    """
     # Map document name -> canonical id for source attribution.
     doc_id_by_name = {d["name"]: d["document_id"] for d in ctx.document_texts}
 
@@ -287,6 +347,14 @@ def _persist_timeline_items(
                 f"task_index={idx}: end {end} precedes start {start}"
             )
             continue
+        if end < today:
+            batch.errors.append(
+                f"task_index={idx} ({_safe_title(dateless, idx)}): proposed "
+                f"timeline {start} -> {end} is entirely in the past -- a "
+                f"timeline proposal must be forward-looking (this task "
+                f"looks already complete)"
+            )
+            continue
 
         confidence = _clamp_confidence(raw_item.get("confidence"))
         reasoning = str(raw_item.get("reasoning") or "").strip()
@@ -308,12 +376,10 @@ def _persist_timeline_items(
                 f"task_index={idx} ({_safe_title(dateless, idx)}): "
                 f"proposal cites no reasoning -- the prompt requires evidence"
             )
-        if not source_doc_name:
-            batch.warnings.append(
-                f"task_index={idx} ({_safe_title(dateless, idx)}): "
-                f"proposal names no source document"
-            )
-        elif matched_id is None:
+        # A source document is optional -- a proposal may be anchored to the
+        # schedule sequence instead.  But a source that is NAMED yet matches
+        # nothing we supplied is a hallucination signal.
+        if source_doc_name and matched_id is None:
             batch.warnings.append(
                 f"task_index={idx} ({_safe_title(dateless, idx)}): cited "
                 f"source {source_doc_name!r} is not among the documents "

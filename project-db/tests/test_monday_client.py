@@ -379,6 +379,70 @@ class TestPortfolioMirrorOverlay:
         c = next(t for t in enriched if t["id"] == "TASK_C")
         assert c["column_values"] == []
 
+    def test_overlay_reaches_subitems(self):
+        """Most real tasks on these boards are subitems -- the overlay must
+        enrich them too, and must find the portfolio link even when only the
+        subitem (not its top-level parent) carries the board_relation.
+        """
+        from project_db.connectors.monday.connector import apply_portfolio_mirror_overlay
+
+        client = MagicMock()
+        client.get_items_with_mirror_values.return_value = [
+            {
+                "id": "PORT1",
+                "column_values": [
+                    {
+                        "id": "portfolio_project_progress",
+                        "type": "mirror",
+                        "column": {
+                            "id": "portfolio_project_progress",
+                            "title": "Project Progress",
+                            "type": "mirror",
+                        },
+                        "mirrored_items": [
+                            {
+                                "linked_item": {"id": "SUB1"},
+                                "mirrored_value": {"label": "Working on it"},
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+        # The top-level item carries NO portfolio link -- only its subitem does.
+        tasks = [
+            {
+                "id": "ITEM1",
+                "name": "Stage header (no portfolio link)",
+                "column_values": [],
+                "subitems": [
+                    {
+                        "id": "SUB1",
+                        "name": "Real work task",
+                        "column_values": [
+                            {
+                                "id": "portfolio_relation",
+                                "type": "board_relation",
+                                "linked_item_ids": ["PORT1"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        enriched = apply_portfolio_mirror_overlay(client, tasks)
+
+        # The portfolio link was discovered on the SUBITEM, not the parent.
+        client.get_items_with_mirror_values.assert_called_once_with(["PORT1"])
+
+        # The SUBITEM gained a synthetic project_status from the overlay.
+        sub = enriched[0]["subitems"][0]
+        statuses = [cv for cv in sub["column_values"] if cv["id"] == "project_status"]
+        assert len(statuses) == 1
+        assert statuses[0]["label"] == "Working on it"
+        assert statuses[0]["_source"]["kind"] == "mirror"
+
     def test_apply_overlay_no_links_is_noop(self):
         from project_db.connectors.monday.connector import apply_portfolio_mirror_overlay
 

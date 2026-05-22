@@ -8,6 +8,59 @@ plan for the strategy; if they disagree, STRATEGY.md wins.
 phase N has produced visible value to a PM. Items inside a phase can be
 parallelized.
 
+**Current operating plan (2026-05-22):** the foundation is sound enough to
+resume product work, but only if the next changes reduce PM friction. The
+next sequence is:
+
+1. Clean the trust surface: treat Google/Amazon as deals, not construction
+   projects, and keep those records out of `doctor` project warnings unless
+   they get real Drive project folders.
+2. Make proposal generation less brittle: keep manual proposal commands, but
+   add better pre-filtering and context selection so the model spends tokens
+   only on tasks/documents that can plausibly produce useful future-facing
+   proposals.
+3. Add `project_db daily <project>`: one command for sync, extraction, report
+   summary, proposal generation, and review pointers.
+4. Build scope reconciliation, then anomaly detection. Timeline gaps remain
+   first, but "no proposal" is a valid model answer; the product must surface
+   "still dateless after review" separately from "LLM found a date."
+5. Pull the minimal local UI forward once the daily command has a stable
+   shape. The UI is not decorative; it is necessary because the CLI is already
+   too hard to navigate for daily use.
+
+**Shipped 2026-05-22 (usability slice):** `proposals accept` / `reject` with
+no id now print the pending queue so the user can choose; `accept all` /
+`reject all --yes` decide every pending proposal at once. `ask` routes any
+question that matches no canned report to a fast Haiku model that reads a
+whole-database snapshot (`report_database_overview`) — canned reports stay
+instant and deterministic, and the deep (Sonnet) model stays reserved for
+`propose`.
+
+Small fixes should be accepted only when they serve one of those outcomes:
+trustworthy data, fewer decisions for the user, better proposal quality, or
+clearer review/adoption. Avoid polishing connector breadth, schema elegance,
+or speculative AI features until one PM can use the Monday+Drive loop daily.
+
+**Near-term milestones:**
+
+- **M1: Clean doctor output.** `doctor` should end with no scary warnings for
+  expected CRM-only deals. If Google/Amazon are in the `deal` table with their
+  values/stages/source IDs, they should not appear as failed project records.
+  First implementation slice is done: reports and `doctor` now recognize empty
+  `Project - <deal>` placeholders as CRM deals when matching `Deal` rows exist.
+- **M2: Targeted timeline runs.** Proposal generation should rank dateless
+  tasks by project priority and evidence likelihood, then explain unresolved
+  blanks instead of silently leaving them invisible.
+- **M3: Daily command.** One command should tell the user: what changed, what
+  needs review, what remains unresolved, and which command or UI screen opens
+  the detail. First implementation slice is done: `project_db daily <project>`
+  gives a read-only review by default and only calls the LLM when
+  `--propose-timelines` is passed.
+- **M4: Scope reconciliation.** Once timeline review is understandable, add
+  contract/SOW scope comparison against Monday tasks.
+- **M5: Minimal UI.** Build a local web review surface over existing reports
+  and proposal actions; no new business logic should live in the UI.
+
 ---
 
 ## Phase 0 — Foundation (DONE, do not redo)
@@ -20,11 +73,13 @@ rewrite.
 - [x] Monday connector: full board/item read, column extraction, write-back via `sync_back`
 - [x] Monday mirror-column overlay: pulls task status/timeline from linked portfolio items
 - [x] Google Drive connector: 750 documents, full metadata, recursive walk to depth 20
-- [x] Folder→Project linking via civic-number + substring match (300 of 750 docs linked)
+- [x] Initial folder-to-project linking existed here, but the substring/civic
+      matcher was later replaced by deterministic Drive-folder ancestry in
+      Phase 2.5.
 - [x] Drive delta sync via `changes.list` cursor
 - [x] OAuth Desktop auth flow (`project_db gdrive-auth`)
 - [x] One consolidated SQLite location, absolute path in `.env`
-- [x] Test suite (was 131; grew to 250+ through Phases 1 and 2)
+- [x] Test suite (390 passing as of 2026-05-22)
 
 ---
 
@@ -74,6 +129,11 @@ probabilistic outputs.
 - `docs_for_project` → 18 docs for Rockland with folder_path context
 - `budget_vs_contract` → 5768-5770 St Laurent contracts produced real $ extractions; the report honestly returns `divergence_pct=null` when Monday budget is unset rather than fabricating
 
+**Current live snapshot (2026-05-22):** 83 dateless tasks remain across
+923 Rockland, 1455 Rue St. Mathieu, and 5768 St-Laurent. `missing_documents`
+now flags only the Amazon deal row, which is a deal/project boundary problem
+rather than proof that a real construction project lacks documents.
+
 ---
 
 ## Phase 2.5 — Foundation Correctness (2026-05-21)
@@ -111,8 +171,9 @@ in `doctor`, not be guessed in code.*
 - [x] 387 tests green (substring/civic matching tests replaced with
       deterministic folder-taxonomy + ProjectMatcher tests).
 - [x] **Exit test — PASSED (2026-05-21):** `project_db rebuild --yes` then
-      `project_db doctor`. 21 projects = 19 real Drive folders + 2 demo
-      Monday "deal" rows (flagged for the user to delete in Monday).
+      `project_db doctor`. 21 projects = 19 real Drive folders + 2 Monday
+      deal-derived rows that should be represented as Deals, not trusted as
+      construction Projects.
       **554 / 554 project documents linked, 0 mislinks** (was 300).
       All 750 documents categorized: projects 554 / real_estate 84 /
       intelligence 47 / company 43 / construction 14 / 8 with no folder
@@ -121,9 +182,10 @@ in `doctor`, not be guessed in code.*
       is gone (its Monday portfolio board is skipped by fail-closed
       classification).
 
-**Paused until the foundation is verified clean:** Phase 3 `scope` / `anomaly`
-prompts and the Phase 6 frontend. Building more brain on wrong data is the
-exact loop this phase exists to break.
+**Remaining cleanup:** `doctor` now distinguishes empty CRM deal placeholders
+from real projects missing provenance. The remaining live data hygiene warning
+is 8 Drive documents with no project/category, usually files with no
+`folder_path`.
 
 ---
 
@@ -149,8 +211,8 @@ being set up.  Build provider-agnostic infrastructure FIRST.
 - [x] `assemble_project_context(session, project_id)` — full join,
       configurable token budget, evicts doc bodies oldest-first
 - [x] 41 new tests
-- [ ] ~~Monday `activity_logs(from, to)` delta-sync~~ — moved to start
-      of 3b so 3a stayed model-layer-focused
+- [x] Monday `activity_logs(from, to)` delta-sync — shipped and available
+      through `project_db sync monday --delta`
 
 **Session 3b part 1 — Proposal engine (DONE 2026-05-17)**
 - [x] `generate_timeline_proposals()` — context → LLM → validated `Proposal` rows
@@ -165,6 +227,11 @@ being set up.  Build provider-agnostic infrastructure FIRST.
 **Session 3b part 2 — Approval actions + remaining prompts**
 - [x] CLI: `proposals reject <id> [--reason] [--by]` — pure DB, PENDING-only guard (DONE 2026-05-18)
 - [x] CLI: `proposals accept <id> [--dry-run] [--by]` — Monday write-back via `sync_back`; write-first/flip-second ordering; mirrors dates onto canonical Task (DONE 2026-05-18)
+- [ ] Proposal targeting pass — pre-select the highest-value dateless tasks,
+      attach only likely schedule/source documents, and separately report
+      tasks that remain dateless because the model found no future-facing
+      evidence. Do not pressure the LLM to invent dates or accept dates before
+      today just to fill blanks.
 - [ ] Prompt: scope reconciliation — `{scope_item, in_monday: bool, suggested_task_title, confidence}`
 - [ ] Prompt: anomaly detection — `{anomaly_type, description, severity}`
 - [ ] CLI: `propose scope / anomalies / all <project>`
@@ -181,10 +248,10 @@ being set up.  Build provider-agnostic infrastructure FIRST.
       sound (evidence-cited, honest confidence), but rejection-rate
       tuning over many projects is still owed
 
-**Session 3b note:** prompt *quality* is unvalidated until a real model
-(Claude API / Mac mini) is behind the provider.  The engine is built
-and fully tested against `MockLLMProvider`; quality tuning is a
-deliberate later pass, not a gap.
+**Session 3b note:** "no proposal" is a valid model output when the documents
+do not support a future date. The product gap is not that the model refuses to
+guess; it is that the user needs a clear review list of unresolved dateless
+tasks, source documents considered, and why no proposal was produced.
 
 **Session 3c — Fine-tuning corpus + personality + local backend**
 - [ ] `project_db export-corpus` — DocumentText + Monday data dumped as
@@ -194,13 +261,17 @@ deliberate later pass, not a gap.
 - [ ] `LocalProvider` (OpenAI-compat HTTP) — plugs in when hardware ready;
       single config-line swap to flip from Anthropic → local
 
-**Open design decisions before Session 3a (need user input):**
-1. Provider API shape (recommended: OpenAI Chat Completions)
-2. Structured-output strategy: ask-and-parse retries, `response_format=json_object`,
-   or grammar-constrained decoding via vLLM/llama.cpp
-3. Run Anthropic as the real provider during 3a/3b while hardware is sourced?
-4. Fine-tuning corpus scope: contracts only, or contracts + Monday history
-   + folder structures + civic mappings?
+**Resolved design decisions:**
+1. Provider API shape: OpenAI Chat Completions style internally, with Anthropic
+   and OpenAI-compatible adapters.
+2. Structured-output strategy: ask-and-parse JSON with validation/retry helpers.
+3. Real-provider bridge: Anthropic is usable while local hardware is pending;
+   OpenAI-compatible local backends can swap in by config.
+
+**Remaining design decision:** fine-tuning/export corpus scope. Recommended:
+contracts + Monday task history + folder structures + civic mappings, because
+the model needs ALTA's operational language and project identity conventions,
+not just contract prose.
 
 **Phase 3 exit test:** running `project_db propose all <project_id>` on
 the 923 Rockland project produces at least one timeline proposal and one
@@ -214,17 +285,20 @@ Goal: there is a clean human-in-the-loop pipeline from "LLM proposed X" to
 "X is now reflected in Monday." This is what turns the LLM from a toy into
 operational tooling.
 
-- [ ] CLI: `project_db proposals list [--status pending] [--project <id>]` — table view of open proposals
-- [ ] CLI: `project_db proposals show <proposal_id>` — full proposal detail incl. source document excerpts
-- [ ] CLI: `project_db proposals accept <proposal_id>` — flips status to accepted, triggers Monday write-back via existing `sync_back`
-- [ ] CLI: `project_db proposals reject <proposal_id> [--reason "..."]`
-- [ ] Auto-supersede: if a new proposal lands for the same `(entity_id, field_name)`, mark the old pending one as `superseded`
-- [ ] Audit log: every accept/reject writes to a `ProposalDecision` table (or extend Proposal with `decided_*` columns — already in schema above)
-- [ ] Add tests: accept-flow writes back to Monday (mocked client), reject-flow doesn't, superseded handling, idempotency on double-accept
+- [x] CLI: `project_db proposals list [--status pending]` — table view of open proposals
+- [x] CLI: `project_db proposals show <proposal_id>` — full proposal detail incl. source document excerpts
+- [x] CLI: `project_db proposals accept <proposal_id>` — flips status to accepted, triggers Monday write-back via existing `sync_back`
+- [x] CLI: `project_db proposals reject <proposal_id> [--reason "..."]`
+- [x] Auto-supersede: if a new proposal lands for the same `(entity_id, field_name)`, mark the old pending one as `superseded`
+- [x] Audit data stored on `Proposal` (`decided_at`, `decided_by`, `rejection_reason`); separate `ProposalDecision` table is unnecessary until we need multi-decision history.
+- [x] Tests: accept-flow writes back to Monday (mocked client), reject-flow doesn't, superseded handling, idempotency on double-accept
+- [x] CLI: `proposals accept` / `reject` with no id print the pending queue;
+      `accept all` / `reject all --yes` decide every pending proposal at once
+- [ ] Add project/status filters to proposal listing if the CLI review surface remains noisy.
 
-**Phase 4 exit test:** accept a real timeline proposal on a real project,
-verify the Monday item gets the proposed dates without any manual
-intervention.
+**Phase 4 exit test — PASSED 2026-05-21:** accepted a real timeline proposal
+on a real project and verified Monday received the proposed dates. The ongoing
+work is usability and quality, not the existence of the approval loop.
 
 ---
 
@@ -234,7 +308,15 @@ Goal: get the system into a PM's hands and verify it changes how they
 work. This is where success or failure is determined.
 
 - [ ] Pick one PM, one project. Run the full pipeline daily for two weeks.
-- [ ] `project_db daily <project_id>` — single command that runs sync + content extraction + proposals + prints any new flags
+- [x] `project_db daily <project_id>` — first slice: read-only deterministic
+      review by default, optional `--propose-timelines` to create pending
+      timeline proposals. It distinguishes:
+      - proposed changes awaiting review
+      - dateless tasks where no supported future date was found
+      - project/document trust warnings from `doctor`
+- [ ] Add optional sync/extract steps once the read-only review shape proves
+      useful. Keep them explicit or clearly labeled because they hit live APIs
+      and mutate the local DB.
 - [ ] Optional Slack / email digest of new proposals (only if PM asks for it)
 - [ ] Iterate on prompt quality based on actual rejection rate
 - [ ] Decision point at 4-6 weeks: is it being used? Continue if yes. Stop or pivot if no.
@@ -251,12 +333,13 @@ the people they report to — can SEE what ALTA produces without opening
 a terminal. This is a demo / visibility layer, not a new product
 surface.
 
-**Strategy guardrails (per STRATEGY.md).** This does NOT replace the
-CLI workflow Phase 5 validates, does NOT add a new backend paradigm,
-does NOT touch the schema, and adds no new connectors. It is a
-read-(mostly-)only view over reports and proposals that already exist
-and are already tested. Operating principle #8 ("no new tech") is
-respected: a single thin web framework, nothing more.
+**Strategy guardrails (per STRATEGY.md).** This does NOT add a new backend
+paradigm, touch the schema, or add connectors. It is a read-mostly view over
+reports and proposals that already exist and are already tested. The UI may be
+pulled forward before Phase 5 completes because discoverability is now a real
+adoption blocker: even the developer has trouble remembering the CLI surface.
+Operating principle #8 ("no new tech") is respected: a single thin web
+framework, nothing more.
 
 - [ ] Thin local web app (FastAPI or Flask) serving the existing
       `ai.views` reports — `project_overview`, `docs_for_project`,
@@ -337,7 +420,6 @@ until Phase 5 is in a known-good state.
 - [ ] CompanyCam connector (photos)
 - [ ] QuickBooks live test + invoice sync
 - [ ] Webhook receivers (replaces polling on Monday) — note: `create_webhook` is a scriptable mutation in the live Monday API; the actual blocker is hosting a public HTTPS endpoint
-- [ ] Monday `activity_logs(from, to)`-based delta sync — lightweight, no hosting needed; reasonable to fold into a Phase-3 session
 - [ ] Postgres + Alembic migrations
 - [ ] `pgvector` for semantic document search
 - [ ] Text-to-SQL natural language layer

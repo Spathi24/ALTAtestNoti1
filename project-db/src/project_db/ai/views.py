@@ -32,6 +32,7 @@ from project_db.db.models import (
     ExternalId,
     Invoice,
     InvoiceStatus,
+    Lead,
     LeadStage,
     Project,
     ProjectStatus,
@@ -39,6 +40,7 @@ from project_db.db.models import (
     TaskStatus,
 )
 from project_db.db.models.docs import DocumentText
+from project_db.identity.matcher import normalize_name
 
 
 def _ser(value: Any) -> Any:
@@ -84,6 +86,56 @@ def _resolve_project(session: Session, ref: str) -> Project | None:
         .filter(Project.name.ilike(f"%{ref}%"))
         .first()
     )
+
+
+def _crm_deal_for_project_placeholder(session: Session, project: Project) -> Deal | None:
+    """Return the matching Deal for a CRM-only project placeholder, if any.
+
+    Monday's "Client Projects" board can contain rows named like
+    "Project - Amazon deal". Those are sales-pipeline placeholders, not
+    construction projects, when they have no tasks/docs and a real Deal row
+    exists for "Amazon deal". Reports should not treat them as failed project
+    records.
+    """
+    import re
+
+    name = project.name or ""
+    match = re.match(r"^\s*project\s*-+\s*(.+?)\s*$", name, flags=re.I)
+    if not match:
+        return None
+
+    deal_name = match.group(1)
+    if "deal" not in deal_name.lower():
+        return None
+
+    wanted = normalize_name(deal_name)
+    if not wanted:
+        return None
+
+    for deal in session.query(Deal).all():
+        if normalize_name(deal.name or "") == wanted:
+            return deal
+    return None
+
+
+def _is_crm_deal_placeholder_project(session: Session, project: Project) -> bool:
+    """True when a Project row is really an empty CRM deal placeholder."""
+    if _crm_deal_for_project_placeholder(session, project) is None:
+        return False
+
+    task_count = session.query(Task).filter(Task.project_id == project.canonical_id).count()
+    if task_count:
+        return False
+
+    doc_count = (
+        session.query(Document)
+        .filter(
+            Document.project_id == project.canonical_id,
+            Document.is_trashed.is_(False),
+        )
+        .count()
+    )
+    return doc_count == 0
 
 
 def report_active_projects(session: Session) -> list[dict[str, Any]]:
@@ -374,6 +426,11 @@ def report_missing_documents(session: Session) -> dict[str, Any]:
         .all()
     )
 
+    projects = [
+        p for p in projects
+        if not _is_crm_deal_placeholder_project(session, p)
+    ]
+
     return {
         "missing_count": len(projects),
         "projects": [
@@ -472,6 +529,152 @@ def report_budget_vs_contract(
         "flagged": flagged,
         "per_document": per_doc,
         "note": "Heuristic regex extraction; replaced by LLM in Phase 3.",
+    }
+
+
+def report_database_overview(
+    session: Session, *, max_tasks: int = 600
+) -> dict[str, Any]:
+    """Whole-database canonical snapshot -- the context for the LLM `ask` fallback.
+
+    Every structured operational fact ALTA holds: projects (with rolled-up
+    counts), tasks, deals, leads, clients, invoices, and a document-category
+    breakdown.  Document *text* is deliberately excluded -- it is large, and
+    per-project document reasoning is what `daily` / `propose` are for.
+
+    Collections are capped (``max_tasks``) so the snapshot stays inside a
+    small model's context window.  Pure + JSON-serializable, like every
+    report in this module.
+    """
+    from sqlalchemy import func
+
+    clients = {c.canonical_id: c for c in session.query(Client).all()}
+    projects = session.query(Project).order_by(Project.name).all()
+    all_tasks = session.query(Task).all()
+    invoices = session.query(Invoice).all()
+    deals = session.query(Deal).order_by(Deal.name).all()
+    leads = session.query(Lead).all()
+
+    # Roll up per-project counts -- one pass / one grouped query each, no N+1.
+    tasks_by_project: dict[Any, list[Task]] = {}
+    for t in all_tasks:
+        tasks_by_project.setdefault(t.project_id, []).append(t)
+    docs_by_project: dict[Any, int] = dict(
+        session.query(Document.project_id, func.count(Document.canonical_id))
+        .filter(Document.is_trashed.is_(False))
+        .group_by(Document.project_id)
+        .all()
+    )
+    invoices_by_project: dict[Any, int] = {}
+    for inv in invoices:
+        invoices_by_project[inv.project_id] = (
+            invoices_by_project.get(inv.project_id, 0) + 1
+        )
+
+    project_name_by_id = {p.canonical_id: p.name for p in projects}
+
+    project_rows: list[dict[str, Any]] = []
+    for p in projects:
+        ptasks = tasks_by_project.get(p.canonical_id, [])
+        dateless = sum(
+            1 for t in ptasks
+            if not t.start_date and not t.end_date and not t.due_date
+        )
+        client = clients.get(p.client_id)
+        project_rows.append({
+            "name": p.name,
+            "status": _ser(p.status),
+            "start_date": _ser(p.start_date),
+            "end_date": _ser(p.end_date),
+            "budget_amount": _ser(p.budget_amount),
+            "contract_amount": _ser(p.contract_amount),
+            "client": client.name if client else None,
+            "task_count": len(ptasks),
+            "tasks_without_dates": dateless,
+            "document_count": docs_by_project.get(p.canonical_id, 0),
+            "invoice_count": invoices_by_project.get(p.canonical_id, 0),
+        })
+
+    task_rows = [
+        {
+            "title": t.title,
+            "project": project_name_by_id.get(t.project_id),
+            "status": _ser(t.status),
+            "monday_status_label": t.monday_status_label,
+            "priority": t.priority,
+            "start_date": _ser(t.start_date),
+            "end_date": _ser(t.end_date),
+            "due_date": _ser(t.due_date),
+            "is_subitem": bool(t.is_subitem),
+        }
+        for t in all_tasks[:max_tasks]
+    ]
+
+    deal_rows = [
+        {
+            "name": d.name,
+            "stage": _ser(d.stage),
+            "value": _ser(d.value),
+            "expected_close_date": _ser(d.expected_close_date),
+            "client": clients[d.client_id].name if d.client_id in clients else None,
+        }
+        for d in deals
+    ]
+
+    lead_rows = [
+        {
+            "stage": _ser(ld.stage),
+            "source_channel": ld.source_channel,
+            "estimated_value": _ser(ld.estimated_value),
+            "client": clients[ld.client_id].name if ld.client_id in clients else None,
+        }
+        for ld in leads
+    ]
+
+    invoice_rows = [
+        {
+            "number": inv.number,
+            "amount": _ser(inv.amount),
+            "status": _ser(inv.status),
+            "issue_date": _ser(inv.issue_date),
+            "due_date": _ser(inv.due_date),
+            "project": project_name_by_id.get(inv.project_id),
+        }
+        for inv in invoices
+    ]
+
+    doc_categories = dict(
+        session.query(Document.category, func.count(Document.canonical_id))
+        .filter(Document.is_trashed.is_(False))
+        .group_by(Document.category)
+        .all()
+    )
+    total_docs = (
+        session.query(Document).filter(Document.is_trashed.is_(False)).count()
+    )
+
+    return {
+        "generated_on": date.today().isoformat(),
+        "totals": {
+            "projects": len(projects),
+            "tasks": len(all_tasks),
+            "deals": len(deals),
+            "leads": len(leads),
+            "clients": len(clients),
+            "invoices": len(invoices),
+            "documents": total_docs,
+        },
+        "projects": project_rows,
+        "tasks": task_rows,
+        "tasks_truncated": len(all_tasks) > max_tasks,
+        "deals": deal_rows,
+        "leads": lead_rows,
+        "clients": sorted(c.name for c in clients.values() if c.name),
+        "invoices": invoice_rows,
+        "documents_by_category": {
+            (str(k) if k is not None else "uncategorized"): v
+            for k, v in doc_categories.items()
+        },
     }
 
 

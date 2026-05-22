@@ -340,6 +340,22 @@ class TestGenerateTimelineProposals:
         assert batch.created_count == 1
         assert not batch.warnings
 
+    def test_past_dated_proposal_rejected(self, session, timeline_fixture):
+        """A timeline entirely in the past is rejected -- proposals are
+        forward-looking, so a past end date means the task is already done.
+        This guards the bug where invoice/lease dates produced 2022 'schedules'.
+        """
+        provider = _mock([
+            {"task_index": 0, "proposed_start": "2020-01-01",
+             "proposed_end": "2020-02-01", "confidence": 0.9,
+             "reasoning": "Invoice dated 2020.", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 0
+        assert len(batch.errors) == 1
+        assert "past" in batch.errors[0].lower()
+
     def test_auto_supersede_prior_pending(self, session, timeline_fixture):
         """Second run for the same task supersedes the first proposal.
 
@@ -773,3 +789,33 @@ class TestProposalCLIParsing:
         assert ns.proposals_action == "accept"
         assert ns.dry_run is False
         assert ns.by is None
+
+    def test_proposals_accept_parser_no_id(self):
+        """`proposals accept` with no id is valid -- it lists pending proposals."""
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["proposals", "accept"])
+        assert ns.proposals_action == "accept"
+        assert ns.proposal_id is None
+        assert ns.yes is False
+
+    def test_proposals_accept_all_parser(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["proposals", "accept", "all", "--yes"])
+        assert ns.proposals_action == "accept"
+        assert ns.proposal_id == "all"
+        assert ns.yes is True
+
+    def test_proposals_reject_parser_no_id(self):
+        """`proposals reject` with no id is valid -- it lists pending proposals."""
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["proposals", "reject"])
+        assert ns.proposals_action == "reject"
+        assert ns.proposal_id is None
+        assert ns.yes is False
+
+    def test_proposals_reject_all_parser(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["proposals", "reject", "all", "--yes"])
+        assert ns.proposals_action == "reject"
+        assert ns.proposal_id == "all"
+        assert ns.yes is True
