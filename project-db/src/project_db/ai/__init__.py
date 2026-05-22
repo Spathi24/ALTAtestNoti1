@@ -2,8 +2,10 @@
 from project_db.ai.context import ProjectContext, assemble_project_context
 from project_db.ai.proposals import (
     ProposalBatch,
+    SCOPE_PROMPT_VERSION,
     TIMELINE_PROMPT_VERSION,
     accept_proposal,
+    generate_scope_proposals,
     generate_timeline_proposals,
     get_proposal_detail,
     list_proposals,
@@ -36,10 +38,12 @@ __all__ = [
     "ProjectContext",
     "ProposalBatch",
     "REPORT_REGISTRY",
+    "SCOPE_PROMPT_VERSION",
     "TIMELINE_PROMPT_VERSION",
     "accept_proposal",
     "assemble_project_context",
     "extract_project_ref",
+    "generate_scope_proposals",
     "generate_timeline_proposals",
     "get_default_provider",
     "get_fast_provider",

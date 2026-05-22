@@ -21,7 +21,7 @@ corrections to what Monday says is happening.
   rows. Deal-derived Google/Amazon placeholders are recognized as CRM deals;
   the remaining live `doctor` warning is 8 Drive files with no project/category.
 
-**415-test suite.** Day-by-day work log in
+**422-test suite.** Day-by-day work log in
 **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
@@ -212,6 +212,8 @@ project_db llm-test Rockland --token-budget 8000 --max-docs 1 \
 
 # --- LLM proposals (Phase 3b) ---
 project_db propose timelines "923 Rockland"   # LLM proposes dates -> Proposal table
+project_db propose scope "923 Rockland"       # LLM flags documented scope items
+                                              # with no matching Monday task
 project_db proposals list                     # all proposals, newest first
 project_db proposals list --status pending    # filter by status
 project_db proposals show <proposal-uuid>     # full detail + source documents

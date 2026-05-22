@@ -559,24 +559,31 @@ def cmd_propose(args: argparse.Namespace) -> int:
     """Generate LLM proposals for a project -> Proposal table (PENDING).
 
     `project_db propose timelines <project>` reads the project's contract
-    text + dateless tasks and proposes start/end dates.  Nothing is
-    written to Monday -- proposals wait in the Proposal table for a human
-    to accept/reject via `project_db proposals`.
+    text + dateless tasks and proposes start/end dates.
 
-    `scope` and `anomalies` land in a later session; today only
-    `timelines` is implemented.
+    `project_db propose scope <project>` flags documented scope-of-work
+    items that have no matching Monday task (advisory only).
+
+    Nothing is written to Monday -- proposals wait in the Proposal table
+    for a human to accept/reject via `project_db proposals`.  `anomalies`
+    lands in a later session.
     """
     from project_db.ai import (
         LLMProviderError,
+        generate_scope_proposals,
         generate_timeline_proposals,
         get_default_provider,
     )
     from project_db.ai.views import _resolve_project
 
     kind = args.kind.lower()
-    if kind not in ("timeline", "timelines"):
+    if kind in ("timeline", "timelines"):
+        generator, kind_label = generate_timeline_proposals, "timeline"
+    elif kind in ("scope", "scopes"):
+        generator, kind_label = generate_scope_proposals, "scope"
+    else:
         print(f"FAIL: unknown propose kind {args.kind!r}.", file=sys.stderr)
-        print("Available today: timelines  (scope / anomalies come later)", file=sys.stderr)
+        print("Available: timelines, scope  (anomalies come later)", file=sys.stderr)
         return 2
 
     engine = get_engine()
@@ -597,9 +604,9 @@ def cmd_propose(args: argparse.Namespace) -> int:
 
         print(f"Provider: {provider.name}")
         print(f"Project:  {project.name}  ({project.canonical_id})")
-        print("Generating timeline proposals (this calls the LLM)...")
+        print(f"Generating {kind_label} proposals (this calls the LLM)...")
         try:
-            batch = generate_timeline_proposals(s, provider, project.canonical_id)
+            batch = generator(s, provider, project.canonical_id)
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
@@ -610,8 +617,12 @@ def cmd_propose(args: argparse.Namespace) -> int:
             val = json.loads(p.proposed_value)
             conf = f"{p.confidence:.2f}" if p.confidence is not None else "?"
             print(f"  - {p.canonical_id}")
-            print(f"      task:   {val.get('task_title')}")
-            print(f"      dates:  {val.get('start_date')} -> {val.get('end_date')}")
+            if batch.kind == "scope":
+                print(f"      gap:    {val.get('scope_item')}")
+                print(f"      task:   {val.get('suggested_task_title')}")
+            else:
+                print(f"      task:   {val.get('task_title')}")
+                print(f"      dates:  {val.get('start_date')} -> {val.get('end_date')}")
             print(f"      conf:   {conf}")
         if batch.warnings:
             print("  flagged for review (created, but scrutinise before accepting):")
@@ -1432,7 +1443,7 @@ def build_parser() -> argparse.ArgumentParser:
         "propose",
         help="Generate LLM proposals for a project (writes PENDING Proposal rows)",
     )
-    propose.add_argument("kind", help="What to propose: timelines")
+    propose.add_argument("kind", help="What to propose: timelines | scope")
     propose.add_argument("project", help="Project name fragment or canonical UUID")
     propose.set_defaults(func=cmd_propose)
 

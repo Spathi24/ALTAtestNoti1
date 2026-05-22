@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 # Bump when the prompt text or output schema changes -- lets us tell
 # which proposals came from which prompt generation.
 TIMELINE_PROMPT_VERSION = "timeline-v2"
+SCOPE_PROMPT_VERSION = "scope-v1"
 
 
 @dataclass
@@ -432,18 +433,271 @@ def _persist_timeline_items(
 
 
 # ---------------------------------------------------------------------------
+# Scope reconciliation
+# ---------------------------------------------------------------------------
+
+
+def generate_scope_proposals(
+    session: Session,
+    provider: LLMProvider,
+    project_id: Any,
+    *,
+    token_budget: int = 20_000,
+    max_documents_with_text: int = 30,
+    max_output_tokens: int = 3000,
+) -> ProposalBatch:
+    """Flag scope-of-work items in a project's documents that have no Monday task.
+
+    Reads the project's contract / SOW documents and its current task list,
+    and asks the LLM which committed scope items are not represented by any
+    task.  Each gap becomes an advisory Proposal (entity_type="Project",
+    field_name="scope_gap") for human review -- scope proposals are NOT
+    auto-written back to Monday; the reviewer decides.
+
+    A run is a no-op (``skipped_reason`` set) when the project has no
+    extracted document text to read scope from.
+
+    Proposals are flushed to the session but NOT committed -- the caller
+    owns the transaction.
+    """
+    ctx = assemble_project_context(
+        session, project_id,
+        token_budget=token_budget,
+        max_documents_with_text=max_documents_with_text,
+    )
+    project_name = ctx.project.get("name", "?")
+    batch = ProposalBatch(
+        project_id=str(project_id),
+        project_name=project_name,
+        kind="scope",
+        prompt_version=SCOPE_PROMPT_VERSION,
+    )
+    if not ctx.document_texts:
+        batch.skipped_reason = (
+            "no contract/scope documents with extracted text "
+            "(run extract-content first)"
+        )
+        return batch
+
+    system, user = _build_scope_prompt(ctx)
+    try:
+        raw = provider.complete_json(
+            messages=[LLMMessage(role="user", content=user)],
+            system=system,
+            max_tokens=max_output_tokens,
+        )
+    except LLMProviderError as exc:
+        batch.errors.append(f"LLM call failed: {exc}")
+        batch.skipped_reason = "LLM call failed"
+        return batch
+
+    items = _coerce_item_list(raw, key="scope_gaps")
+    batch.llm_raw_item_count = len(items)
+    _persist_scope_items(session, batch, items, ctx, project_id)
+    return batch
+
+
+def _build_scope_prompt(ctx: ProjectContext) -> tuple[str, str]:
+    """Construct (system, user) for scope-reconciliation proposals.
+
+    The model is shown the project's documents and its current Monday task
+    list, and asked which scope items the documents commit to that no task
+    covers.  Instruction sits at the TAIL (same truncation lesson as the
+    timeline prompt).
+    """
+    system = (
+        "You are a construction project analyst.  You compare a project's "
+        "contract and scope-of-work documents against its current Monday "
+        "task list, and flag scope items the documents commit to that have "
+        "NO corresponding task.\n\n"
+        "Hard rules:\n"
+        "- Flag ONLY scope items explicitly stated in the documents shown.  "
+        "Never invent scope.\n"
+        "- If a current task already covers a scope item, do NOT flag it -- "
+        "even if the wording differs.\n"
+        "- A flag is a genuine GAP: real work the documents require that the "
+        "task list is missing.\n"
+        "- Every flag must cite the specific document and clause/section in "
+        "'reasoning'.\n"
+        "- Returning few flags, or none, is correct when the task list "
+        "already covers the documented scope.\n"
+        "- Output STRICT JSON only.  No prose, no markdown fences."
+    )
+
+    lines: list[str] = []
+    lines.append("=== PROJECT ===")
+    for k in ("name", "code", "status"):
+        v = ctx.project.get(k)
+        if v:
+            lines.append(f"{k}: {v}")
+
+    lines.append(f"\n=== CURRENT MONDAY TASKS ({len(ctx.tasks)}) ===")
+    if ctx.tasks:
+        for t in ctx.tasks:
+            sub = " [subitem]" if t.get("is_subitem") else ""
+            lines.append(f"- {t.get('title', '(untitled)')}{sub}")
+    else:
+        lines.append("(none -- this project has no tasks yet)")
+
+    lines.append(f"\n=== DOCUMENT TEXT ({len(ctx.document_texts)} document(s)) ===")
+    for d in ctx.document_texts:
+        header = f"\n--- DOCUMENT: {d['name']}"
+        if d.get("folder_path"):
+            header += f"  |  Drive folder: {d['folder_path']}"
+        if d.get("mime_type"):
+            header += f"  |  type: {d['mime_type']}"
+        header += " ---"
+        lines.append(header)
+        if d.get("truncated"):
+            lines.append(
+                f"(NOTE: only the first {len(d['text'])} characters of this "
+                f"document are shown -- it continues beyond this point.)"
+            )
+        lines.append(d["text"])
+
+    context_block = "\n".join(lines)
+    user = (
+        f"{context_block}\n\n"
+        "---\n\n"
+        "INSTRUCTION: Compare the scope of work in the documents above "
+        "against the CURRENT MONDAY TASKS.  Identify scope items the "
+        "documents commit to that NO current task covers.  Skip anything a "
+        "task already covers.  Flag only real, documented gaps.  Return "
+        "strict JSON:\n\n"
+        "{\n"
+        '  "scope_gaps": [\n'
+        "    {\n"
+        '      "scope_item": "<the documented scope item, concise>",\n'
+        '      "suggested_task_title": "<a Monday task title that would '
+        'close the gap>",\n'
+        '      "confidence": <float 0.0-1.0>,\n'
+        '      "reasoning": "<which document and clause states this scope, '
+        'and why no current task covers it>",\n'
+        '      "source_document": "<exact document name>"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        'If the task list already covers the documented scope, return '
+        '{"scope_gaps": []}.'
+    )
+    return system, user
+
+
+def _persist_scope_items(
+    session: Session,
+    batch: ProposalBatch,
+    items: list[Any],
+    ctx: ProjectContext,
+    project_id: Any,
+) -> None:
+    """Validate each LLM scope item and turn the good ones into Proposal rows.
+
+    A scope run is a fresh snapshot of what is missing: prior PENDING scope
+    proposals for this project are superseded so the reviewer only ever sees
+    the latest analysis.
+    """
+    try:
+        project_uuid = uuid.UUID(str(project_id))
+    except (ValueError, TypeError):
+        batch.errors.append(f"bad project id {project_id!r}")
+        return
+
+    doc_id_by_name = {d["name"]: d["document_id"] for d in ctx.document_texts}
+    existing_titles = {
+        (t.get("title") or "").strip().lower() for t in ctx.tasks
+    }
+
+    # A scope run replaces the project's prior scope analysis.
+    prior = (
+        session.query(Proposal)
+        .filter_by(
+            entity_type="Project",
+            entity_id=project_uuid,
+            field_name="scope_gap",
+            status=ProposalStatus.PENDING,
+        )
+        .all()
+    )
+    for old in prior:
+        old.status = ProposalStatus.SUPERSEDED
+        batch.superseded_count += 1
+
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            batch.errors.append(f"item is not an object: {raw_item!r}")
+            continue
+
+        scope_item = str(raw_item.get("scope_item") or "").strip()
+        if not scope_item:
+            batch.errors.append("scope item missing 'scope_item' text")
+            continue
+
+        suggested = str(raw_item.get("suggested_task_title") or "").strip()
+        reasoning = str(raw_item.get("reasoning") or "").strip()
+        confidence = _clamp_confidence(raw_item.get("confidence"))
+        source_doc_name = raw_item.get("source_document")
+
+        # An item the model calls a gap but whose suggested task already
+        # exists is not a gap -- reject it rather than create a dup proposal.
+        if suggested and suggested.lower() in existing_titles:
+            batch.errors.append(
+                f"scope item {scope_item!r}: suggested task {suggested!r} "
+                f"already exists on the board -- not a gap"
+            )
+            continue
+
+        source_doc_ids: list[str] = []
+        matched_id = _match_source_document(source_doc_name, doc_id_by_name)
+        if matched_id:
+            source_doc_ids.append(matched_id)
+
+        # --- anti-hallucination checks: warn, don't reject ------------------
+        if not reasoning:
+            batch.warnings.append(
+                f"scope item {scope_item!r}: cites no reasoning -- the "
+                f"prompt requires a document/clause citation"
+            )
+        if source_doc_name and matched_id is None:
+            batch.warnings.append(
+                f"scope item {scope_item!r}: cited source {source_doc_name!r} "
+                f"is not among the documents shown to the model -- possible "
+                f"hallucination, verify before accepting"
+            )
+
+        proposal = Proposal(
+            entity_type="Project",
+            entity_id=project_uuid,
+            field_name="scope_gap",
+            proposed_value=json.dumps({
+                "scope_item": scope_item,
+                "suggested_task_title": suggested,
+                "reasoning": reasoning,
+            }),
+            confidence=confidence,
+            source_doc_ids=json.dumps(source_doc_ids) if source_doc_ids else None,
+            prompt_version=batch.prompt_version,
+            status=ProposalStatus.PENDING,
+        )
+        session.add(proposal)
+        batch.proposals.append(proposal)
+
+    session.flush()
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
 
-def _coerce_item_list(raw: Any) -> list[Any]:
-    """Pull the proposal list out of whatever shape the LLM returned.
+def _coerce_item_list(raw: Any, *, key: str = "proposals") -> list[Any]:
+    """Pull the item list out of whatever shape the LLM returned.
 
-    Accepts ``{"proposals": [...]}`` (the requested shape) or a bare
-    ``[...]`` list (a common LLM deviation).  Anything else -> [].
+    Accepts ``{<key>: [...]}`` (the requested shape) or a bare ``[...]``
+    list (a common LLM deviation).  Anything else -> [].  ``key`` is
+    "proposals" for timelines, "scope_gaps" for scope reconciliation.
     """
     if isinstance(raw, dict):
-        inner = raw.get("proposals")
+        inner = raw.get(key)
         return inner if isinstance(inner, list) else []
     if isinstance(raw, list):
         return raw
@@ -543,6 +797,16 @@ def _enrich_target(session: Session, proposal: Proposal) -> dict[str, Any]:
             )
             if project is not None:
                 info["project_name"] = project.name
+    elif proposal.entity_type == "Project":
+        from project_db.db.models import Project
+        project = (
+            session.query(Project)
+            .filter_by(canonical_id=proposal.entity_id)
+            .one_or_none()
+        )
+        if project is not None:
+            info["entity_label"] = project.name
+            info["project_name"] = project.name
     return info
 
 

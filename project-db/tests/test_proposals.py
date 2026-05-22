@@ -27,6 +27,7 @@ from project_db.ai.proposals import (
     _match_source_document,
     _parse_date,
     accept_proposal,
+    generate_scope_proposals,
     generate_timeline_proposals,
     get_proposal_detail,
     list_proposals,
@@ -91,6 +92,11 @@ def timeline_fixture(session, client_factory):
 def _mock(proposals_json: list[dict]) -> MockLLMProvider:
     """MockLLMProvider that returns a well-formed proposals envelope."""
     return MockLLMProvider(responses=[json.dumps({"proposals": proposals_json})])
+
+
+def _scope_mock(gaps_json: list[dict]) -> MockLLMProvider:
+    """MockLLMProvider that returns a well-formed scope_gaps envelope."""
+    return MockLLMProvider(responses=[json.dumps({"scope_gaps": gaps_json})])
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +410,92 @@ class TestGenerateTimelineProposals:
         assert batch.skipped_reason == "LLM call failed"
         assert batch.created_count == 0
         assert batch.errors
+
+
+# ---------------------------------------------------------------------------
+# generate_scope_proposals
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateScopeProposals:
+    def test_happy_path_creates_scope_proposals(self, session, timeline_fixture):
+        provider = _scope_mock([
+            {"scope_item": "Install fire-rated drywall in stairwell",
+             "suggested_task_title": "Fire-rated drywall - stairwell",
+             "confidence": 0.8, "reasoning": "Contract section 4 requires it.",
+             "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+
+        assert batch.skipped_reason is None
+        assert batch.created_count == 1
+        p = batch.proposals[0]
+        assert p.entity_type == "Project"
+        assert p.entity_id == timeline_fixture.canonical_id
+        assert p.field_name == "scope_gap"
+        assert p.status == ProposalStatus.PENDING
+        val = json.loads(p.proposed_value)
+        assert "fire-rated drywall" in val["scope_item"].lower()
+        assert val["suggested_task_title"] == "Fire-rated drywall - stairwell"
+
+    def test_skips_when_no_document_text(self, session, client_factory):
+        c = client_factory(name="C")
+        p = Project(name="No Docs", code="ND", status=ProjectStatus.ACTIVE,
+                    client_id=c.canonical_id)
+        session.add(p)
+        session.commit()
+        session.add(Task(title="t", status=TaskStatus.TODO,
+                         project_id=p.canonical_id))
+        session.commit()
+
+        batch = generate_scope_proposals(session, _scope_mock([]), p.canonical_id)
+        assert batch.skipped_reason is not None
+        assert "extracted text" in batch.skipped_reason
+        assert batch.created_count == 0
+
+    def test_empty_scope_gaps_is_valid(self, session, timeline_fixture):
+        """{"scope_gaps": []} is a legitimate 'task list already covers it'."""
+        batch = generate_scope_proposals(
+            session, _scope_mock([]), timeline_fixture.canonical_id)
+        assert batch.skipped_reason is None
+        assert batch.created_count == 0
+
+    def test_existing_task_is_not_flagged_as_gap(self, session, timeline_fixture):
+        """A suggested task that already exists on the board is not a gap."""
+        provider = _scope_mock([
+            {"scope_item": "demolition of interior walls",
+             "suggested_task_title": "Demolition",  # already a task in the fixture
+             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 0
+        assert len(batch.errors) == 1
+        assert "already exists" in batch.errors[0]
+
+    def test_malformed_item_recorded_not_raised(self, session, timeline_fixture):
+        provider = MockLLMProvider(
+            responses=[json.dumps({"scope_gaps": ["just a string"]})])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        assert batch.created_count == 0
+        assert len(batch.errors) == 1
+
+    def test_rerun_supersedes_prior_scope_proposals(self, session, timeline_fixture):
+        gap = [{"scope_item": "Roof flashing", "suggested_task_title": "Roof flashing install",
+                "confidence": 0.8, "reasoning": "spec 7", "source_document": "Contract.pdf"}]
+        b1 = generate_scope_proposals(session, _scope_mock(gap), timeline_fixture.canonical_id)
+        session.commit()
+        first_id = b1.proposals[0].canonical_id
+
+        b2 = generate_scope_proposals(session, _scope_mock(gap), timeline_fixture.canonical_id)
+        session.commit()
+        assert b2.superseded_count == 1
+        old = session.query(Proposal).filter_by(canonical_id=first_id).one()
+        assert old.status == ProposalStatus.SUPERSEDED
+        pending = session.query(Proposal).filter_by(
+            field_name="scope_gap", status=ProposalStatus.PENDING).all()
+        assert len(pending) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +825,13 @@ class TestProposalCLIParsing:
         ns = build_parser().parse_args(["propose", "timelines", "Rockland"])
         assert ns.cmd == "propose"
         assert ns.kind == "timelines"
+        assert ns.project == "Rockland"
+
+    def test_propose_scope_parser(self):
+        from project_db.cli import build_parser
+        ns = build_parser().parse_args(["propose", "scope", "Rockland"])
+        assert ns.cmd == "propose"
+        assert ns.kind == "scope"
         assert ns.project == "Rockland"
 
     def test_proposals_list_parser(self):
