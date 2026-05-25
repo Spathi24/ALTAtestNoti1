@@ -1,0 +1,62 @@
+{# decision_idle: PENDING proposal -- no action taken yet.
+
+Self-contained <section id="decision"> so HTMX outerHTML swap replaces
+the whole panel.  This is also the "cancel dry-run" target via
+GET /proposals/{id}/decision.
+
+Variables expected:
+  proposal_id   str
+  field_name    str
+  can_accept    bool          -- mirrors ai.proposals._ACCEPTABLE_FIELDS
+  error         str | None    -- last-action error to surface inline
+#}
+<section id="decision">
+  <h3>4. Decision</h3>
+
+  {% if error %}
+    <article style="background: #f8d7da; border-color: #f5c2c7; color: #842029;">
+      <strong>! Action failed.</strong>
+      <br><small>{{ error }}</small>
+      <br><small><em>Proposal is still PENDING.  You can retry.</em></small>
+    </article>
+  {% endif %}
+
+  <p><small>
+    {% if can_accept %}
+      <strong>Two-step accept:</strong> Preview first; the Monday payload is
+      shown but nothing is written.  Then confirm to actually write.
+    {% else %}
+      <code>{{ field_name }}</code> proposals are <strong>advisory-only</strong>;
+      Accept is disabled (no Monday write-back logic exists for this field).
+      Reject is the only decision the UI can record; act on the suggestion
+      manually if you agree.
+    {% endif %}
+  </small></p>
+
+  <fieldset role="group" style="margin-bottom: 0.5rem">
+    <button type="button"
+            hx-post="/proposals/{{ proposal_id }}/dry-run"
+            hx-target="#decision"
+            hx-swap="outerHTML"
+            {% if not can_accept %}disabled{% endif %}>
+      Preview Monday write (dry-run)
+    </button>
+  </fieldset>
+
+  <details>
+    <summary role="button" class="secondary outline">
+      Reject ...
+    </summary>
+    <form hx-post="/proposals/{{ proposal_id }}/reject"
+          hx-target="#decision"
+          hx-swap="outerHTML"
+          style="margin-top: 0.5rem">
+      <label>
+        Reason (recorded on the proposal)
+        <textarea name="reason" rows="2"
+                  placeholder="e.g. not supported by the contract; dates conflict with permit"></textarea>
+      </label>
+      <button type="submit" class="secondary">Confirm reject</button>
+    </form>
+  </details>
+</section>

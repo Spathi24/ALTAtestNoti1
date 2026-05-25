@@ -9,6 +9,107 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-25 (evening) — Phase 6 / M5 part D: accept / reject in the UI
+
+**Theme:** The riskiest piece of the UI -- the one path that mutates a
+live external system.  Built the same way the CLI accept was built in
+Session 3b: write-back FIRST, status flip second, never the reverse.
+The UI is a thin adapter; the CLI's existing `accept_proposal` /
+`reject_proposal` keep their guarantees.
+
+### Routes added
+- `POST /proposals/{id}/dry-run`  -- preview the Monday payload; no DB
+  change, no API call.  Renders a yellow PREVIEW fragment that is
+  visually distinct from any accepted state (no green pill, no
+  decided_at).
+- `POST /proposals/{id}/accept`   -- write to Monday, flip status to
+  ACCEPTED, mirror dates onto the canonical Task.  HTMX confirm prompt
+  before the click takes effect, so a real Monday write needs two
+  intentional interactions.
+- `POST /proposals/{id}/reject`   -- pure DB.  Inline form takes an
+  optional reason.
+- `GET  /proposals/{id}/decision` -- re-render the decision panel;
+  used as the Cancel target after a dry-run preview.
+
+### Stale-state handling (review #5, load-bearing)
+Every POST re-reads the proposal RIGHT BEFORE delegating.  If the
+status is no longer PENDING (CLI decided it, or another browser tab,
+or a bulk operation), the route returns a `decision_stale` fragment
+explaining what happened and offering a reload link.  No 4xx, no
+silent no-op, no double-write.  Pinned by
+`tests/test_web_phase_d.py::TestAccept::test_accept_already_accepted_returns_stale_no_double_write`,
+which asserts `sync_back.call_count == 0` on a stale POST.
+
+### Dry-run / accept separation (review #6)
+- Dry-run fragment uses yellow PREVIEW banner, "would_write" JSON
+  prettily formatted, explicit "Nothing written yet" copy.
+- Accept fragment uses the decided styling -- green for ACCEPTED,
+  grey for REJECTED, with decided_at / decided_by / payload.  Cannot
+  be confused with a preview.
+- Confirm-accept button carries `hx-confirm` so the browser shows
+  a native confirm dialog before the real Monday write.
+
+### Thin-adapter discipline (review #14)
+The route handlers do FOUR things and nothing else:
+  1. Re-read proposal state (stale guard).
+  2. Build connector via `deps.build_monday_writeback` (test-mockable).
+  3. Delegate to `ai.proposals.accept_proposal` / `reject_proposal`.
+  4. Render one of {idle, dry_run, decided, stale} partials.
+No new business logic.  No proposal transformations.  No silent error
+swallowing -- every backend `{"ok": False, "error": ...}` surfaces
+inline in the idle fragment.
+
+### Decision partials (all swappable via HTMX outerHTML)
+- `_partials/decision_idle.html`    -- PENDING; Accept disabled when
+  `field_name not in _ACCEPTABLE_FIELDS` (currently scope_gap).
+- `_partials/decision_dry_run.html` -- yellow PREVIEW with payload +
+  Confirm + Cancel.
+- `_partials/decision_decided.html` -- ACCEPTED / REJECTED / SUPERSEDED.
+- `_partials/decision_stale.html`   -- yellow warning + reload link.
+
+### Verification
+- **+20 tests** (`tests/test_web_phase_d.py`), **504 / 504 total
+  passing** (+82 across Phases A-D combined).
+- New tests cover: dry-run preview, dry-run does not change DB,
+  scope_gap dry-run refused, accept happy path (mocked Monday,
+  asserts sync_back called once with the right payload, status
+  flipped, task dates mirrored), accept on already-accepted returns
+  stale + `sync_back.call_count == 0`, accept with failing writeback
+  leaves proposal PENDING, accept with raising writeback leaves
+  proposal PENDING, scope_gap accept refused (sync_back never
+  called), reject with reason, reject scope_gap works, reject on
+  already-decided returns stale, GET /decision returns idle when
+  PENDING / decided otherwise, connector-factory raising surfaces
+  inline.
+- Phase A / B forbidden-route tests updated: per-proposal accept /
+  reject / dry-run now legitimately exist and are tested in Phase D;
+  bulk endpoints (`/proposals/accept-all` etc.) remain forbidden.
+- Live smoke: GET on a real PENDING scope_gap proposal renders the
+  idle fragment with Accept disabled + "advisory-only" explanation.
+  POST dry-run AND POST accept on the same scope_gap both render the
+  idle fragment with "Action failed (scope_gap not acceptable)" and
+  leave the proposal PENDING.  No real Monday writes were attempted
+  -- those need explicit user sign-off (per the 2026-05-18 Session
+  3b precedent).
+
+### What is NOT in Phase D
+- No bulk accept / reject in the UI (CLI's `accept all --yes` still
+  works for that).
+- No live Monday accept executed yet -- the code is exercised
+  end-to-end against a mocked connector in tests; one real accept
+  through the UI needs explicit user sign-off, same way the CLI
+  accept did on 2026-05-21.
+
+### State at EOD
+- **504 tests** passing.
+- The full read + decision loop is wired through the UI.  A PM can
+  open a project, read its proposals with the source documents
+  expanded, dry-run a timeline, confirm or reject it -- all from
+  the browser.  Phase E (DB inspector + raw JSON panels) is the
+  last UI slice.
+
+---
+
 ## 2026-05-25 (later) — Phase 6 / M5 parts B+C: read-only browsing
 
 **Theme:** The UI is actually usable now.  Phase A only had the

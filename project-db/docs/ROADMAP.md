@@ -331,21 +331,24 @@ least three times a week. If not, see STRATEGY.md §7.
 
 ## Phase 6 — Minimal UI (read-only window)
 
-**Status (2026-05-25, EOD):** Phases A, B, C landed in one day.  The UI
-is fully navigable read-only:
+**Status (2026-05-25, EOD):** Phases A, B, C, D all landed.  The full
+read + decision loop is in the browser:
   - dashboard with live counts + pending strip (Phase A)
-  - `/projects` list + `/projects/{id}` 5-panel detail (Phase B)
+  - `/projects` list + 5-panel detail (Phase B)
   - `/documents/{id}` metadata + full extracted text (Phase B)
-  - `/proposals` filterable queue + `/proposals/{id}` 5-panel review
-    (Phase C)
+  - `/proposals` filterable queue + 5-panel review (Phase C)
   - `/doctor` audit (Phase B)
+  - **`POST /proposals/{id}/dry-run /accept /reject` -- two-click
+    accept with stale-state guard, thin adapter over the existing
+    `accept_proposal` / `reject_proposal` (Phase D)**
 
-The dashboard's pending strip lands on a full review page now.
-**484 tests** passing (+62 from Phases A-C combined) including
-permission-boundary tests that pin the read-only surface.
+**504 tests** passing (+82 from Phases A-D combined) including
+permission-boundary tests pinning the read-only and mutation surfaces.
+Phase D adds 20 new tests for accept/reject including the load-bearing
+"already-accepted returns stale with `sync_back.call_count == 0`"
+invariant.
 
-Phases D (accept/reject via HTMX) and E (DB inspector + raw JSON
-panels) still ahead.
+Phase E (DB inspector + raw JSON panels) is the last UI slice.
 
 
 

@@ -1,0 +1,50 @@
+{# decision_decided: proposal has been decided (ACCEPTED / REJECTED / SUPERSEDED).
+
+Used both as the inline HTMX response after a successful accept / reject
+AND as the initial render when the page loads on a non-PENDING proposal.
+
+Variables expected:
+  status            str       -- "ACCEPTED" | "REJECTED" | "SUPERSEDED"
+  decided_at        str | None
+  decided_by        str | None
+  rejection_reason  str | None
+  wrote_to_monday   dict | None  -- only for fresh accept; None on REJECTED or page load
+  task_title        str | None
+#}
+<section id="decision">
+  <h3>4. Decision</h3>
+
+  <article style="background:
+    {% if status == 'ACCEPTED' %}#d1e7dd{% elif status == 'REJECTED' %}#e2e3e5{% else %}#f8f9fa{% endif %};
+    border-color:
+    {% if status == 'ACCEPTED' %}#a3cfbb{% elif status == 'REJECTED' %}#b8bcbe{% else %}#dee2e6{% endif %};">
+    <header style="margin-bottom: 0.5rem">
+      <strong>Status:</strong>
+      <span class="pill pill-{{ status|lower }}">{{ status }}</span>
+    </header>
+
+    <table>
+      <tbody>
+        {% if decided_at %}
+        <tr><th scope="row">Decided at</th><td><small>{{ decided_at }}</small></td></tr>
+        {% endif %}
+        {% if decided_by %}
+        <tr><th scope="row">Decided by</th><td>{{ decided_by }}</td></tr>
+        {% endif %}
+        {% if rejection_reason %}
+        <tr><th scope="row">Reason</th><td>{{ rejection_reason }}</td></tr>
+        {% endif %}
+        {% if wrote_to_monday %}
+        <tr>
+          <th scope="row">Wrote to Monday</th>
+          <td>
+            <small>task: {{ task_title }}</small>
+            <pre style="background: #fff; padding: 0.5rem; margin: 0.25rem 0;
+                        font-size: 0.85rem;">{{ wrote_to_monday|tojson(indent=2) }}</pre>
+          </td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </article>
+</section>

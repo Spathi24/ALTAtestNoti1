@@ -51,3 +51,23 @@ def db_path() -> str:
     """Display path for the footer.  Reads PROJECT_DB_URL after .env load."""
     url = os.environ.get("PROJECT_DB_URL", "(unset)")
     return url
+
+
+def build_monday_writeback(session):
+    """Construct a MondayConnector to pass as ``writeback`` to accept_proposal.
+
+    Isolated here so tests can ``monkeypatch.setattr`` this single function
+    instead of patching MondayConnector / the Monday API.  The accept route
+    calls it; nothing else does.
+
+    Raises whatever the connector constructor raises (typically: missing
+    MONDAY_API_TOKEN).  The route catches and surfaces it as an error in
+    the decision_idle fragment.
+    """
+    from project_db.connectors.monday.connector import MondayConnector
+    from project_db.db.models import Organization
+
+    org = session.query(Organization).first()
+    if org is None:
+        raise RuntimeError("no Organization row -- run init-db first")
+    return MondayConnector(session=session, organization_id=org.canonical_id)

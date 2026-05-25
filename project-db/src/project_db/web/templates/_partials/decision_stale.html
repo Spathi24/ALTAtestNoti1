@@ -1,0 +1,32 @@
+{# decision_stale: someone else (CLI, another browser tab) decided this
+   proposal between page load and this POST.
+
+The user's action was REFUSED -- no double-write happened.  We tell them
+clearly and ask them to reload to see the current state.
+
+Variables expected:
+  proposal_id     str
+  current_status  str
+  attempted       str       -- "accept" | "dry-run" | "reject"
+#}
+<section id="decision">
+  <h3>4. Decision &mdash; <em>stale</em></h3>
+
+  <article style="background: #fff3cd; border-color: #f6c343;">
+    <strong>! This proposal is no longer PENDING.</strong>
+    <br>
+    Current status:
+    <span class="pill pill-{{ current_status|lower }}">{{ current_status }}</span>
+    <br>
+    <small>
+      You tried to <strong>{{ attempted }}</strong> it, but another action
+      (perhaps from the CLI or another tab) already decided it.
+      Nothing was changed by your click.
+    </small>
+    <p style="margin-top: 0.5rem">
+      <a href="/proposals/{{ proposal_id }}" role="button" class="secondary outline">
+        Reload to see the current state
+      </a>
+    </p>
+  </article>
+</section>

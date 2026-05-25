@@ -1,24 +1,136 @@
-"""Proposal queue + detail routes.
+"""Proposal queue + detail + decision actions.
 
-Phase B+C ships READ-ONLY.  Accept / reject POST endpoints are deliberately
-absent here -- they land in Phase D as the riskiest piece of the UI.
-A test (`tests/test_web_phase_b.py::TestForbiddenRoutes`) pins this until
-Phase D lands.
+Phase D adds the three mutation endpoints.  Each is a *thin* adapter over
+the existing ``ai.proposals.accept_proposal`` / ``reject_proposal`` -- no
+UI-specific proposal transformations, no silent error swallowing.
+
+Stale-state handling (per the M5 plan review #5): every POST re-reads
+the proposal *before* delegating.  If it's no longer PENDING, the route
+returns the ``decision_stale`` fragment instead of attempting a mutation.
+This is a first-class UI case, not a 4xx.
+
+Dry-run / accept separation (per #6): dry-run renders ``decision_dry_run``
+(yellow PREVIEW banner, no decided styling).  Accept renders
+``decision_decided`` (green/grey, with a real decided_at).  The two are
+visually distinct -- no overlap in color or wording.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from project_db.web import ui_views
+from project_db.ai.proposals import accept_proposal, reject_proposal
+from project_db.db.models import Proposal
+from project_db.db.models.proposals import ProposalStatus
+from project_db.web import deps, ui_views
 from project_db.web.deps import db
 
 
+def _coerce_uuid(value: str):
+    """Local UUID coercer that returns None on garbage (vs raising)."""
+    import uuid
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _fresh_pending_proposal(session: Session, proposal_id: str) -> Proposal | None:
+    """Re-read the proposal RIGHT BEFORE mutation.
+
+    Returns the Proposal row only if it is currently PENDING.  Any other
+    state (including not-found / bad-uuid) -> None, and the caller emits
+    the stale fragment (or a 404 for genuine not-found).
+
+    This is the load-bearing line for review #5: two browsers / a CLI
+    decision between page load and click must not produce a double-write.
+    """
+    pid = _coerce_uuid(proposal_id)
+    if pid is None:
+        return None
+    p = session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+    if p is None:
+        return None
+    if p.status != ProposalStatus.PENDING:
+        return None
+    return p
+
+
+def _render_idle(
+    templates: Jinja2Templates,
+    request: Request,
+    proposal: Proposal,
+    error: str | None = None,
+) -> HTMLResponse:
+    """Render the decision_idle partial for a PENDING proposal."""
+    from project_db.ai.proposals import _ACCEPTABLE_FIELDS  # noqa: PLC2701
+    return templates.TemplateResponse(
+        request,
+        "_partials/decision_idle.html",
+        {
+            "proposal_id": str(proposal.canonical_id),
+            "field_name": proposal.field_name,
+            "can_accept": proposal.field_name in _ACCEPTABLE_FIELDS,
+            "error": error,
+        },
+    )
+
+
+def _render_stale(
+    templates: Jinja2Templates,
+    request: Request,
+    proposal: Proposal,
+    attempted: str,
+) -> HTMLResponse:
+    """Render the decision_stale fragment when a POST hits non-PENDING."""
+    current = (
+        proposal.status.value if hasattr(proposal.status, "value")
+        else str(proposal.status)
+    )
+    return templates.TemplateResponse(
+        request,
+        "_partials/decision_stale.html",
+        {
+            "proposal_id": str(proposal.canonical_id),
+            "current_status": current,
+            "attempted": attempted,
+        },
+    )
+
+
+def _render_decided(
+    templates: Jinja2Templates,
+    request: Request,
+    proposal: Proposal,
+    *,
+    wrote_to_monday: dict | None = None,
+    task_title: str | None = None,
+) -> HTMLResponse:
+    """Render the decision_decided fragment after a successful mutation."""
+    status = (
+        proposal.status.value if hasattr(proposal.status, "value")
+        else str(proposal.status)
+    )
+    return templates.TemplateResponse(
+        request,
+        "_partials/decision_decided.html",
+        {
+            "status": status,
+            "decided_at": proposal.decided_at.isoformat() if proposal.decided_at else None,
+            "decided_by": proposal.decided_by,
+            "rejection_reason": proposal.rejection_reason,
+            "wrote_to_monday": wrote_to_monday,
+            "task_title": task_title,
+        },
+    )
+
+
 def register(router: APIRouter, templates: Jinja2Templates) -> None:
+    # ---------------------------------------------------------------- list
     @router.get("/proposals", response_class=HTMLResponse)
     def proposals_index(
         request: Request,
@@ -31,6 +143,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             request, "proposal_list.html", {"d": data}
         )
 
+    # ---------------------------------------------------------------- detail
     @router.get("/proposals/{proposal_id}", response_class=HTMLResponse)
     def proposal_show(
         proposal_id: str,
@@ -43,3 +156,145 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         return templates.TemplateResponse(
             request, "proposal_detail.html", {"p": detail}
         )
+
+    # ---------------------------------------------------------------- GET decision (cancel + refresh)
+    @router.get("/proposals/{proposal_id}/decision", response_class=HTMLResponse)
+    def proposal_decision_idle(
+        proposal_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Re-render the idle decision panel.  Used by the dry-run Cancel
+        button.  If the proposal has already been decided, returns the
+        decided partial so the page reflects current state."""
+        pid = _coerce_uuid(proposal_id)
+        if pid is None:
+            raise HTTPException(404, "Proposal not found")
+        p = session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+        if p is None:
+            raise HTTPException(404, "Proposal not found")
+        if p.status != ProposalStatus.PENDING:
+            return _render_decided(templates, request, p)
+        return _render_idle(templates, request, p)
+
+    # ---------------------------------------------------------------- POST dry-run
+    @router.post("/proposals/{proposal_id}/dry-run", response_class=HTMLResponse)
+    def proposal_dry_run(
+        proposal_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Preview the Monday write.  No DB change, no API call.
+
+        Thin adapter: calls accept_proposal(dry_run=True) and renders the
+        preview fragment.  All guard failures (bad uuid, not found, not
+        PENDING, scope_gap, unparseable dates) come through as
+        result.error and surface inline.
+        """
+        p = _fresh_pending_proposal(session, proposal_id)
+        if p is None:
+            # Either bad id / not found (404) or already decided (stale).
+            pid = _coerce_uuid(proposal_id)
+            existing = (
+                session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+                if pid else None
+            )
+            if existing is None:
+                raise HTTPException(404, "Proposal not found")
+            return _render_stale(templates, request, existing, attempted="dry-run")
+
+        result = accept_proposal(session, proposal_id, dry_run=True)
+        if not result.get("ok"):
+            return _render_idle(templates, request, p, error=result.get("error"))
+
+        return templates.TemplateResponse(
+            request,
+            "_partials/decision_dry_run.html",
+            {"proposal_id": str(p.canonical_id), "preview": result},
+        )
+
+    # ---------------------------------------------------------------- POST accept
+    @router.post("/proposals/{proposal_id}/accept", response_class=HTMLResponse)
+    def proposal_accept(
+        proposal_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Write the change to Monday, then flip the proposal to ACCEPTED.
+
+        ORDER IS LOAD-BEARING (mirrors ai.proposals.accept_proposal):
+        Monday write FIRST, status flip second.  A failed write leaves the
+        proposal PENDING and we return the idle fragment with the error.
+        """
+        p = _fresh_pending_proposal(session, proposal_id)
+        if p is None:
+            pid = _coerce_uuid(proposal_id)
+            existing = (
+                session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+                if pid else None
+            )
+            if existing is None:
+                raise HTTPException(404, "Proposal not found")
+            return _render_stale(templates, request, existing, attempted="accept")
+
+        # Build the Monday connector at request time.  Tests monkeypatch
+        # deps.build_monday_writeback to inject a fake.
+        try:
+            writeback = deps.build_monday_writeback(session)
+        except Exception as exc:  # noqa: BLE001
+            return _render_idle(
+                templates, request, p,
+                error=f"could not build Monday connector: {exc}",
+            )
+
+        decided_by = "ui:" + (request.client.host if request.client else "local")
+        result = accept_proposal(
+            session, proposal_id,
+            writeback=writeback,
+            dry_run=False,
+            decided_by=decided_by,
+        )
+        if not result.get("ok"):
+            # accept_proposal already guarantees nothing was committed on
+            # failure.  Surface the error inline; proposal stays PENDING.
+            return _render_idle(templates, request, p, error=result.get("error"))
+
+        # Re-read to get the freshly-flipped status, decided_at, etc.
+        session.refresh(p)
+        return _render_decided(
+            templates, request, p,
+            wrote_to_monday=result.get("wrote_to_monday"),
+            task_title=result.get("task_title"),
+        )
+
+    # ---------------------------------------------------------------- POST reject
+    @router.post("/proposals/{proposal_id}/reject", response_class=HTMLResponse)
+    def proposal_reject(
+        proposal_id: str,
+        request: Request,
+        reason: str = Form(default=""),
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Flip status to REJECTED.  Pure DB; no external system touched."""
+        p = _fresh_pending_proposal(session, proposal_id)
+        if p is None:
+            pid = _coerce_uuid(proposal_id)
+            existing = (
+                session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+                if pid else None
+            )
+            if existing is None:
+                raise HTTPException(404, "Proposal not found")
+            return _render_stale(templates, request, existing, attempted="reject")
+
+        decided_by = "ui:" + (request.client.host if request.client else "local")
+        result = reject_proposal(
+            session, proposal_id,
+            reason=(reason or None),
+            decided_by=decided_by,
+        )
+        if not result.get("ok"):
+            return _render_idle(templates, request, p, error=result.get("error"))
+
+        session.refresh(p)
+        return _render_decided(templates, request, p)

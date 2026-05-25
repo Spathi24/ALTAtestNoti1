@@ -106,38 +106,48 @@
   {% endif %}
 </section>
 
-<!-- ============================ DECISION ============================ -->
-<section>
-  <h3>4. Decision</h3>
-  {% if p.status == "PENDING" %}
-    <article style="background: #f8f9fa;">
-      <p><strong>Phase D will add Accept / Reject buttons here.</strong>
-         Today, use the CLI:</p>
-      <pre style="background: #fff; padding: 0.5rem;">project_db proposals show {{ p.proposal_id }}
-project_db proposals accept {{ p.proposal_id }} --dry-run
-project_db proposals accept {{ p.proposal_id }}
-project_db proposals reject {{ p.proposal_id }} --reason "..."</pre>
-      {% if not p.can_accept %}
-        <p><small><em>Note: this proposal's field
-          (<code>{{ p.field_name }}</code>) is advisory-only.
-          <code>accept</code> will refuse it; only
-          <code>reject</code> applies.</em></small></p>
-      {% endif %}
+<!-- ============================ DECISION ============================
+The whole #decision section is HTMX-swappable.  Initial server render
+picks the partial that matches current status.  POSTs to /dry-run /accept
+/reject swap this section in place via hx-target="#decision".
+============================================================ -->
+{% if p.status == "PENDING" %}
+  {% with proposal_id=p.proposal_id,
+          field_name=p.field_name,
+          can_accept=p.can_accept,
+          error=None %}
+    {% include "_partials/decision_idle.html" %}
+  {% endwith %}
+{% else %}
+  {# Initial render for an already-decided proposal.
+     wrote_to_monday is not available from get_proposal_detail (only the
+     freshly-returned accept call carries it), so we omit that row. #}
+  <section id="decision">
+    <h3>4. Decision</h3>
+    <article style="background:
+      {% if p.status == 'ACCEPTED' %}#d1e7dd{% elif p.status == 'REJECTED' %}#e2e3e5{% else %}#f8f9fa{% endif %};
+      border-color:
+      {% if p.status == 'ACCEPTED' %}#a3cfbb{% elif p.status == 'REJECTED' %}#b8bcbe{% else %}#dee2e6{% endif %};">
+      <header style="margin-bottom: 0.5rem">
+        <strong>Status:</strong>
+        <span class="pill pill-{{ p.status|lower }}">{{ p.status }}</span>
+      </header>
+      <table>
+        <tbody>
+          {% if p.decided_at %}
+          <tr><th scope="row">Decided at</th><td><small>{{ p.decided_at }}</small></td></tr>
+          {% endif %}
+          {% if p.decided_by %}
+          <tr><th scope="row">Decided by</th><td>{{ p.decided_by }}</td></tr>
+          {% endif %}
+          {% if p.rejection_reason %}
+          <tr><th scope="row">Reason</th><td>{{ p.rejection_reason }}</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
     </article>
-  {% else %}
-    <table>
-      <tbody>
-        <tr><th scope="row">Status</th>
-            <td><span class="pill pill-{{ p.status|lower }}">{{ p.status }}</span></td></tr>
-        <tr><th scope="row">Decided at</th><td>{{ p.decided_at or "-" }}</td></tr>
-        <tr><th scope="row">Decided by</th><td>{{ p.decided_by or "-" }}</td></tr>
-        {% if p.rejection_reason %}
-        <tr><th scope="row">Rejection reason</th><td>{{ p.rejection_reason }}</td></tr>
-        {% endif %}
-      </tbody>
-    </table>
-  {% endif %}
-</section>
+  </section>
+{% endif %}
 
 <!-- ============================ SUPERSEDE CHAIN ============================ -->
 <section>

@@ -198,17 +198,24 @@ class TestProjectDetail:
         resp = client.get("/projects/not-a-uuid")
         assert resp.status_code == 404
 
-    def test_no_accept_button_in_phase_b(self, client, world):
-        """Mutation UI lands in Phase D.  Until then the proposals panel
-        on the project detail must NOT render an accept/reject button."""
+    def test_no_accept_button_on_project_detail_in_any_phase(self, client, world):
+        """The project-detail page lists proposals as Review links, never
+        as inline accept/reject buttons.  Mutation UI lives on the
+        proposal detail page; this is intentional, so a PM doesn't
+        click Accept without seeing the citations.
+
+        Phase D adds accept/reject on /proposals/{id}.  This test pins
+        that they do NOT bleed into the project page."""
         pid = str(world["project"].canonical_id)
         resp = client.get(f"/projects/{pid}")
         assert resp.status_code == 200
         body = resp.text.lower()
-        # 'Review' link to the proposal is fine; <button>Accept</button>
-        # would be the smell.
+        # 'Review' link to the proposal is fine; an inline Accept button
+        # right on the project page would be the smell.
         assert ">accept<" not in body
-        assert ">reject<" not in body
+        # 'reject' as a word may appear in proposal status text; only flag
+        # an actual button.
+        assert "<button" not in body or "accept" not in body.split("<button", 1)[1].split("</button>", 1)[0].lower()
 
 
 # ===========================================================================
@@ -284,8 +291,10 @@ class TestProposalDetail:
         assert "PENDING" in body
         assert "Final SOW.pdf" in body  # source document listed
         assert "2026-07-01" in body  # proposed start date
-        # Phase B+C is read-only -- the Accept button must not exist yet
-        assert "Phase D will add Accept" in body
+        # Phase D landed: the idle decision fragment is rendered inline.
+        # The Phase-B placeholder text is gone.
+        assert "Preview Monday write" in body
+        assert "Phase D will add Accept" not in body
 
     def test_404_unknown(self, client, world):
         resp = client.get("/proposals/00000000-0000-0000-0000-000000000000")
@@ -390,22 +399,27 @@ class TestServiceFunctions:
 
 
 # ===========================================================================
-# Phase-D forbidden surface
+# Routes that should still NOT exist after Phase D
+#
+# Phase D added per-proposal /accept /reject /dry-run.  These are tested
+# in test_web_phase_d.py.  Bulk endpoints + cross-entity edits are still
+# out of scope.
 # ===========================================================================
 
 
-class TestPhaseDForbidden:
-    """Accept / reject mutation endpoints belong to Phase D.  They must
-    NOT exist in Phase B+C."""
+class TestStillForbiddenAfterPhaseD:
+    """Bulk-accept / bulk-reject and direct entity edits are NOT in v1."""
 
     @pytest.mark.parametrize("path", [
-        "/proposals/00000000-0000-0000-0000-000000000000/accept",
-        "/proposals/00000000-0000-0000-0000-000000000000/reject",
-        "/proposals/00000000-0000-0000-0000-000000000000/dry-run",
         "/proposals/accept-all",
         "/proposals/reject-all",
+        "/proposals/all/accept",
+        "/proposals/all/reject",
+        # Per-proposal mutations that were never planned:
+        "/proposals/00000000-0000-0000-0000-000000000000/delete",
+        "/proposals/00000000-0000-0000-0000-000000000000/edit",
     ])
-    def test_no_mutation_routes(self, client, path):
+    def test_no_bulk_or_edit_routes(self, client, path):
         # GET
         assert client.get(path).status_code in (404, 405)
         # POST
