@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ALTA{% endblock %} - project_db</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <ul>
+        <li><strong>ALTA</strong></li>
+      </ul>
+      <ul>
+        <li><a href="/">Dashboard</a></li>
+        <li><a href="/projects">Projects</a></li>
+        <li><a href="/proposals">Proposals</a></li>
+        <li><a href="/doctor">Doctor</a></li>
+        <li><a href="/db">DB</a></li>
+        <li><a href="/docs">/docs</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container">
+    <hr>
+    <small>
+      project_db UI &middot;
+      git <code>{{ git_sha() }}</code> &middot;
+      db <code>{{ db_path() }}</code>
+    </small>
+  </footer>
+</body>
+</html>

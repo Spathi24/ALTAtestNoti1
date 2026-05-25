@@ -9,6 +9,68 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-25 — Phase 6 / M5 part A: local web UI skeleton
+
+**Theme:** Scope reconciliation output across 923 Rockland, 1455 St.
+Mathieu, and 5768 St-Laurent was inspected (19 grounded gaps total, with
+the hallucination guard correctly firing on 2 unsupported citations in
+the 5768 run), and judged trustworthy enough to move M4 to "ongoing PM
+review" and start M5 (local web UI).
+
+Phase A is the first of five planned UI slices: skeleton + dashboard.
+
+### What landed
+- New `[ui]` extra in `pyproject.toml`: `fastapi`, `uvicorn[standard]`,
+  `jinja2`, `python-multipart` (mirrored into `[dev]` so tests run
+  without an extra install step).
+- New `project_db.web` package:
+  - `app.py` — FastAPI factory; localhost-only by construction (no CORS
+    middleware, no `--host` flag).
+  - `deps.py` — `db()` Session dependency over the existing
+    `session_scope`; `git_sha()` and `db_path()` helpers used by the
+    footer.  `git_sha` falls back to `"unknown"` outside a git checkout
+    instead of crashing startup.
+  - `ui_views.py` — service module.  All derived dashboard numbers are
+    computed here, never in templates / routes, so the "no new business
+    logic in the UI" rule is enforced by file boundaries.
+- Templates: `base.html` (Pico.css + HTMX from CDN, nav, footer with
+  git SHA + DB path) and `dashboard.html` (counts panels + pending
+  proposals strip).
+- `static/app.css` with the status-pill conventions used by later phases.
+- CLI: `project_db serve [--port 8000]` binds hard to `127.0.0.1`.
+  No `--host` flag.  Graceful error if the `[ui]` extra is not installed.
+
+### Verification
+- **+31 tests** (`tests/test_web_phase_a.py`), **453 / 453 total
+  passing**.  New tests cover:
+  - dashboard renders 200 on empty AND seeded DBs
+  - service-module counts match seed data
+  - footer carries the git SHA / DB path
+  - **permission-boundary tests** prove `/sync`, `/sync/monday`,
+    `/sync/GOOGLE_DRIVE`, `/propose`, `/propose/timelines`,
+    `/propose/scope`, `/projects/edit`, `/tasks/edit`, `/documents/edit`,
+    `/db/exec`, `/db/query` all return 404 (the routes we explicitly
+    forbade in the M5 plan must not exist)
+  - no CORS headers leak to a cross-origin `Origin` request
+  - `git_sha` never raises (graceful fallback outside a git checkout)
+- Test infra: this file overrides the conftest `db_engine` with a
+  `StaticPool` + `check_same_thread=False` SQLite engine so FastAPI's
+  TestClient (which dispatches sync routes through a threadpool) can
+  share one in-memory DB across threads.
+- Smoke run against the live DB: `project_db serve --port 8765` →
+  dashboard rendered with real numbers — 83 dateless tasks, 461 docs
+  with extracted text, 19 PENDING proposals, footer showing git SHA
+  `f161188`.  Four forbidden routes all returned 404 against the live
+  server as well.
+
+### State at EOD
+- **453 tests** passing.
+- Phase A complete: skeleton + dashboard live.
+- Next (Phase B): project list, project detail, document detail,
+  doctor page — all read-only.  No mutation routes until Phase D.
+
+---
+
 ## 2026-05-22 — Monday column fix, ask LLM fallback, bulk proposals, scope reconciliation
 
 **Theme:** Closed the Monday "missing columns" gap, made `ask` answer

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Dashboard</h2>
+  <p>Snapshot of the canonical DB. Numbers here come straight from
+     <code>ui_views.dashboard_summary()</code>.</p>
+</hgroup>
+
+<section>
+  <h3>Counts</h3>
+  <div class="grid">
+    <article>
+      <header><strong>Projects</strong></header>
+      <p data-testid="projects-total" style="font-size: 2rem; margin: 0">
+        {{ summary.projects.total }}
+      </p>
+      <small>
+        {% for status, n in summary.projects.by_status.items() %}
+          <span>{{ status }}: {{ n }}</span>{% if not loop.last %} &middot; {% endif %}
+        {% endfor %}
+        {% if not summary.projects.by_status %}<em>no status data</em>{% endif %}
+      </small>
+    </article>
+
+    <article>
+      <header><strong>Tasks</strong></header>
+      <p data-testid="tasks-total" style="font-size: 2rem; margin: 0">
+        {{ summary.tasks.total }}
+      </p>
+      <small>
+        without dates:
+        <strong data-testid="tasks-dateless">{{ summary.tasks.without_dates }}</strong>
+      </small>
+    </article>
+
+    <article>
+      <header><strong>Documents</strong></header>
+      <p data-testid="docs-total" style="font-size: 2rem; margin: 0">
+        {{ summary.documents.total }}
+      </p>
+      <small>
+        with extracted text:
+        <strong data-testid="docs-with-text">{{ summary.documents.with_text }}</strong>
+      </small>
+    </article>
+
+    <article>
+      <header><strong>Proposals</strong></header>
+      <p data-testid="proposals-total" style="font-size: 2rem; margin: 0">
+        {{ summary.proposals.total }}
+      </p>
+      <small>
+        PENDING: <strong data-testid="proposals-pending">{{ summary.proposals.PENDING }}</strong> &middot;
+        ACCEPTED: {{ summary.proposals.ACCEPTED }} &middot;
+        REJECTED: {{ summary.proposals.REJECTED }} &middot;
+        SUPERSEDED: {{ summary.proposals.SUPERSEDED }}
+      </small>
+    </article>
+
+    <article>
+      <header><strong>CRM</strong></header>
+      <p style="font-size: 1.5rem; margin: 0">
+        Deals: {{ summary.deals }} &middot; Leads: {{ summary.leads }}
+      </p>
+      <small><em>Counts only; details in Phase B.</em></small>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h3>Pending proposals
+    <small>(newest {{ pending|length }})</small>
+  </h3>
+
+  {% if pending %}
+    <table>
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Kind</th>
+          <th>Target</th>
+          <th>Confidence</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pending %}
+        <tr>
+          <td>{{ p.project_name or "-" }}</td>
+          <td><code>{{ p.field_name }}</code></td>
+          <td>{{ p.entity_label or p.entity_type }}</td>
+          <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
+          <td><small>{{ p.created_at or "-" }}</small></td>
+          <td>
+            <a href="/proposals/{{ p.proposal_id }}" role="button" class="secondary outline">
+              Review
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p><a href="/proposals">View all proposals -&gt;</a></p>
+  {% else %}
+    <p><em>No pending proposals.</em></p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>Notes</h3>
+  <ul>
+    <li>This is Phase A. Project / Proposal / Doctor pages are coming.
+        Nav links above will start returning 404 until those phases land.</li>
+    <li>Pending-proposal "Review" links won't resolve until Phase C.</li>
+    <li>Pages are read-only here. Mutation (accept / reject) is Phase D.</li>
+  </ul>
+</section>
+{% endblock %}

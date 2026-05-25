@@ -331,6 +331,16 @@ least three times a week. If not, see STRATEGY.md §7.
 
 ## Phase 6 — Minimal UI (read-only window)
 
+**Status (2026-05-25):** Phase A of the five-phase build landed.
+`project_db serve` boots a localhost-only FastAPI app rendering a live
+dashboard (counts + pending-proposal strip).  Test suite is 453 green
+(+31 from this phase) including permission-boundary tests that pin the
+forbidden surface.  Phases B-E still ahead: project/document pages,
+proposal queue + detail, accept/reject through the existing functions,
+then DB inspector + raw-JSON panels.
+
+
+
 Goal: a thin, *visible* interface so non-CLI stakeholders — the PM, and
 the people they report to — can SEE what ALTA produces without opening
 a terminal. This is a demo / visibility layer, not a new product

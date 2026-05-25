@@ -1,0 +1,13 @@
+/* Tiny tweaks on top of Pico.css.  Add sparingly; we are not a design system. */
+
+footer small {
+  color: var(--pico-muted-color);
+}
+
+/* Status pill conventions used across pages (introduced in Phase C). */
+.pill { padding: 0.1rem 0.5rem; border-radius: 0.5rem; font-size: 0.8rem; }
+.pill-pending    { background: #f6c34320; color: #b87b00; }
+.pill-accepted   { background: #2ecc7120; color: #1e7e3f; }
+.pill-rejected   { background: #99999920; color: #555; }
+.pill-superseded { background: #aaaaaa20; color: #888; text-decoration: line-through; }
+.pill-warn       { background: #e74c3c20; color: #b03020; }

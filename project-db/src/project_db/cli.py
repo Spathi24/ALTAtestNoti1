@@ -1359,6 +1359,31 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Launch the local web UI bound to 127.0.0.1.
+
+    Hard-binds to loopback -- there is no --host flag on purpose.  The UI
+    has no auth and exposes mutation routes; remote access is out of scope.
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "uvicorn not installed.  Install the UI extra:\n"
+            "    pip install -e \".[ui]\"",
+            file=sys.stderr,
+        )
+        return 2
+
+    from project_db.web.app import create_app
+
+    app = create_app()
+    print(f"project_db UI starting on http://127.0.0.1:{args.port}")
+    print("Ctrl-C to stop.")
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1542,6 +1567,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ec.add_argument("--limit", type=int, help="Stop after N documents (smoke test)")
     ec.set_defaults(func=cmd_extract_content)
+
+    serve = sub.add_parser(
+        "serve",
+        help="Launch the local web UI on 127.0.0.1 (localhost only, no auth)",
+    )
+    serve.add_argument(
+        "--port", type=int, default=8000,
+        help="TCP port to bind on 127.0.0.1 (default 8000)",
+    )
+    serve.set_defaults(func=cmd_serve)
 
     return p
 
