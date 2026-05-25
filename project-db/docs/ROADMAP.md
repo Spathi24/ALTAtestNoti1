@@ -232,7 +232,10 @@ being set up.  Build provider-agnostic infrastructure FIRST.
       tasks that remain dateless because the model found no future-facing
       evidence. Do not pressure the LLM to invent dates or accept dates before
       today just to fill blanks.
-- [ ] Prompt: scope reconciliation — `{scope_item, in_monday: bool, suggested_task_title, confidence}`
+- [x] Prompt: scope reconciliation — `generate_scope_proposals` ships
+      `propose scope <project>`; flags documented scope items with no
+      matching Monday task. Advisory-only (`accept` refuses scope_gap;
+      Monday create-task write-back is future work). 2026-05-22.
 - [ ] Prompt: anomaly detection — `{anomaly_type, description, severity}`
 - [ ] CLI: `propose scope / anomalies / all <project>`
 

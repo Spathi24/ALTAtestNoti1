@@ -22,7 +22,9 @@ corrections to what Monday says is happening.
   the remaining live `doctor` warning is 8 Drive files with no project/category.
 
 **422-test suite.** Day-by-day work log in
-**[CHANGELOG.md](CHANGELOG.md)**.
+**[CHANGELOG.md](CHANGELOG.md)**. Developer handoff (architecture
+invariants, footguns, testing patterns) in
+**[docs/HANDOFF.md](docs/HANDOFF.md)**.
 
 ---
 

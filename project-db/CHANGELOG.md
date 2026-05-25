@@ -9,6 +9,79 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-22 — Monday column fix, ask LLM fallback, bulk proposals, scope reconciliation
+
+**Theme:** Closed the Monday "missing columns" gap, made `ask` answer
+free-form questions, made proposal review usable in bulk, and shipped the
+first scope-reconciliation prompt.
+
+### Monday subitem mirror overlay
+- `apply_portfolio_mirror_overlay` now walks subitems (recursive `_inject`)
+  and collects link ids recursively (`_collect_linked_item_ids`). The
+  per-task Status/Timeline that lives on linked portfolio items now
+  reaches the DB for subitems too (was hitting top-level items only).
+- 923 Rockland: status/timeline coverage went from ~5/118 to 93/118.
+
+### `ask` LLM fallback (Haiku) + bulk proposal review
+- `get_fast_provider()` resolves a small/cheap model (Haiku via
+  `ANTHROPIC_MODEL_FAST`, default `claude-haiku-4-5`).
+  `get_default_provider()` stays on Sonnet for analytical work.
+- `report_database_overview(session)`: whole-DB snapshot — every
+  project/task/deal/lead/client/invoice + doc-category breakdown
+  (excludes document text by design).
+- `AiAssistant.answer_with_llm(question, provider)`: feeds the snapshot
+  to the fast LLM. Canned reports stay instant; only the no-match
+  fallthrough spends a token.
+- `proposals accept` / `reject` with no id → print the pending queue;
+  `accept all --yes` / `reject all --yes` → bulk decide every pending
+  proposal at once.
+- `main()` forces UTF-8 stdout (Windows console fix for LLM em-dashes).
+
+### Deal/project trust + daily review (earlier in the day, by user)
+- Empty `Project - <deal>` placeholders with a matching `Deal` row are
+  recognized as CRM deals, not failed projects — both `doctor` and
+  `report_missing_documents` honor it.
+- `project_db daily <project>`: one-screen read-only review; LLM strictly
+  gated behind `--propose-timelines`.
+
+### Timeline prompt v2
+- Anchored to today + the project's already-dated tasks. Past-dated
+  proposals are rejected at validation time. Guards the 2022-date bug.
+
+### Scope reconciliation (`propose scope <project>`)
+- `generate_scope_proposals`: Sonnet reads contract/SOW documents + the
+  current Monday task list, flags documented scope items with no
+  matching task.
+- Guards: a suggested task that already exists is not flagged; cited
+  source documents not supplied are warned as possible hallucination;
+  re-running supersedes the prior scope batch (fresh snapshot semantics).
+- `_enrich_target` extended for `entity_type="Project"` so scope
+  proposals render correctly in `proposals list/show`.
+- Advisory-only — `accept` refuses scope_gap proposals (a Monday
+  create-task write-back is future work).
+
+### Verification
+- **422 tests** passing (+29: 6 `get_fast_provider`, 7 database overview +
+  answer_with_llm, 4 bulk proposals parser, 5 CLI proposals behavior, 7
+  scope reconciliation).
+- Live: `ask "give me a short health summary..."` → grounded summary
+  citing real numbers (21 projects, 153 tasks, 0 invoices, the deals).
+- Live: `propose scope "923 Rockland"` → 7 grounded gaps citing
+  `Final SOW.pdf Section 4 'RESPONSIBILITIES'`, source docs resolve.
+
+### Docs
+- New: `docs/HANDOFF.md` — developer handoff doc for the next Claude.
+- README: command examples + env vars + What's New bullets.
+- ROADMAP: scope reconciliation flipped to done; usability shipped note.
+
+### State at EOD
+- **422 tests** passing.
+- Phase 3b expanded: timelines + scope advisory both live, advisory-only.
+  Next: validate scope quality on more projects, then optionally anomaly
+  detection, then minimal UI.
+
+---
+
 ## 2026-05-21 — Phase 2.5: Foundation Correctness (project identity rebuilt)
 
 **Theme:** A direct database audit found the canonical data was wrong at the
