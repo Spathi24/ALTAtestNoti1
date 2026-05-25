@@ -278,6 +278,7 @@ def report_project_overview(session: Session, project_ref: str) -> dict[str, Any
         },
         "tasks": [
             {
+                "canonical_id": _ser(t.canonical_id),
                 "title": t.title,
                 "status": _ser(t.status),
                 "start_date": _ser(t.start_date),
@@ -289,6 +290,7 @@ def report_project_overview(session: Session, project_ref: str) -> dict[str, Any
         ],
         "recent_documents": [
             {
+                "canonical_id": _ser(d.canonical_id),
                 "name": d.name,
                 "mime_type": d.mime_type,
                 "folder_path": d.folder_path,
@@ -336,6 +338,7 @@ def report_docs_for_project(session: Session, project_ref: str) -> dict[str, Any
         "document_count": len(docs),
         "documents": [
             {
+                "canonical_id": _ser(d.canonical_id),
                 "name": d.name,
                 "mime_type": d.mime_type,
                 "folder_path": d.folder_path,
@@ -381,6 +384,7 @@ def report_tasks_without_dates(
         "task_count": len(tasks),
         "tasks": [
             {
+                "canonical_id": _ser(t.canonical_id),
                 "title": t.title,
                 "status": _ser(t.status),
                 "project_name": projects.get(t.project_id).name
@@ -675,6 +679,164 @@ def report_database_overview(
             (str(k) if k is not None else "uncategorized"): v
             for k, v in doc_categories.items()
         },
+    }
+
+
+def report_doctor(session: Session) -> dict[str, Any]:
+    """Data behind `project_db doctor` -- audit project / document integrity.
+
+    Pure, JSON-serializable, no I/O.  Both the CLI ``cmd_doctor`` renderer
+    AND the web UI ``/doctor`` page consume this; if you change a check,
+    change it here and both surfaces update.
+    """
+    from sqlalchemy import func
+
+    from project_db.db.models import ExternalId, SourceSystem
+    from project_db.identity.matcher import extract_civic_numbers
+
+    flags: list[str] = []
+    projects = session.query(Project).order_by(Project.name).all()
+
+    civic_seen: dict[str, list[str]] = {}
+    proj_by_id: dict[Any, Project] = {}
+    project_rows: list[dict[str, Any]] = []
+    for p in projects:
+        proj_by_id[p.canonical_id] = p
+        exts = (
+            session.query(ExternalId)
+            .filter(ExternalId.canonical_id == p.canonical_id)
+            .all()
+        )
+        drive = [
+            e for e in exts
+            if e.source == SourceSystem.GOOGLE_DRIVE
+            and (e.external_key or "").startswith("folder:")
+        ]
+        monday = [e for e in exts if e.source == SourceSystem.MONDAY]
+        ndoc = (
+            session.query(Document)
+            .filter(
+                Document.project_id == p.canonical_id,
+                Document.is_trashed.is_(False),
+            )
+            .count()
+        )
+        ntask = session.query(Task).filter(Task.project_id == p.canonical_id).count()
+        crm_deal = _crm_deal_for_project_placeholder(session, p)
+        is_crm_deal_placeholder = bool(crm_deal and ndoc == 0 and ntask == 0)
+
+        sources: list[str] = []
+        if drive:
+            sources.append(f"Drive x{len(drive)}")
+        if monday:
+            sources.append(f"Monday x{len(monday)}")
+        if is_crm_deal_placeholder:
+            sources.append(f"CRM deal: {crm_deal.name}")
+
+        per_project_flags: list[str] = []
+        if not drive and not is_crm_deal_placeholder:
+            msg = (
+                f"{p.name!r}: no Drive folder -- Monday-only. If it is a "
+                f"real project, give it a folder under 01. PROJECTS/"
+                f"<ACTIVE|INACTIVE|LEADS>/; otherwise it is a stray board "
+                f"to remove in Monday."
+            )
+            flags.append(msg)
+            per_project_flags.append("no-drive-folder")
+        if ndoc == 0 and ntask == 0 and not is_crm_deal_placeholder:
+            flags.append(f"{p.name!r}: 0 documents and 0 tasks -- empty record")
+            per_project_flags.append("empty-record")
+
+        for civic in extract_civic_numbers(p.name or ""):
+            civic_seen.setdefault(civic, []).append(p.name)
+
+        project_rows.append({
+            "canonical_id": str(p.canonical_id),
+            "name": p.name,
+            "status": _ser(p.status),
+            "drive_count": len(drive),
+            "monday_count": len(monday),
+            "doc_count": ndoc,
+            "task_count": ntask,
+            "is_crm_deal_placeholder": is_crm_deal_placeholder,
+            "crm_deal_name": crm_deal.name if crm_deal else None,
+            "sources_label": ", ".join(sources) or "NONE",
+            "flags": per_project_flags,
+        })
+
+    civic_duplicates: list[dict[str, Any]] = []
+    for civic, names in sorted(civic_seen.items()):
+        if len(names) > 1:
+            civic_duplicates.append({"civic": civic, "names": names})
+            flags.append(
+                f"civic number {civic} shared by {len(names)} projects: {names}"
+            )
+
+    mislinked_rows: list[dict[str, Any]] = []
+    for d in (
+        session.query(Document)
+        .filter(Document.project_id.isnot(None), Document.is_trashed.is_(False))
+        .all()
+    ):
+        p = proj_by_id.get(d.project_id)
+        if p is None or not d.folder_path:
+            continue
+        if p.name not in [seg.strip() for seg in d.folder_path.split("/")]:
+            mislinked_rows.append({
+                "document_id": str(d.canonical_id),
+                "document_name": d.name,
+                "folder_path": d.folder_path,
+                "linked_project_id": str(p.canonical_id),
+                "linked_project_name": p.name,
+            })
+    if mislinked_rows:
+        flags.append(
+            f"{len(mislinked_rows)} document(s) linked to a project that is "
+            f"NOT their Drive-folder ancestor (mislink)"
+        )
+
+    total = session.query(Document).filter(Document.is_trashed.is_(False)).count()
+    linked = (
+        session.query(Document)
+        .filter(Document.project_id.isnot(None), Document.is_trashed.is_(False))
+        .count()
+    )
+    category_rows = (
+        session.query(Document.category, func.count(Document.canonical_id))
+        .filter(Document.is_trashed.is_(False))
+        .group_by(Document.category)
+        .all()
+    )
+    by_category = {
+        (cat or "(none)"): int(n)
+        for cat, n in sorted(category_rows, key=lambda r: -(r[1] or 0))
+    }
+    orphans = (
+        session.query(Document)
+        .filter(
+            Document.project_id.is_(None),
+            Document.category.is_(None),
+            Document.is_trashed.is_(False),
+        )
+        .count()
+    )
+    if orphans:
+        flags.append(
+            f"{orphans} document(s) with neither a project nor a category "
+            f"(orphans -- usually files with no folder_path)"
+        )
+
+    return {
+        "projects": project_rows,
+        "civic_duplicates": civic_duplicates,
+        "documents": {
+            "total": int(total),
+            "linked": int(linked),
+            "orphans": int(orphans),
+            "by_category": by_category,
+        },
+        "mislinked": mislinked_rows,
+        "flags": flags,
     }
 
 

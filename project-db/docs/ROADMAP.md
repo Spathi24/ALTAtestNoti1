@@ -331,13 +331,21 @@ least three times a week. If not, see STRATEGY.md §7.
 
 ## Phase 6 — Minimal UI (read-only window)
 
-**Status (2026-05-25):** Phase A of the five-phase build landed.
-`project_db serve` boots a localhost-only FastAPI app rendering a live
-dashboard (counts + pending-proposal strip).  Test suite is 453 green
-(+31 from this phase) including permission-boundary tests that pin the
-forbidden surface.  Phases B-E still ahead: project/document pages,
-proposal queue + detail, accept/reject through the existing functions,
-then DB inspector + raw-JSON panels.
+**Status (2026-05-25, EOD):** Phases A, B, C landed in one day.  The UI
+is fully navigable read-only:
+  - dashboard with live counts + pending strip (Phase A)
+  - `/projects` list + `/projects/{id}` 5-panel detail (Phase B)
+  - `/documents/{id}` metadata + full extracted text (Phase B)
+  - `/proposals` filterable queue + `/proposals/{id}` 5-panel review
+    (Phase C)
+  - `/doctor` audit (Phase B)
+
+The dashboard's pending strip lands on a full review page now.
+**484 tests** passing (+62 from Phases A-C combined) including
+permission-boundary tests that pin the read-only surface.
+
+Phases D (accept/reject via HTMX) and E (DB inspector + raw JSON
+panels) still ahead.
 
 
 

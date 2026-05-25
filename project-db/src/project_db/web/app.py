@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -18,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from project_db.web import ui_views
 from project_db.web.deps import db, db_path, git_sha
+from project_db.web.routes import doctor as doctor_routes
+from project_db.web.routes import projects as project_routes
+from project_db.web.routes import proposals as proposal_routes
 
 
 _PKG_DIR = Path(__file__).parent
@@ -49,5 +52,11 @@ def create_app() -> FastAPI:
             "dashboard.html",
             {"summary": summary, "pending": pending},
         )
+
+    page_router = APIRouter()
+    project_routes.register(page_router, templates)
+    proposal_routes.register(page_router, templates)
+    doctor_routes.register(page_router, templates)
+    app.include_router(page_router)
 
     return app

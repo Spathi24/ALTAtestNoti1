@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Proposals{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Proposals
+    <small>({{ d.total }} shown
+      {% if d.filters.status or d.filters.kind %}, filtered{% endif %})
+    </small>
+  </h2>
+  <p>Every LLM-generated proposal in the system. Read-only here -- accept /
+     reject lives on the detail page once Phase D ships.</p>
+</hgroup>
+
+<form method="get" role="search">
+  <fieldset role="group" style="max-width: 40rem">
+    <select name="status" aria-label="Status">
+      <option value="" {% if not d.filters.status %}selected{% endif %}>any status</option>
+      <option value="PENDING" {% if d.filters.status == "PENDING" %}selected{% endif %}>PENDING</option>
+      <option value="ACCEPTED" {% if d.filters.status == "ACCEPTED" %}selected{% endif %}>ACCEPTED</option>
+      <option value="REJECTED" {% if d.filters.status == "REJECTED" %}selected{% endif %}>REJECTED</option>
+      <option value="SUPERSEDED" {% if d.filters.status == "SUPERSEDED" %}selected{% endif %}>SUPERSEDED</option>
+    </select>
+    <input type="text" name="kind" placeholder="kind (e.g. timeline, scope_gap)"
+           value="{{ d.filters.kind or '' }}">
+    <button type="submit">Filter</button>
+    <a href="/proposals" role="button" class="secondary outline">Reset</a>
+  </fieldset>
+</form>
+
+{% if d.error %}
+  <article><strong>!</strong> {{ d.error }}</article>
+{% endif %}
+
+{% if d.rows %}
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Kind</th>
+      <th>Project</th>
+      <th>Target</th>
+      <th>Confidence</th>
+      <th>Created</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in d.rows %}
+    <tr data-testid="proposal-row">
+      <td><span class="pill pill-{{ p.status|lower }}">{{ p.status }}</span></td>
+      <td><code>{{ p.field_name }}</code></td>
+      <td>{{ p.project_name or "-" }}</td>
+      <td><small>{{ p.entity_label or p.entity_type }}</small></td>
+      <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
+      <td><small>{{ p.created_at or "-" }}</small></td>
+      <td><a href="/proposals/{{ p.proposal_id }}" role="button" class="secondary outline">Show</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <p><em>No proposals match this filter.</em></p>
+{% endif %}
+{% endblock %}

@@ -274,9 +274,15 @@ class TestForbiddenRoutes:
         "/proposals/00000000-0000-0000-0000-000000000000/reject",
     ])
     def test_post_to_forbidden_or_phase_d_route(self, client, path):
-        """Phase D adds accept/reject POST; until then everything mutating 404s."""
+        """Phase D adds accept/reject POST; until then everything mutating 404s
+        or 405s.  405 is acceptable -- it means "no POST handler exists for
+        this path", which is exactly the property we want to enforce.
+        """
         resp = client.post(path)
-        assert resp.status_code == 404
+        assert resp.status_code in (404, 405), (
+            f"POST {path} returned {resp.status_code}; expected 404 (no route) "
+            f"or 405 (no POST handler).  A mutation route must not exist in v1."
+        )
 
 
 class TestCorsAndHostBinding:

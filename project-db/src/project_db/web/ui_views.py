@@ -9,15 +9,20 @@ followed by a calculation in a template, the calculation belongs here.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from project_db.ai.proposals import list_proposals
+from uuid import UUID
+
+from project_db.ai.proposals import get_proposal_detail, list_proposals
 from project_db.db.models import (
+    Client,
     Deal,
     Document,
+    ExternalId,
     Lead,
     Project,
     Proposal,
@@ -121,3 +126,366 @@ def recent_pending_proposals(
 def _status_active_set() -> set[ProjectStatus]:
     """Statuses we treat as 'live' for the project list default filter."""
     return {ProjectStatus.PROPOSED, ProjectStatus.ACTIVE, ProjectStatus.ON_HOLD}
+
+
+# ---------------------------------------------------------------------------
+# Project list -- /projects
+# ---------------------------------------------------------------------------
+
+
+def project_list_rows(session: Session) -> list[dict[str, Any]]:
+    """Every project, with rolled-up counts and a pending-proposal tally.
+
+    One row per project, ordered by name.  No N+1 -- counts are grouped
+    queries.
+    """
+    projects = session.query(Project).order_by(Project.name).all()
+
+    tasks_by_project: dict[Any, int] = dict(
+        session.query(Task.project_id, func.count(Task.canonical_id))
+        .group_by(Task.project_id)
+        .all()
+    )
+    docs_by_project: dict[Any, int] = dict(
+        session.query(Document.project_id, func.count(Document.canonical_id))
+        .filter(Document.is_trashed.is_(False))
+        .group_by(Document.project_id)
+        .all()
+    )
+    dateless_by_project: dict[Any, int] = dict(
+        session.query(Task.project_id, func.count(Task.canonical_id))
+        .filter(
+            Task.start_date.is_(None),
+            Task.end_date.is_(None),
+            Task.due_date.is_(None),
+        )
+        .group_by(Task.project_id)
+        .all()
+    )
+
+    clients = {c.canonical_id: c.name for c in session.query(Client).all()}
+
+    out: list[dict[str, Any]] = []
+    for p in projects:
+        pending = (
+            session.query(func.count(Proposal.canonical_id))
+            .join(Task, Task.canonical_id == Proposal.entity_id)
+            .filter(
+                Proposal.entity_type == "Task",
+                Proposal.status == ProposalStatus.PENDING,
+                Task.project_id == p.canonical_id,
+            )
+            .scalar()
+            or 0
+        )
+        out.append({
+            "canonical_id": str(p.canonical_id),
+            "name": p.name,
+            "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+            "client": clients.get(p.client_id),
+            "task_count": int(tasks_by_project.get(p.canonical_id, 0)),
+            "tasks_dateless": int(dateless_by_project.get(p.canonical_id, 0)),
+            "doc_count": int(docs_by_project.get(p.canonical_id, 0)),
+            "pending_proposals": int(pending),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Project detail -- /projects/{id}
+# ---------------------------------------------------------------------------
+
+
+def _coerce_uuid(value: str) -> UUID | None:
+    try:
+        return UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Assemble the data the project-detail template renders.
+
+    Returns ``None`` when the project_id doesn't resolve, so the route
+    can return a 404 cleanly.
+
+    Delegates to existing canned reports for every panel; the only new
+    work is gathering them in one place + adding the proposals strip.
+    """
+    from project_db.ai.views import (
+        report_budget_vs_contract,
+        report_docs_for_project,
+        report_project_overview,
+        report_tasks_without_dates,
+    )
+
+    pid = _coerce_uuid(project_id)
+    if pid is None:
+        return None
+    project = session.query(Project).filter_by(canonical_id=pid).one_or_none()
+    if project is None:
+        return None
+
+    ref = str(pid)
+    overview = report_project_overview(session, ref)
+    docs = report_docs_for_project(session, ref)
+    dateless = report_tasks_without_dates(session, ref)
+    budget = report_budget_vs_contract(session, ref)
+
+    # Proposals scoped to this project's tasks.  Same data shape as
+    # /proposals -- list_proposals returns enrichment via _enrich_target.
+    task_ids = {
+        row[0] for row in
+        session.query(Task.canonical_id).filter(Task.project_id == pid).all()
+    }
+    proposals_for_project: list[dict[str, Any]] = []
+    for p in list_proposals(session, limit=500):
+        try:
+            if UUID(p["entity_label"]) in task_ids:
+                proposals_for_project.append(p)
+                continue
+        except (ValueError, AttributeError, TypeError):
+            pass
+        if p.get("project_name") == project.name:
+            proposals_for_project.append(p)
+
+    by_status: dict[str, list[dict[str, Any]]] = {
+        s.value: [] for s in ProposalStatus
+    }
+    for p in proposals_for_project:
+        by_status.setdefault(p["status"], []).append(p)
+
+    # Group docs by folder_path for the documents panel.  Pure presentation
+    # grouping over what report_docs_for_project already returned.
+    by_folder: dict[str, list[dict[str, Any]]] = {}
+    for d in docs.get("documents", []):
+        by_folder.setdefault(d.get("folder_path") or "(no folder)", []).append(d)
+
+    # Attach extraction status per doc by joining DocumentText.
+    if docs.get("documents"):
+        doc_ids = [UUID(d["canonical_id"]) for d in docs["documents"]]
+        text_rows = dict(
+            session.query(
+                DocumentText.document_id,
+                func.length(DocumentText.extracted_text),
+            )
+            .filter(DocumentText.document_id.in_(doc_ids))
+            .all()
+        )
+        for d in docs["documents"]:
+            text_len = text_rows.get(UUID(d["canonical_id"]))
+            d["extraction_status"] = (
+                "text" if (text_len or 0) > 0 else
+                ("empty" if text_len == 0 else "none")
+            )
+            d["text_chars"] = int(text_len or 0)
+
+    return {
+        "project": overview.get("project") or {
+            "canonical_id": str(pid),
+            "name": project.name,
+        },
+        "client": overview.get("client"),
+        "stats": overview.get("stats", {}),
+        "external_ids": overview.get("external_ids", []),
+        "tasks": overview.get("tasks", []),
+        "dateless_tasks": dateless.get("tasks", []),
+        "dateless_count": dateless.get("task_count", 0),
+        "documents_by_folder": by_folder,
+        "documents_total": docs.get("document_count", 0),
+        "budget": budget,
+        "proposals_by_status": by_status,
+        "proposals_total": len(proposals_for_project),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Document detail -- /documents/{id}
+# ---------------------------------------------------------------------------
+
+
+def document_detail(session: Session, document_id: str) -> dict[str, Any] | None:
+    """Document metadata + extracted text + proposals that cite it."""
+    did = _coerce_uuid(document_id)
+    if did is None:
+        return None
+    doc = session.query(Document).filter_by(canonical_id=did).one_or_none()
+    if doc is None:
+        return None
+
+    text_row = (
+        session.query(DocumentText)
+        .filter(DocumentText.document_id == did)
+        .one_or_none()
+    )
+
+    project = None
+    if doc.project_id:
+        p = session.query(Project).filter_by(canonical_id=doc.project_id).one_or_none()
+        if p:
+            project = {"canonical_id": str(p.canonical_id), "name": p.name}
+
+    # Proposals that cite this document in source_doc_ids.  Stored as a
+    # JSON string on Proposal; cheap to scan because there are not many.
+    citing: list[dict[str, Any]] = []
+    for prop in (
+        session.query(Proposal)
+        .order_by(Proposal.created_at.desc())
+        .limit(500)
+        .all()
+    ):
+        if not prop.source_doc_ids:
+            continue
+        try:
+            ids = json.loads(prop.source_doc_ids)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(ids, list):
+            continue
+        if str(did) in [str(x) for x in ids]:
+            citing.append({
+                "proposal_id": str(prop.canonical_id),
+                "field_name": prop.field_name,
+                "status": prop.status.value if hasattr(prop.status, "value") else str(prop.status),
+                "created_at": prop.created_at.isoformat() if prop.created_at else None,
+                "confidence": prop.confidence,
+            })
+
+    return {
+        "document": {
+            "canonical_id": str(doc.canonical_id),
+            "name": doc.name,
+            "mime_type": doc.mime_type,
+            "url": doc.url,
+            "folder_path": doc.folder_path,
+            "size_bytes": doc.size_bytes,
+            "modified_at_source": doc.modified_at_source.isoformat()
+                if doc.modified_at_source else None,
+            "owner_email": doc.owner_email,
+            "is_trashed": bool(doc.is_trashed),
+            "category": doc.category,
+            "drive_id": doc.drive_id,
+            "md5_checksum": doc.md5_checksum,
+        },
+        "project": project,
+        "text": {
+            "method": getattr(text_row, "extraction_method", None) if text_row else None,
+            "token_count": getattr(text_row, "token_count", None) if text_row else None,
+            "extracted_at": text_row.extracted_at.isoformat()
+                if text_row and text_row.extracted_at else None,
+            "char_count": len(text_row.extracted_text or "") if text_row else 0,
+            "body": (text_row.extracted_text or "") if text_row else "",
+        } if text_row else None,
+        "citing_proposals": citing,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Proposal queue + detail -- /proposals and /proposals/{id}
+# ---------------------------------------------------------------------------
+
+
+def proposal_queue(
+    session: Session,
+    *,
+    status: str | None = None,
+    kind: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Filtered proposal list for /proposals.
+
+    Thin wrapper over ai.proposals.list_proposals so the UI sees the same
+    data the CLI sees.  Validates status filter input here so a malformed
+    status from a URL query just produces an empty result and a hint,
+    rather than a 500.
+    """
+    status_enum: ProposalStatus | None = None
+    if status:
+        try:
+            status_enum = ProposalStatus(status.upper())
+        except ValueError:
+            return {
+                "error": f"Unknown status {status!r}. "
+                         f"Valid: {[s.value for s in ProposalStatus]}",
+                "rows": [],
+                "filters": {"status": status, "kind": kind},
+            }
+    rows = list_proposals(session, status=status_enum, kind=kind, limit=limit)
+    return {
+        "error": None,
+        "rows": rows,
+        "filters": {
+            "status": status_enum.value if status_enum else None,
+            "kind": kind,
+        },
+        "total": len(rows),
+    }
+
+
+def proposal_detail(session: Session, proposal_id: str) -> dict[str, Any] | None:
+    """Full proposal detail for /proposals/{id}.
+
+    Delegates to ``ai.proposals.get_proposal_detail`` so the page renders
+    exactly what the CLI's ``proposals show`` renders.  Returns None when
+    the id doesn't resolve so the route can 404 cleanly.
+
+    Adds presentation-only fields:
+      - ``can_accept``: False for scope_gap (not in _ACCEPTABLE_FIELDS) --
+        the route still lets reject through, but disables the Accept
+        button in the template.  Source of truth is the backend's
+        _ACCEPTABLE_FIELDS set; UI just mirrors it.
+      - ``supersede_chain``: prior proposals for the same
+        (entity_type, entity_id, field_name).
+    """
+    pid = _coerce_uuid(proposal_id)
+    if pid is None:
+        return None
+
+    detail = get_proposal_detail(session, pid)
+    if detail is None or detail.get("error"):
+        return None
+
+    proposal = session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
+    if proposal is None:
+        return None
+
+    from project_db.ai.proposals import _ACCEPTABLE_FIELDS  # noqa: PLC2701
+    detail["can_accept"] = proposal.field_name in _ACCEPTABLE_FIELDS
+
+    chain_rows = (
+        session.query(Proposal)
+        .filter(
+            Proposal.entity_type == proposal.entity_type,
+            Proposal.entity_id == proposal.entity_id,
+            Proposal.field_name == proposal.field_name,
+            Proposal.canonical_id != proposal.canonical_id,
+        )
+        .order_by(Proposal.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    detail["supersede_chain"] = [
+        {
+            "proposal_id": str(r.canonical_id),
+            "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "confidence": r.confidence,
+        }
+        for r in chain_rows
+    ]
+    return detail
+
+
+# ---------------------------------------------------------------------------
+# Doctor -- /doctor
+# ---------------------------------------------------------------------------
+
+
+def doctor_report(session: Session) -> dict[str, Any]:
+    """Thin pass-through to ai.views.report_doctor.
+
+    Lives here so the route only imports from ``ui_views`` -- one rule
+    for everywhere.
+    """
+    from project_db.ai.views import report_doctor
+    return report_doctor(session)

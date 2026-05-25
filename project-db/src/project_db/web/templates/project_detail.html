@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project.name }} - Project{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.project.name }}
+    <small><code class="pill">{{ d.project.status or "?" }}</code></small>
+  </h2>
+  <p>
+    {% if d.client %}Client: <strong>{{ d.client.name }}</strong> &middot;{% endif %}
+    Canonical ID: <code>{{ d.project.canonical_id }}</code>
+  </p>
+</hgroup>
+
+<nav aria-label="page sections">
+  <ul>
+    <li><a href="#identity">Identity</a></li>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#tasks">Tasks ({{ d.dateless_count }} dateless)</a></li>
+    <li><a href="#documents">Documents ({{ d.documents_total }})</a></li>
+    <li><a href="#proposals">Proposals ({{ d.proposals_total }})</a></li>
+  </ul>
+</nav>
+
+<!-- ============================ IDENTITY ============================ -->
+<section id="identity">
+  <h3>A. Identity</h3>
+  <table>
+    <thead>
+      <tr><th>Source</th><th>External key</th><th>Link</th></tr>
+    </thead>
+    <tbody>
+      {% if d.external_ids %}
+        {% for x in d.external_ids %}
+        <tr>
+          <td><code>{{ x.source }}</code></td>
+          <td><code>{{ x.external_key }}</code></td>
+          <td>
+            {% if x.external_url %}
+              <a href="{{ x.external_url }}" target="_blank" rel="noopener">open &uarr;</a>
+            {% else %}-{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="3"><em>No external IDs linked.</em></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================ OVERVIEW ============================ -->
+<section id="overview">
+  <h3>B. Overview</h3>
+  <div class="grid">
+    <article>
+      <header><strong>Tasks</strong></header>
+      <p style="font-size: 1.5rem; margin: 0">{{ d.stats.task_count or 0 }}</p>
+      <small>dateless: <strong>{{ d.stats.tasks_without_dates or 0 }}</strong></small>
+    </article>
+    <article>
+      <header><strong>Documents</strong></header>
+      <p style="font-size: 1.5rem; margin: 0">{{ d.stats.document_count or 0 }}</p>
+    </article>
+    <article>
+      <header><strong>Invoices</strong></header>
+      <p style="font-size: 1.5rem; margin: 0">{{ d.stats.invoice_count or 0 }}</p>
+      <small>total: ${{ "%.2f"|format(d.stats.invoice_total or 0) }}</small>
+    </article>
+    <article>
+      <header><strong>Budget vs Contract</strong></header>
+      {% if d.budget.error %}
+        <small><em>{{ d.budget.error }}</em></small>
+      {% else %}
+        <small>
+          Monday budget:
+          {% if d.budget.monday_budget is not none %}
+            ${{ "%.2f"|format(d.budget.monday_budget) }}
+          {% else %}<em>unset</em>{% endif %}
+          <br>
+          Contract est.:
+          {% if d.budget.contract_amount_estimate is not none %}
+            ${{ "%.2f"|format(d.budget.contract_amount_estimate) }}
+          {% else %}<em>none extracted</em>{% endif %}
+          {% if d.budget.divergence_pct is not none %}
+            <br>divergence:
+            <span class="pill {% if d.budget.flagged %}pill-warn{% endif %}">
+              {{ "%.0f"|format(d.budget.divergence_pct * 100) }}%
+            </span>
+          {% endif %}
+        </small>
+      {% endif %}
+    </article>
+  </div>
+</section>
+
+<!-- ============================ TASKS ============================ -->
+<section id="tasks">
+  <h3>C. Tasks</h3>
+
+  {% if d.dateless_tasks %}
+    <details open>
+      <summary><strong>{{ d.dateless_count }} dateless task(s)</strong>
+        <small>(the candidates for timeline proposals)</small>
+      </summary>
+      <table>
+        <thead><tr><th>Title</th><th>Status</th><th>Monday status</th><th>Subitem?</th></tr></thead>
+        <tbody>
+          {% for t in d.dateless_tasks %}
+          <tr>
+            <td>{{ t.title }}</td>
+            <td><small><code>{{ t.status }}</code></small></td>
+            <td>{{ t.monday_status_label or "-" }}</td>
+            <td>{% if t.is_subitem %}yes{% else %}-{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  {% else %}
+    <p><em>No dateless tasks. All tasks have at least one date.</em></p>
+  {% endif %}
+
+  <details>
+    <summary>All tasks ({{ d.tasks|length }} shown, capped at 50)</summary>
+    <table>
+      <thead><tr><th>Title</th><th>Status</th><th>Start</th><th>End</th><th>Due</th></tr></thead>
+      <tbody>
+        {% for t in d.tasks %}
+        <tr>
+          <td>{{ t.title }}</td>
+          <td><small><code>{{ t.status }}</code></small></td>
+          <td><small>{{ t.start_date or "-" }}</small></td>
+          <td><small>{{ t.end_date or "-" }}</small></td>
+          <td><small>{{ t.due_date or "-" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+
+<!-- ============================ DOCUMENTS ============================ -->
+<section id="documents">
+  <h3>D. Documents <small>({{ d.documents_total }} total)</small></h3>
+  {% if d.documents_by_folder %}
+    {% for folder, docs in d.documents_by_folder.items() %}
+    <details {% if loop.index <= 2 %}open{% endif %}>
+      <summary>
+        <code>{{ folder }}</code>
+        <small>({{ docs|length }})</small>
+      </summary>
+      <table>
+        <thead><tr><th>Name</th><th>Mime</th><th>Size</th><th>Modified</th><th>Text</th></tr></thead>
+        <tbody>
+          {% for doc in docs %}
+          <tr>
+            <td><a href="/documents/{{ doc.canonical_id }}">{{ doc.name }}</a></td>
+            <td><small>{{ doc.mime_type or "-" }}</small></td>
+            <td><small>{{ doc.size_bytes or "-" }}</small></td>
+            <td><small>{{ doc.modified_at_source or "-" }}</small></td>
+            <td>
+              {% if doc.extraction_status == "text" %}
+                <small>{{ doc.text_chars }} chars</small>
+              {% elif doc.extraction_status == "empty" %}
+                <small><em>empty</em></small>
+              {% else %}
+                <small><em>none</em></small>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endfor %}
+  {% else %}
+    <p><em>No documents linked to this project.</em></p>
+  {% endif %}
+</section>
+
+<!-- ============================ PROPOSALS ============================ -->
+<section id="proposals">
+  <h3>E. Proposals <small>({{ d.proposals_total }} total)</small></h3>
+
+  {% set pending = d.proposals_by_status.get("PENDING", []) %}
+  {% if pending %}
+  <details open>
+    <summary><strong>{{ pending|length }} PENDING</strong> -- needs review</summary>
+    <table>
+      <thead><tr><th>Kind</th><th>Target</th><th>Confidence</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        {% for p in pending %}
+        <tr>
+          <td><code>{{ p.field_name }}</code></td>
+          <td>{{ p.entity_label or p.entity_type }}</td>
+          <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
+          <td><small>{{ p.created_at or "-" }}</small></td>
+          <td><a href="/proposals/{{ p.proposal_id }}" role="button" class="secondary outline">Review</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+
+  {% for status_key in ["ACCEPTED", "REJECTED", "SUPERSEDED"] %}
+    {% set group = d.proposals_by_status.get(status_key, []) %}
+    {% if group %}
+    <details>
+      <summary>{{ group|length }} {{ status_key }}</summary>
+      <table>
+        <thead><tr><th>Kind</th><th>Target</th><th>Confidence</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          {% for p in group %}
+          <tr>
+            <td><code>{{ p.field_name }}</code></td>
+            <td>{{ p.entity_label or p.entity_type }}</td>
+            <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
+            <td><small>{{ p.created_at or "-" }}</small></td>
+            <td><a href="/proposals/{{ p.proposal_id }}">show</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+  {% endfor %}
+
+  {% if d.proposals_total == 0 %}
+    <p><em>No proposals for this project.
+       Generate with:</em>
+       <code>project_db propose timelines "{{ d.project.name }}"</code> or
+       <code>project_db propose scope "{{ d.project.name }}"</code>.
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

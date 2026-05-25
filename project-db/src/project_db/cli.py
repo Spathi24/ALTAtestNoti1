@@ -1072,133 +1072,40 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     Surfaces the failure modes the foundation rebuild targets: phantom or
     duplicate projects, documents linked to the wrong project, orphaned
     files.  Run it after `rebuild` to confirm the data is sound.
-    """
-    from sqlalchemy import func
 
-    from project_db.ai.views import _crm_deal_for_project_placeholder
-    from project_db.identity.matcher import extract_civic_numbers
+    Thin renderer over ``ai.views.report_doctor`` -- the UI ``/doctor``
+    route renders the same data structure.
+    """
+    from project_db.ai.views import report_doctor
 
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
 
-    flags: list[str] = []
     with session_scope() as s:
-        projects = s.query(Project).order_by(Project.name).all()
-        print(f"=== PROJECTS ({len(projects)}) ===")
-        civic_seen: dict[str, list[str]] = {}
-        proj_by_id: dict[Any, Any] = {}
-        for p in projects:
-            proj_by_id[p.canonical_id] = p
-            exts = (
-                s.query(ExternalId)
-                .filter(ExternalId.canonical_id == p.canonical_id)
-                .all()
-            )
-            drive = [
-                e for e in exts
-                if e.source == SourceSystem.GOOGLE_DRIVE
-                and (e.external_key or "").startswith("folder:")
-            ]
-            monday = [e for e in exts if e.source == SourceSystem.MONDAY]
-            ndoc = (
-                s.query(Document)
-                .filter(
-                    Document.project_id == p.canonical_id,
-                    Document.is_trashed.is_(False),
-                )
-                .count()
-            )
-            ntask = s.query(Task).filter(Task.project_id == p.canonical_id).count()
-            crm_deal = _crm_deal_for_project_placeholder(s, p)
-            is_crm_deal_placeholder = bool(crm_deal and ndoc == 0 and ntask == 0)
-            status = getattr(p.status, "value", p.status)
-            src = []
-            if drive:
-                src.append(f"Drive x{len(drive)}")
-            if monday:
-                src.append(f"Monday x{len(monday)}")
-            if is_crm_deal_placeholder:
-                src.append(f"CRM deal: {crm_deal.name}")
-            print(f"  {p.name}")
-            print(
-                f"      status={status}  docs={ndoc}  tasks={ntask}  "
-                f"source={', '.join(src) or 'NONE'}"
-            )
-            if not drive and not is_crm_deal_placeholder:
-                flags.append(
-                    f"{p.name!r}: no Drive folder -- Monday-only. If it is a "
-                    f"real project, give it a folder under 01. PROJECTS/"
-                    f"<ACTIVE|INACTIVE|LEADS>/; otherwise it is a stray board "
-                    f"to remove in Monday."
-                )
-            if ndoc == 0 and ntask == 0 and not is_crm_deal_placeholder:
-                flags.append(f"{p.name!r}: 0 documents and 0 tasks -- empty record")
-            for civic in extract_civic_numbers(p.name or ""):
-                civic_seen.setdefault(civic, []).append(p.name)
+        data = report_doctor(s)
 
-        for civic, names in sorted(civic_seen.items()):
-            if len(names) > 1:
-                flags.append(
-                    f"civic number {civic} shared by {len(names)} projects: {names}"
-                )
-
-        # Mislinked documents -- linked to a project that is not their
-        # Drive-folder ancestor.  After a clean rebuild this must be 0.
-        mislinked = 0
-        for d in (
-            s.query(Document)
-            .filter(Document.project_id.isnot(None), Document.is_trashed.is_(False))
-            .all()
-        ):
-            p = proj_by_id.get(d.project_id)
-            if p is None or not d.folder_path:
-                continue
-            if p.name not in [seg.strip() for seg in d.folder_path.split("/")]:
-                mislinked += 1
-        if mislinked:
-            flags.append(
-                f"{mislinked} document(s) linked to a project that is NOT "
-                f"their Drive-folder ancestor (mislink)"
-            )
-
-        total = s.query(Document).filter(Document.is_trashed.is_(False)).count()
-        linked = (
-            s.query(Document)
-            .filter(Document.project_id.isnot(None), Document.is_trashed.is_(False))
-            .count()
+    print(f"=== PROJECTS ({len(data['projects'])}) ===")
+    for p in data["projects"]:
+        print(f"  {p['name']}")
+        print(
+            f"      status={p['status']}  docs={p['doc_count']}  "
+            f"tasks={p['task_count']}  source={p['sources_label']}"
         )
-        print(f"\n=== DOCUMENTS ({total} live) ===")
-        print(f"  linked to a project: {linked}")
-        rows = (
-            s.query(Document.category, func.count(Document.canonical_id))
-            .filter(Document.is_trashed.is_(False))
-            .group_by(Document.category)
-            .all()
-        )
-        for cat, n in sorted(rows, key=lambda r: -(r[1] or 0)):
-            print(f"  category={cat or '(none)'}: {n}")
-        orphans = (
-            s.query(Document)
-            .filter(
-                Document.project_id.is_(None),
-                Document.category.is_(None),
-                Document.is_trashed.is_(False),
-            )
-            .count()
-        )
-        if orphans:
-            flags.append(
-                f"{orphans} document(s) with neither a project nor a category "
-                f"(orphans -- usually files with no folder_path)"
-            )
 
-        print(f"\n=== FLAGS ({len(flags)}) ===")
-        if not flags:
-            print("  none -- canonical data looks sound.")
-        else:
-            for flag in flags:
-                print(f"  ! {flag}")
+    docs = data["documents"]
+    print(f"\n=== DOCUMENTS ({docs['total']} live) ===")
+    print(f"  linked to a project: {docs['linked']}")
+    for cat, n in docs["by_category"].items():
+        print(f"  category={cat}: {n}")
+
+    flags = data["flags"]
+    print(f"\n=== FLAGS ({len(flags)}) ===")
+    if not flags:
+        print("  none -- canonical data looks sound.")
+    else:
+        for flag in flags:
+            print(f"  ! {flag}")
     return 0
 
 

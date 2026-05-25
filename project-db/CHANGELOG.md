@@ -9,6 +9,103 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-25 (later) — Phase 6 / M5 parts B+C: read-only browsing
+
+**Theme:** The UI is actually usable now.  Phase A only had the
+dashboard; every nav link 404'd.  This entry adds projects, documents,
+proposals, and doctor -- all read-only, all wired to the existing
+canned reports and proposal functions.  The dashboard's pending strip
+finally goes somewhere.
+
+### Routes added (all GET, all read-only)
+- `/projects` -- every project with rolled-up counts and a
+  pending-proposal tally
+- `/projects/{id}` -- 5-panel detail (identity / overview /
+  tasks / documents grouped by folder / proposals grouped by status)
+- `/documents/{id}` -- metadata + full extracted text (scrollable
+  `<pre>`) + every proposal citing this document
+- `/proposals` -- filterable queue (status + kind via query params)
+- `/proposals/{id}` -- 5-panel review page: target, proposed value
+  (timeline / scope_gap parsed visually), citations + confidence,
+  decision audit / "Phase D will add buttons" placeholder, supersede chain
+- `/doctor` -- read-only audit; same data structure
+  `project_db doctor` prints
+
+### Service-module discipline
+Per the M5 plan's #2 ("no business logic in the UI"), every derived
+value lives in `web/ui_views.py`:
+  - `project_list_rows`, `project_detail`, `document_detail`,
+    `proposal_queue`, `proposal_detail`, `doctor_report`
+  - Document grouping by folder, extraction-status badges, supersede
+    chain, can_accept flag (mirroring `_ACCEPTABLE_FIELDS` from
+    `ai.proposals`)
+  - Templates do presentation only; calculations stay in Python
+
+### cmd_doctor refactored
+- New `report_doctor(session)` in `ai/views.py` returns the audit as a
+  pure JSON-serializable dict.  `cmd_doctor` is now a thin renderer
+  over it.  The `/doctor` route renders the same dict as HTML, so the
+  two surfaces can never drift apart.
+- Old inlined-in-cmd_doctor logic deleted (no dead code retained).
+
+### Citation precision (per #7 in the plan review)
+- Excerpt-offset metadata is NOT stored on `Proposal`; the proposal
+  detail page is explicit about this -- it labels source documents as
+  "this document supports the claim" rather than implying span-level
+  precision, and links to `/documents/{id}` for the full text the
+  model actually saw.
+- When `source_documents` is empty, a prominent red article is rendered
+  with "! No source documents are attached to this proposal."  Live
+  verified on the 5768 St-Laurent "Quality Inspection & Punch List
+  for Units 6-10" proposal which was flagged at creation time for an
+  unsupported citation.
+
+### Confidence is secondary (per #8)
+- Confidence renders as a small pill colored green / amber / red, but
+  the text right next to it says "(secondary signal -- citation
+  evidence wins)" and the section header is "Citations & confidence",
+  not "Confidence".
+
+### Read-only is enforced by tests
+- `tests/test_web_phase_b.py::TestPhaseDForbidden` covers all
+  accept/reject/dry-run/bulk endpoints.  GET and POST must each
+  return 404 or 405 until Phase D ships.
+- `TestProjectDetail::test_no_accept_button_in_phase_b` asserts the
+  project page doesn't even *render* an accept/reject button in v1
+  (a UI-side regression net against accidental drift).
+- 404 paths covered for unknown UUIDs AND malformed (non-UUID) ids on
+  every detail route.
+
+### Verification
+- **+31 tests** (`tests/test_web_phase_b.py`), **484 / 484 total
+  passing**.
+- Live smoke against the real DB:
+  - `/projects` lists all 21 projects with live counts
+  - `/projects/{1455 St. Mathieu}` renders all 5 panels with real
+    SOW proposals + 7 grouped document folders
+  - `/documents/{first SOW}` opens with full extracted contract text
+  - `/proposals?status=PENDING` -> 19 pending rows
+  - `/proposals/{scope flagged proposal}` -> red "no source documents"
+    warning shows; LLM reasoning shows in a blockquote
+  - `/doctor` flags 1 issue (8 orphan documents) -- matches the CLI
+  - All 7 sampled forbidden routes return 404 / 405 on live server
+
+### Minor API extensions
+- `report_project_overview.tasks[].canonical_id` added (was missing)
+- `report_project_overview.recent_documents[].canonical_id` added
+- `report_docs_for_project.documents[].canonical_id` added
+- `report_tasks_without_dates.tasks[].canonical_id` added
+- These are additive; the LLM-tool layer benefits too.
+
+### State at EOD
+- **484 tests** passing.
+- Read-only UI complete.  Every nav link now resolves; dashboard's
+  pending strip lands on a full review page.
+- Phase D (the riskiest piece) is next: HTMX accept / reject with
+  two-click confirm, stale-state handling, fresh-read-before-mutate.
+
+---
+
 ## 2026-05-25 — Phase 6 / M5 part A: local web UI skeleton
 
 **Theme:** Scope reconciliation output across 923 Rockland, 1455 St.

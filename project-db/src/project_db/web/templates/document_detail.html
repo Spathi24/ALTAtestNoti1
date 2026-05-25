@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ d.document.name }} - Document{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.document.name }}</h2>
+  <p>
+    {% if d.project %}
+      Project: <a href="/projects/{{ d.project.canonical_id }}">{{ d.project.name }}</a> &middot;
+    {% endif %}
+    <code>{{ d.document.canonical_id }}</code>
+  </p>
+</hgroup>
+
+<section>
+  <h3>Metadata</h3>
+  <table>
+    <tbody>
+      <tr><th scope="row">Name</th><td>{{ d.document.name }}</td></tr>
+      <tr><th scope="row">Mime</th><td><code>{{ d.document.mime_type or "-" }}</code></td></tr>
+      <tr><th scope="row">URL</th>
+        <td>
+          {% if d.document.url %}
+            <a href="{{ d.document.url }}" target="_blank" rel="noopener">{{ d.document.url }}</a>
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+      <tr><th scope="row">Folder</th><td><code>{{ d.document.folder_path or "-" }}</code></td></tr>
+      <tr><th scope="row">Size</th><td>{{ d.document.size_bytes or "-" }} bytes</td></tr>
+      <tr><th scope="row">Modified (source)</th><td>{{ d.document.modified_at_source or "-" }}</td></tr>
+      <tr><th scope="row">Owner</th><td>{{ d.document.owner_email or "-" }}</td></tr>
+      <tr><th scope="row">Category</th><td>{{ d.document.category or "-" }}</td></tr>
+      <tr><th scope="row">Drive ID</th><td><code>{{ d.document.drive_id or "-" }}</code></td></tr>
+      <tr><th scope="row">MD5</th><td><code>{{ d.document.md5_checksum or "-" }}</code></td></tr>
+      <tr><th scope="row">Trashed</th><td>{{ "yes" if d.document.is_trashed else "no" }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h3>Extracted text</h3>
+  {% if d.text %}
+    <p>
+      <small>
+        Method: <code>{{ d.text.method or "?" }}</code> &middot;
+        tokens: {{ d.text.token_count or "?" }} &middot;
+        chars: {{ d.text.char_count }} &middot;
+        extracted: {{ d.text.extracted_at or "?" }}
+      </small>
+    </p>
+    {% if d.text.char_count == 0 %}
+      <p><em>DocumentText row exists but body is empty
+         (likely image-only PDF or unsupported mime).</em></p>
+    {% else %}
+    <details {% if d.text.char_count < 5000 %}open{% endif %}>
+      <summary>Show full text ({{ d.text.char_count }} chars)</summary>
+      <pre style="max-height: 30rem; overflow: auto; white-space: pre-wrap;
+                  font-size: 0.85rem; padding: 0.5rem; background: #f7f7f7;
+                  border: 1px solid #ddd;">{{ d.text.body }}</pre>
+    </details>
+    {% endif %}
+  {% else %}
+    <p><em>No DocumentText row.  Run
+       <code>project_db extract-content --project {{ d.project.canonical_id if d.project else "&lt;id&gt;" }}</code>.</em></p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>Proposals citing this document <small>({{ d.citing_proposals|length }})</small></h3>
+  {% if d.citing_proposals %}
+    <table>
+      <thead><tr><th>Field</th><th>Status</th><th>Confidence</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        {% for p in d.citing_proposals %}
+        <tr>
+          <td><code>{{ p.field_name }}</code></td>
+          <td><span class="pill pill-{{ p.status|lower }}">{{ p.status }}</span></td>
+          <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
+          <td><small>{{ p.created_at or "-" }}</small></td>
+          <td><a href="/proposals/{{ p.proposal_id }}">open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p><em>No proposals cite this document.</em></p>
+  {% endif %}
+</section>
+{% endblock %}

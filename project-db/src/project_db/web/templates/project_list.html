@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Projects{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Projects <small>({{ rows|length }})</small></h2>
+  <p>Every canonical Project, ordered by name. Counts are live.
+     Pending = open proposals for this project's tasks.</p>
+</hgroup>
+
+{% if not rows %}
+  <p><em>No projects in the DB yet. Run <code>project_db sync monday</code>
+     or <code>project_db sync GOOGLE_DRIVE</code>.</em></p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Client</th>
+      <th>Tasks</th>
+      <th>Dateless</th>
+      <th>Docs</th>
+      <th>Pending proposals</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr data-testid="project-row">
+      <td><a href="/projects/{{ r.canonical_id }}">{{ r.name }}</a></td>
+      <td><small><code>{{ r.status }}</code></small></td>
+      <td>{{ r.client or "-" }}</td>
+      <td>{{ r.task_count }}</td>
+      <td>{% if r.tasks_dateless %}<strong>{{ r.tasks_dateless }}</strong>{% else %}0{% endif %}</td>
+      <td>{{ r.doc_count }}</td>
+      <td>
+        {% if r.pending_proposals %}
+          <span class="pill pill-pending">{{ r.pending_proposals }}</span>
+        {% else %}
+          0
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

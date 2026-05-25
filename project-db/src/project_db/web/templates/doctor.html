@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Doctor{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Doctor
+    {% if d.flags %}
+      <span class="pill pill-warn">{{ d.flags|length }} flag(s)</span>
+    {% else %}
+      <span class="pill pill-accepted">clean</span>
+    {% endif %}
+  </h2>
+  <p>Read-only audit. Identical data to <code>project_db doctor</code>.</p>
+</hgroup>
+
+<!-- ============================ FLAGS ============================ -->
+<section>
+  <h3>Flags <small>({{ d.flags|length }})</small></h3>
+  {% if d.flags %}
+    <ul>
+      {% for f in d.flags %}
+      <li><small>{{ f }}</small></li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p><em>None -- canonical data looks sound.</em></p>
+  {% endif %}
+</section>
+
+<!-- ============================ PROJECTS ============================ -->
+<section>
+  <h3>Projects <small>({{ d.projects|length }})</small></h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Source</th>
+        <th>Docs</th>
+        <th>Tasks</th>
+        <th>Flags</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in d.projects %}
+      <tr>
+        <td><a href="/projects/{{ p.canonical_id }}">{{ p.name }}</a></td>
+        <td><small><code>{{ p.status or "-" }}</code></small></td>
+        <td><small>{{ p.sources_label }}</small></td>
+        <td>{{ p.doc_count }}</td>
+        <td>{{ p.task_count }}</td>
+        <td>
+          {% for f in p.flags %}
+            <span class="pill pill-warn">{{ f }}</span>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================ DOCUMENTS ============================ -->
+<section>
+  <h3>Documents
+    <small>({{ d.documents.total }} live, {{ d.documents.linked }} linked)</small>
+  </h3>
+
+  <table>
+    <thead><tr><th>Category</th><th>Count</th></tr></thead>
+    <tbody>
+      {% for cat, n in d.documents.by_category.items() %}
+      <tr>
+        <td><code>{{ cat }}</code></td>
+        <td>{{ n }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if d.documents.orphans %}
+    <p><span class="pill pill-warn">{{ d.documents.orphans }} orphan(s)</span>
+       -- documents with no project AND no category.</p>
+  {% endif %}
+</section>
+
+<!-- ============================ MISLINKS ============================ -->
+{% if d.mislinked %}
+<section>
+  <h3>Mislinked documents <small>({{ d.mislinked|length }})</small></h3>
+  <p><small>Each row is a Document linked to a Project that is NOT its
+     Drive-folder ancestor. After a clean rebuild this list should be empty.</small></p>
+  <table>
+    <thead><tr><th>Document</th><th>Folder</th><th>Linked project</th></tr></thead>
+    <tbody>
+      {% for m in d.mislinked %}
+      <tr>
+        <td><a href="/documents/{{ m.document_id }}">{{ m.document_name }}</a></td>
+        <td><small><code>{{ m.folder_path }}</code></small></td>
+        <td><a href="/projects/{{ m.linked_project_id }}">{{ m.linked_project_name }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<!-- ============================ CIVIC DUPS ============================ -->
+{% if d.civic_duplicates %}
+<section>
+  <h3>Shared civic numbers</h3>
+  <ul>
+    {% for c in d.civic_duplicates %}
+    <li>Civic <code>{{ c.civic }}</code>:
+      {% for n in c.names %}<em>{{ n }}</em>{% if not loop.last %}, {% endif %}{% endfor %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}
