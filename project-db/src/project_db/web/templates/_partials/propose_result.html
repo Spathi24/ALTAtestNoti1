@@ -1,0 +1,67 @@
+{# propose_result: outcome of a /propose/{timelines,scope} POST.
+
+Variables expected:
+  project_id   str
+  kind         "timeline" | "scope"
+  batch        ProposalBatch | None  (None when error is set)
+  error        str | None
+#}
+<section id="propose-result">
+  <h3>F. Generate proposals</h3>
+
+  {% if error %}
+    <article style="background: #f8d7da; border-color: #f5c2c7; color: #842029;">
+      <strong>! {{ kind }} generation failed.</strong>
+      <br><small>{{ error }}</small>
+    </article>
+    {# Re-render the buttons so the user can retry. #}
+    {% include "_partials/propose_buttons.html" %}
+  {% elif batch and batch.skipped_reason %}
+    <article style="background: #fff3cd; border-color: #f6c343;">
+      <strong>Skipped.</strong>
+      <br><small>{{ batch.skipped_reason }}</small>
+    </article>
+    {% include "_partials/propose_buttons.html" %}
+  {% elif batch %}
+    <article style="background: #d1e7dd; border-color: #a3cfbb;">
+      <strong>Generated {{ batch.created_count }} {{ kind }} proposal(s).</strong>
+      <br>
+      <small>
+        superseded prior pending: {{ batch.superseded_count }} &middot;
+        rejected as malformed: {{ batch.errors|length }} &middot;
+        flagged for review: {{ batch.warnings|length }}
+      </small>
+
+      {% if batch.warnings %}
+        <details style="margin-top: 0.5rem">
+          <summary>{{ batch.warnings|length }} warning(s) -- scrutinize before accepting</summary>
+          <ul>
+            {% for w in batch.warnings %}
+            <li><small>{{ w }}</small></li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}
+
+      {% if batch.errors %}
+        <details style="margin-top: 0.5rem">
+          <summary>{{ batch.errors|length }} rejected item(s)</summary>
+          <ul>
+            {% for e in batch.errors %}
+            <li><small>{{ e }}</small></li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}
+
+      <p style="margin-top: 0.5rem">
+        <a href="/projects/{{ project_id }}" role="button" class="secondary outline">
+          Reload page to see them in the Proposals panel
+        </a>
+      </p>
+    </article>
+    {% include "_partials/propose_buttons.html" %}
+  {% else %}
+    {% include "_partials/propose_buttons.html" %}
+  {% endif %}
+</section>

@@ -1,0 +1,67 @@
+{# task_dates_form: inline date-edit form for one task row.
+
+Spans the same columns as the static row.  Save POSTs to /set-dates;
+Cancel GETs /row.  Both swap back to the static row.
+
+Variables expected:
+  task   dict from _task_row_payload
+  error  str | None  -- shown above the inputs when set
+#}
+<tr id="task-row-{{ task.canonical_id }}">
+  <td colspan="8" style="background: #fff3cd;">
+    <form hx-post="/tasks/{{ task.canonical_id }}/set-dates"
+          hx-target="#task-row-{{ task.canonical_id }}"
+          hx-swap="outerHTML"
+          style="margin: 0">
+      <div style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
+        <div style="flex: 1 1 auto; min-width: 250px;">
+          <strong>{{ task.title }}</strong>
+          <br>
+          <small>
+            currently:
+            start <code>{{ task.start_date or "-" }}</code>,
+            end <code>{{ task.end_date or "-" }}</code>,
+            due <code>{{ task.due_date or "-" }}</code>
+          </small>
+        </div>
+        <label style="margin: 0">
+          <small>Start</small>
+          <input type="date" name="start_date" value="{{ task.start_date or '' }}"
+                 style="margin: 0">
+        </label>
+        <label style="margin: 0">
+          <small>End</small>
+          <input type="date" name="end_date" value="{{ task.end_date or '' }}"
+                 style="margin: 0">
+        </label>
+        <fieldset role="group" style="margin: 0">
+          <button type="submit">Save -&gt; Monday</button>
+          <button type="button"
+                  class="secondary outline"
+                  hx-get="/tasks/{{ task.canonical_id }}/row"
+                  hx-target="#task-row-{{ task.canonical_id }}"
+                  hx-swap="outerHTML">
+            Cancel
+          </button>
+        </fieldset>
+      </div>
+
+      {% if error %}
+        <div style="margin-top: 0.5rem; color: #842029;">
+          <strong>! Save failed.</strong>
+          <small>{{ error }}</small>
+          <br><small><em>Task left unchanged.  Adjust and retry.</em></small>
+        </div>
+      {% endif %}
+
+      <p style="margin: 0.5rem 0 0">
+        <small><em>
+          Save writes to Monday FIRST (same path the accept action uses).
+          The canonical Task is updated only on a successful Monday write.
+          No Proposal row is created for manual edits -- the audit trail
+          lives in Monday's activity log.
+        </em></small>
+      </p>
+    </form>
+  </td>
+</tr>

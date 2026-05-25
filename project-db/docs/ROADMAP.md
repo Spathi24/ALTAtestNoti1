@@ -331,8 +331,10 @@ least three times a week. If not, see STRATEGY.md §7.
 
 ## Phase 6 — Minimal UI (read-only window)
 
-**Status (2026-05-25, EOD):** Phases A, B, C, D all landed.  The full
-read + decision loop is in the browser:
+**Status (2026-05-25, late EOD):** Phases A, B, C, D, **D.1** all
+landed.  A PM can now do the entire daily loop from the browser --
+generate proposals (Sonnet), ask questions (Haiku + canned reports),
+edit dates inline, dry-run + accept Monday writes:
   - dashboard with live counts + pending strip (Phase A)
   - `/projects` list + 5-panel detail (Phase B)
   - `/documents/{id}` metadata + full extracted text (Phase B)
@@ -341,12 +343,20 @@ read + decision loop is in the browser:
   - **`POST /proposals/{id}/dry-run /accept /reject` -- two-click
     accept with stale-state guard, thin adapter over the existing
     `accept_proposal` / `reject_proposal` (Phase D)**
+  - `POST /projects/{id}/propose/timelines /scope` -- LLM proposal
+    generation behind hx-confirm token-cost dialogs (Phase D.1)
+  - `GET/POST /ask` -- natural-language Q&A; canned reports answer
+    instantly, free-form falls through to Haiku (Phase D.1)
+  - `POST /tasks/{id}/set-dates` -- manual task date edit; writes
+    Monday FIRST via `sync_back`, mirrors canonically on success;
+    no Proposal row (Phase D.1)
+  - Tasks panel reworked: one combined table with all dates visible,
+    `dateless` pill on rows missing all three, inline HTMX edit per
+    row (Phase D.1)
 
-**504 tests** passing (+82 from Phases A-D combined) including
+**536 tests** passing (+114 from Phases A-D.1 combined) including
 permission-boundary tests pinning the read-only and mutation surfaces.
-Phase D adds 20 new tests for accept/reject including the load-bearing
-"already-accepted returns stale with `sync_back.call_count == 0`"
-invariant.
+Phase D.1 adds 32 new tests for propose / ask / task-date editing.
 
 Phase E (DB inspector + raw JSON panels) is the last UI slice.
 

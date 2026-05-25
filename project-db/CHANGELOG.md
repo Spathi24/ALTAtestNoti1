@@ -9,6 +9,118 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-25 (night) — Phase 6 / M5 part D.1: action surfaces
+
+**Theme:** The user observed that Phase D shipped an Accept button but
+all 19 PENDING proposals were scope_gap (intentionally Accept-disabled),
+so the loop wasn't observable end-to-end.  Fix: add the three action
+surfaces that let a PM actually USE the system from the browser --
+generate proposals, ask questions, edit task dates directly.
+
+### Routes added
+- `POST /projects/{id}/propose/timelines` -- spends Sonnet tokens to
+  propose forward-looking start/end dates for dateless tasks.
+  hx-confirm warning before each click.
+- `POST /projects/{id}/propose/scope`     -- spends Sonnet tokens to
+  flag scope items in contracts with no matching Monday task.
+- `GET /ask`, `POST /ask` -- natural-language Q&A.  Keyword routes
+  answer instantly via canned reports; no-match free-form questions
+  fall through to the fast model (Haiku via `get_fast_provider`)
+  reading a JSON snapshot of the whole DB.
+- `GET /tasks/{id}/dates-form`   -- inline edit form for one task row
+- `POST /tasks/{id}/set-dates`   -- writes the timeline to Monday FIRST,
+  mirrors onto the canonical Task on success.  No Proposal row created
+  (manual edits aren't AI suggestions; the audit lives in Monday's
+  activity log).
+- `GET /tasks/{id}/row`          -- static-row partial, used by the
+  Cancel button on the edit form.
+
+### Backend: set_task_timeline
+- New function `ai.proposals.set_task_timeline(session, task_id, *,
+  start_date, end_date, writeback, decided_by)`.
+- Mirrors `accept_proposal`'s write-first/mirror-second ordering exactly.
+- On any failure (validation, bad dates, end-before-start, missing
+  connector, Monday returned False, connector raised) the DB is left
+  untouched.
+
+### Tasks panel reworked
+The previous "dateless first, then a collapsed All tasks table" layout
+hid the actual dates.  Now: ONE combined sortable table on the project
+page with every task's title, status, Monday status, start, end, due,
+a `dateless` pill when all three dates are NULL, and an Edit button
+per row.  Edit swaps the row in place for an inline date-edit form
+via HTMX; Save writes to Monday and renders the updated row;
+Cancel swaps back without touching the DB.
+
+### Generate panel
+New section F on the project detail page: two buttons
+`Propose timelines (LLM)` and `Propose scope gaps (LLM)`.  Each carries
+an explicit hx-confirm dialog that names the token cost.  The result
+fragment shows the batch summary (created / superseded / rejected /
+warnings) with details collapsible.
+
+### Discoverability
+- New nav link `Ask` in the top bar.
+- The /ask page lists every keyword pattern the dispatcher routes,
+  so a non-technical user can see what's free and what spends tokens
+  ahead of time.
+
+### Verification
+- **+32 tests** (`tests/test_web_phase_d1.py`), **536 / 536 total
+  passing**.
+- Tests cover: propose-timelines happy/skip/provider-error, scope happy
+  path, /ask empty / canned / no-match LLM fallback / failed fast
+  provider, manual task edit happy / failing writeback / raising
+  writeback / end-before-start / 404, tasks panel renders dates +
+  dateless pill + edit URLs.
+- Phase D.1 forbidden-routes test class added: plain `/propose` and
+  `/propose/timelines` (without project scope), `/proposals/accept-all`
+  / `reject-all`, `/tasks/{id}/edit` and `/tasks/{id}/delete` (only
+  `/set-dates` and `/dates-form` exist), `/sync` -- all still 404 or 405.
+- **Live smoke against the real DB**:
+  - `/ask "Which of our projects looks most at risk?"` -> mode=llm,
+    `spent tokens` pill, real Haiku answer citing 923 Rockland.
+  - `/ask "help"` and `/ask "what active projects do we have?"` ->
+    mode=canned, `free` pill, instant response with structured data.
+  - `POST /projects/{5768 St-Laurent}/propose/timelines` -> Sonnet
+    call (~10s), batch result: 1 timeline created, 1 rejected as
+    malformed (the past-date guard fired correctly on a 2026-05-10
+    item -- exact behavior prompt-engineering review #4 mandates).
+  - The newly-created timeline proposal renders the **idle fragment
+    with Accept ENABLED** (no `disabled` attribute, no advisory-only
+    copy), distinct from the scope_gap proposals whose Accept stays
+    disabled.
+  - `POST /proposals/{new timeline}/dry-run` -> yellow PREVIEW panel
+    showing the actual Monday payload
+    `{"timeline": {"from": "2026-06-20", "to": "2026-06-21"}}` for
+    task "Unit 8".  Nothing written.
+  - Tasks panel for 5768 St-Laurent shows 16 task rows with the
+    dateless pill on 5 rows; every row carries a working
+    `hx-get="/tasks/{id}/dates-form"` Edit button which renders the
+    inline date inputs + Save/Cancel.
+
+### What was NOT done
+- A real Monday accept through the UI was deliberately NOT executed,
+  same precedent as the 2026-05-21 CLI accept -- that needs explicit
+  user sign-off.  The dry-run preview is fully verified; the actual
+  Confirm-accept is one click away.
+
+### State at EOD
+- **536 tests** passing.
+- A PM can now do the entire daily loop from the browser:
+  1. Click "Ask" and ask anything (canned reports free, Haiku
+     fallback for free-form).
+  2. Open a project, click "Propose timelines" or "Propose scope gaps"
+     to spend Sonnet tokens generating proposals.
+  3. Click into a proposal, read the citations, dry-run the Monday
+     payload, then Confirm to actually write -- or Reject with a
+     reason.
+  4. Or skip the AI entirely: click Edit on any dateless task row,
+     type dates, Save -- written to Monday directly.
+- Phase E (DB inspector + raw JSON panels) is the only UI slice left.
+
+---
+
 ## 2026-05-25 (evening) — Phase 6 / M5 part D: accept / reject in the UI
 
 **Theme:** The riskiest piece of the UI -- the one path that mutates a

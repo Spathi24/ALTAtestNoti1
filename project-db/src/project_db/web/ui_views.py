@@ -232,6 +232,41 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
     dateless = report_tasks_without_dates(session, ref)
     budget = report_budget_vs_contract(session, ref)
 
+    # Combined task list with EVERY date column populated, so the project
+    # page can show "what's dated, what isn't, what dates were set" in one
+    # table.  The reason this is here and not in report_project_overview:
+    # that report caps tasks at 50 + omits monday_status_label; this list
+    # is uncapped and dateless-first-sorted for the UI's edit-in-place flow.
+    from project_db.db.models.work import Task as _Task  # local: avoid shadowing
+    all_tasks_q = (
+        session.query(_Task)
+        .filter(_Task.project_id == pid)
+        .order_by(_Task.title)
+        .all()
+    )
+    def _row(t: _Task) -> dict[str, Any]:
+        is_dateless = (
+            t.start_date is None and t.end_date is None and t.due_date is None
+        )
+        return {
+            "canonical_id": str(t.canonical_id),
+            "title": t.title,
+            "status": t.status.value if hasattr(t.status, "value") else str(t.status),
+            "monday_status_label": t.monday_status_label,
+            "start_date": t.start_date.isoformat() if t.start_date else None,
+            "end_date": t.end_date.isoformat() if t.end_date else None,
+            "due_date": t.due_date.isoformat() if t.due_date else None,
+            "is_subitem": bool(t.is_subitem),
+            "is_dateless": is_dateless,
+        }
+    # Dateless first (so they don't get lost), then by title.  The user
+    # explicitly asked for visibility of which tasks are dateless and
+    # what dates the dated ones have.
+    all_tasks_full = sorted(
+        (_row(t) for t in all_tasks_q),
+        key=lambda r: (not r["is_dateless"], r["title"] or ""),
+    )
+
     # Proposals scoped to this project's tasks.  Same data shape as
     # /proposals -- list_proposals returns enrichment via _enrich_target.
     task_ids = {
@@ -288,6 +323,10 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
         "client": overview.get("client"),
         "stats": overview.get("stats", {}),
         "external_ids": overview.get("external_ids", []),
+        # `tasks_full` is the combined dated+dateless table the UI renders.
+        # The legacy `tasks` / `dateless_tasks` keys stay for any consumer
+        # that still uses them.
+        "tasks_full": all_tasks_full,
         "tasks": overview.get("tasks", []),
         "dateless_tasks": dateless.get("tasks", []),
         "dateless_count": dateless.get("task_count", 0),

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Ask{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Ask</h2>
+  <p>Natural-language Q&amp;A over the canonical DB.  Keyword-matched
+     reports answer instantly.  Free-form questions fall through to
+     the fast LLM (Haiku) over a JSON snapshot of the whole database.</p>
+</hgroup>
+
+<form method="post" action="/ask">
+  <label>
+    Question
+    <textarea name="question" rows="3" autofocus
+              placeholder="e.g. 'what active projects do we have?', 'budget vs contract for 923 Rockland', 'which project looks most at risk?', 'help'">{{ question or "" }}</textarea>
+  </label>
+  <fieldset role="group">
+    <button type="submit">Ask</button>
+    <a href="/ask" role="button" class="secondary outline">Clear</a>
+  </fieldset>
+</form>
+
+{% if result is not none %}
+<section>
+  <h3>Answer
+    {% if mode %}
+      <small>
+        &middot;
+        mode: <code>{{ mode }}</code>
+        {% if report %} &middot; report: <code>{{ report }}</code>{% endif %}
+        {% if mode == "llm" %}<span class="pill pill-pending">spent tokens</span>{% endif %}
+        {% if mode == "canned" %}<span class="pill pill-accepted">free</span>{% endif %}
+      </small>
+    {% endif %}
+  </h3>
+  {% if format == "json" %}
+    <pre style="max-height: 30rem; overflow: auto; padding: 0.5rem;
+                background: #f7f7f7; border: 1px solid #ddd;
+                font-size: 0.85rem;">{{ result }}</pre>
+  {% else %}
+    <article>{{ result }}</article>
+  {% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h3>Discoverable patterns</h3>
+  <p><small>Keyword phrases that route to a deterministic canned report
+     (no tokens spent):</small></p>
+  <ul>
+    <li><code>active projects</code> / <code>open projects</code></li>
+    <li><code>pipeline</code> / <code>deal value</code></li>
+    <li><code>ar aging</code> / <code>outstanding invoices</code></li>
+    <li><code>overview of project &lt;name&gt;</code></li>
+    <li><code>docs for project &lt;name&gt;</code></li>
+    <li><code>tasks without dates</code> [<code>for project &lt;name&gt;</code>]</li>
+    <li><code>which projects are missing documents</code></li>
+    <li><code>budget vs contract for project &lt;name&gt;</code></li>
+    <li><code>help</code> -- prints this list (via the assistant itself)</li>
+  </ul>
+  <p><small>Anything that doesn't match a pattern goes to the fast LLM
+     -- it gets a JSON snapshot of the whole DB but no document text;
+     for document-aware questions use <code>project_db daily &lt;project&gt;</code>
+     or generate proposals from the project page.</small></p>
+</section>
+{% endblock %}

@@ -1060,6 +1060,119 @@ def accept_proposal(
     }
 
 
+def set_task_timeline(
+    session: Session,
+    task_id: Any,
+    *,
+    start_date: Any,
+    end_date: Any,
+    writeback: Any,
+    decided_by: str | None = None,
+) -> dict[str, Any]:
+    """Write a task's timeline directly to Monday + mirror onto the canonical row.
+
+    The "manual edit" sibling of ``accept_proposal``.  No Proposal row is
+    created -- this is a deliberate human action, not an AI suggestion,
+    so the proposal table would only add noise.  The audit trail lives
+    in Monday's activity log + this DB's updated_at on the Task.
+
+    SAME ORDERING as accept_proposal: Monday write FIRST, canonical
+    mirror SECOND.  A failed write leaves the Task untouched.
+
+    Args:
+      task_id      canonical Task UUID
+      start_date   ISO date string or date; may be None to clear the column
+      end_date     ISO date string or date; may be None
+      writeback    Object with ``sync_back(task, field_updates) -> bool``
+                   (in practice ``MondayConnector``; in tests, a fake)
+      decided_by   Audit string; mirrored onto Task.notes for traceability
+                   when set (cheap audit; structured audit will follow
+                   when M5 ships a dedicated activity log).
+
+    Returns ``{"ok": bool, ...}``.  On any failure the DB is left untouched.
+    """
+    from project_db.db.models import Task
+
+    try:
+        tid = uuid.UUID(str(task_id))
+    except (ValueError, TypeError):
+        return {"ok": False, "error": f"not a valid UUID: {task_id!r}"}
+
+    task = session.query(Task).filter_by(canonical_id=tid).one_or_none()
+    if task is None:
+        return {"ok": False, "error": f"no task with id {task_id}"}
+
+    # Both dates optional, but if BOTH are missing it's a no-op (clearing
+    # a Monday timeline column requires a different payload shape we
+    # haven't built yet -- guard against it explicitly so we don't write
+    # something the connector silently ignores).
+    start = _parse_date(start_date) if start_date else None
+    end = _parse_date(end_date) if end_date else None
+    if start is None and end is None:
+        return {
+            "ok": False,
+            "error": "at least one of start_date / end_date is required "
+                     "(clearing the timeline isn't supported yet).",
+        }
+    if start_date and start is None:
+        return {"ok": False, "error": f"unparseable start_date: {start_date!r}"}
+    if end_date and end is None:
+        return {"ok": False, "error": f"unparseable end_date: {end_date!r}"}
+    if start and end and end < start:
+        return {
+            "ok": False,
+            "error": f"end_date ({end}) is before start_date ({start})",
+        }
+
+    if writeback is None:
+        return {"ok": False, "error": "no writeback connector supplied"}
+
+    # If only one date was supplied, default the missing one to the
+    # supplied one so Monday gets a valid 2-key payload.  Single-date
+    # timelines aren't well-supported by Monday's timeline column.
+    monday_from = (start or end).isoformat()
+    monday_to = (end or start).isoformat()
+    field_updates = {"timeline": {"from": monday_from, "to": monday_to}}
+
+    try:
+        wrote = writeback.sync_back(task, field_updates)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": f"write-back raised ({exc}) -- task left unchanged",
+        }
+    if not wrote:
+        return {
+            "ok": False,
+            "error": (
+                "Monday write-back returned False -- task left unchanged. "
+                "Likely causes: the task's board has no timeline column, or "
+                "no Monday mapping (ExternalId) exists for this task."
+            ),
+        }
+
+    # Mirror onto canonical Task.  ``end`` may be None when caller only
+    # supplied start (legal as long as we got SOMETHING).
+    task.start_date = start
+    task.end_date = end
+    if decided_by:
+        # Lightweight audit note -- not a formal log, just enough to see
+        # in `project_db doctor` / the UI later that this was a manual edit.
+        prefix = f"[manual edit by {decided_by}] "
+        task.notes = (prefix + (task.notes or "")).strip()
+    session.flush()
+
+    return {
+        "ok": True,
+        "task_id": str(tid),
+        "task_title": task.title,
+        "wrote_to_monday": field_updates,
+        "start_date": start.isoformat() if start else None,
+        "end_date": end.isoformat() if end else None,
+        "decided_by": decided_by,
+    }
+
+
 def get_proposal_detail(
     session: Session, proposal_id: Any
 ) -> dict[str, Any] | None:

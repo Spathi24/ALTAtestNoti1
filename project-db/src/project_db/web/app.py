@@ -18,9 +18,11 @@ from sqlalchemy.orm import Session
 
 from project_db.web import ui_views
 from project_db.web.deps import db, db_path, git_sha
+from project_db.web.routes import ask as ask_routes
 from project_db.web.routes import doctor as doctor_routes
 from project_db.web.routes import projects as project_routes
 from project_db.web.routes import proposals as proposal_routes
+from project_db.web.routes import tasks as task_routes
 
 
 _PKG_DIR = Path(__file__).parent
@@ -57,6 +59,8 @@ def create_app() -> FastAPI:
     project_routes.register(page_router, templates)
     proposal_routes.register(page_router, templates)
     doctor_routes.register(page_router, templates)
+    ask_routes.register(page_router, templates)
+    task_routes.register(page_router, templates)
     app.include_router(page_router)
 
     return app

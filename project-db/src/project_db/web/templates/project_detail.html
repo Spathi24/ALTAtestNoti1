@@ -19,6 +19,7 @@
     <li><a href="#tasks">Tasks ({{ d.dateless_count }} dateless)</a></li>
     <li><a href="#documents">Documents ({{ d.documents_total }})</a></li>
     <li><a href="#proposals">Proposals ({{ d.proposals_total }})</a></li>
+    <li><a href="#propose-result">Generate</a></li>
   </ul>
 </nav>
 
@@ -96,48 +97,39 @@
 
 <!-- ============================ TASKS ============================ -->
 <section id="tasks">
-  <h3>C. Tasks</h3>
+  <h3>C. Tasks
+    <small>({{ d.tasks_full|length }} total, {{ d.dateless_count }} dateless)</small>
+  </h3>
+  <p><small>
+    Dateless tasks listed first.  Click <em>Edit</em> on any row to set
+    or change dates -- the change writes to Monday FIRST via
+    <code>sync_back</code> (same path Accept uses), then mirrors onto
+    the canonical Task on success.
+  </small></p>
 
-  {% if d.dateless_tasks %}
-    <details open>
-      <summary><strong>{{ d.dateless_count }} dateless task(s)</strong>
-        <small>(the candidates for timeline proposals)</small>
-      </summary>
-      <table>
-        <thead><tr><th>Title</th><th>Status</th><th>Monday status</th><th>Subitem?</th></tr></thead>
-        <tbody>
-          {% for t in d.dateless_tasks %}
-          <tr>
-            <td>{{ t.title }}</td>
-            <td><small><code>{{ t.status }}</code></small></td>
-            <td>{{ t.monday_status_label or "-" }}</td>
-            <td>{% if t.is_subitem %}yes{% else %}-{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </details>
+  {% if d.tasks_full %}
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Status</th>
+        <th>Monday</th>
+        <th>Start</th>
+        <th>End</th>
+        <th>Due</th>
+        <th></th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in d.tasks_full %}
+        {% include "_partials/task_dates_row.html" %}
+      {% endfor %}
+    </tbody>
+  </table>
   {% else %}
-    <p><em>No dateless tasks. All tasks have at least one date.</em></p>
+    <p><em>No tasks for this project.</em></p>
   {% endif %}
-
-  <details>
-    <summary>All tasks ({{ d.tasks|length }} shown, capped at 50)</summary>
-    <table>
-      <thead><tr><th>Title</th><th>Status</th><th>Start</th><th>End</th><th>Due</th></tr></thead>
-      <tbody>
-        {% for t in d.tasks %}
-        <tr>
-          <td>{{ t.title }}</td>
-          <td><small><code>{{ t.status }}</code></small></td>
-          <td><small>{{ t.start_date or "-" }}</small></td>
-          <td><small>{{ t.end_date or "-" }}</small></td>
-          <td><small>{{ t.due_date or "-" }}</small></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </details>
 </section>
 
 <!-- ============================ DOCUMENTS ============================ -->
@@ -228,11 +220,19 @@
   {% endfor %}
 
   {% if d.proposals_total == 0 %}
-    <p><em>No proposals for this project.
-       Generate with:</em>
-       <code>project_db propose timelines "{{ d.project.name }}"</code> or
-       <code>project_db propose scope "{{ d.project.name }}"</code>.
-    </p>
+    <p><em>No proposals for this project yet.  Use the
+       <a href="#propose-result">Generate</a> panel below.</em></p>
   {% endif %}
+</section>
+
+<!-- ============================ GENERATE PROPOSALS ============================
+The two LLM-spending actions.  Each carries an hx-confirm dialog so the
+user has to explicitly acknowledge the token cost before each click.
+================================================================ -->
+<section id="propose-result">
+  <h3>F. Generate proposals</h3>
+  {% with project_id=d.project.canonical_id %}
+    {% include "_partials/propose_buttons.html" %}
+  {% endwith %}
 </section>
 {% endblock %}

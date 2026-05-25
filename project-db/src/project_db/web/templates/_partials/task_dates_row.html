@@ -1,0 +1,36 @@
+{# task_dates_row: ONE row of the project's tasks table.
+
+Self-contained <tr id="task-row-{id}"> so HTMX outerHTML swap works.
+The dateless pill renders when all three date fields are NULL.
+
+Variables expected:
+  t              dict from _task_row_payload
+  just_saved     bool (optional) -- highlights row when set
+#}
+<tr id="task-row-{{ t.canonical_id }}"
+    {% if just_saved %}style="background: #d1e7dd;"{% endif %}>
+  <td>
+    {{ t.title }}
+    {% if t.is_subitem %}<small><em>(sub)</em></small>{% endif %}
+  </td>
+  <td><small><code>{{ t.status }}</code></small></td>
+  <td><small>{{ t.monday_status_label or "-" }}</small></td>
+  <td><small>{{ t.start_date or "-" }}</small></td>
+  <td><small>{{ t.end_date or "-" }}</small></td>
+  <td><small>{{ t.due_date or "-" }}</small></td>
+  <td>
+    {% if not t.start_date and not t.end_date and not t.due_date %}
+      <span class="pill pill-warn">dateless</span>
+    {% endif %}
+  </td>
+  <td>
+    <button type="button"
+            class="secondary outline"
+            hx-get="/tasks/{{ t.canonical_id }}/dates-form"
+            hx-target="#task-row-{{ t.canonical_id }}"
+            hx-swap="outerHTML"
+            style="padding: 0.1rem 0.4rem; font-size: 0.75rem;">
+      Edit
+    </button>
+  </td>
+</tr>

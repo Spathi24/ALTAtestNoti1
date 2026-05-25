@@ -23,8 +23,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from project_db.ai.proposals import accept_proposal, reject_proposal
-from project_db.db.models import Proposal
+from project_db.ai.proposals import (
+    accept_proposal,
+    generate_scope_proposals,
+    generate_timeline_proposals,
+    reject_proposal,
+)
+from project_db.db.models import Project, Proposal
 from project_db.db.models.proposals import ProposalStatus
 from project_db.web import deps, ui_views
 from project_db.web.deps import db
@@ -125,6 +130,34 @@ def _render_decided(
             "rejection_reason": proposal.rejection_reason,
             "wrote_to_monday": wrote_to_monday,
             "task_title": task_title,
+        },
+    )
+
+
+def _resolve_project_uuid(session: Session, project_id: str) -> Project | None:
+    pid = _coerce_uuid(project_id)
+    if pid is None:
+        return None
+    return session.query(Project).filter_by(canonical_id=pid).one_or_none()
+
+
+def _render_propose_result(
+    templates: Jinja2Templates,
+    request: Request,
+    *,
+    project_id: str,
+    kind: str,
+    batch: object | None,
+    error: str | None = None,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "_partials/propose_result.html",
+        {
+            "project_id": project_id,
+            "kind": kind,
+            "batch": batch,
+            "error": error,
         },
     )
 
@@ -298,3 +331,88 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         session.refresh(p)
         return _render_decided(templates, request, p)
+
+    # ---------------------------------------------------------------- POST propose timelines
+    @router.post(
+        "/projects/{project_id}/propose/timelines",
+        response_class=HTMLResponse,
+    )
+    def propose_timelines(
+        project_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Generate timeline proposals (spends LLM tokens).
+
+        Thin adapter over ``generate_timeline_proposals``.  Uses the
+        deep provider (Sonnet via ``get_default_provider``).  The button
+        in the UI carries hx-confirm; this route assumes the user has
+        already confirmed.
+        """
+        project = _resolve_project_uuid(session, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
+        try:
+            from project_db.ai.providers import get_default_provider
+            provider = get_default_provider()
+        except Exception as exc:  # noqa: BLE001
+            return _render_propose_result(
+                templates, request,
+                project_id=project_id, kind="timeline", batch=None,
+                error=f"could not build LLM provider: {exc}",
+            )
+
+        try:
+            batch = generate_timeline_proposals(session, provider, project.canonical_id)
+        except Exception as exc:  # noqa: BLE001
+            return _render_propose_result(
+                templates, request,
+                project_id=project_id, kind="timeline", batch=None,
+                error=f"proposal generation failed: {exc}",
+            )
+
+        return _render_propose_result(
+            templates, request,
+            project_id=project_id, kind="timeline", batch=batch,
+        )
+
+    # ---------------------------------------------------------------- POST propose scope
+    @router.post(
+        "/projects/{project_id}/propose/scope",
+        response_class=HTMLResponse,
+    )
+    def propose_scope(
+        project_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Generate scope-gap proposals (spends LLM tokens).  Same shape
+        as the timelines route -- thin adapter; hx-confirm in the template."""
+        project = _resolve_project_uuid(session, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
+        try:
+            from project_db.ai.providers import get_default_provider
+            provider = get_default_provider()
+        except Exception as exc:  # noqa: BLE001
+            return _render_propose_result(
+                templates, request,
+                project_id=project_id, kind="scope", batch=None,
+                error=f"could not build LLM provider: {exc}",
+            )
+
+        try:
+            batch = generate_scope_proposals(session, provider, project.canonical_id)
+        except Exception as exc:  # noqa: BLE001
+            return _render_propose_result(
+                templates, request,
+                project_id=project_id, kind="scope", batch=None,
+                error=f"proposal generation failed: {exc}",
+            )
+
+        return _render_propose_result(
+            templates, request,
+            project_id=project_id, kind="scope", batch=batch,
+        )

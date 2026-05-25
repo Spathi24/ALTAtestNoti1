@@ -1,0 +1,30 @@
+{# propose_buttons: the two action buttons.  Lives in its own partial so
+   propose_result can re-render them after a success/skip/error.
+
+Variables expected:
+  project_id   str
+#}
+<p><small>
+  These call the LLM (Sonnet via <code>get_default_provider</code>) and
+  cost real tokens. The browser will ask you to confirm before each
+  click takes effect. Each run supersedes prior PENDING proposals for
+  the same target.
+</small></p>
+
+<fieldset role="group" style="max-width: 40rem">
+  <button type="button"
+          hx-post="/projects/{{ project_id }}/propose/timelines"
+          hx-target="#propose-result"
+          hx-swap="outerHTML"
+          hx-confirm="Spend tokens to generate timeline proposals for this project?  Sonnet will read the project's documents + dateless tasks and propose start/end dates.">
+    Propose timelines (LLM)
+  </button>
+  <button type="button"
+          class="secondary"
+          hx-post="/projects/{{ project_id }}/propose/scope"
+          hx-target="#propose-result"
+          hx-swap="outerHTML"
+          hx-confirm="Spend tokens to generate scope-gap proposals for this project?  Sonnet will read the project's contracts/SOWs and flag scope items with no matching task.">
+    Propose scope gaps (LLM)
+  </button>
+</fieldset>
