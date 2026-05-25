@@ -11,12 +11,14 @@ Variables expected:
   the same target.
 </small></p>
 
-<fieldset role="group" style="max-width: 40rem">
+<fieldset role="group" id="propose-buttons" style="max-width: 40rem">
   <button type="button"
           hx-post="/projects/{{ project_id }}/propose/timelines"
           hx-target="#propose-result"
           hx-swap="outerHTML"
-          hx-confirm="Spend tokens to generate timeline proposals for this project?  Sonnet will read the project's documents + dateless tasks and propose start/end dates.">
+          hx-confirm="Spend tokens to generate timeline proposals for this project?  Sonnet will read the project's documents + dateless tasks and propose start/end dates."
+          hx-indicator="#propose-spinner"
+          hx-disabled-elt="#propose-buttons">
     Propose timelines (LLM)
   </button>
   <button type="button"
@@ -24,7 +26,15 @@ Variables expected:
           hx-post="/projects/{{ project_id }}/propose/scope"
           hx-target="#propose-result"
           hx-swap="outerHTML"
-          hx-confirm="Spend tokens to generate scope-gap proposals for this project?  Sonnet will read the project's contracts/SOWs and flag scope items with no matching task.">
+          hx-confirm="Spend tokens to generate scope-gap proposals for this project?  Sonnet will read the project's contracts/SOWs and flag scope items with no matching task."
+          hx-indicator="#propose-spinner"
+          hx-disabled-elt="#propose-buttons">
     Propose scope gaps (LLM)
   </button>
 </fieldset>
+<span id="propose-spinner" class="htmx-indicator">
+  <span class="working">
+    Calling Sonnet... this usually takes 10-30s.
+    <strong>Don't click again.</strong>
+  </span>
+</span>

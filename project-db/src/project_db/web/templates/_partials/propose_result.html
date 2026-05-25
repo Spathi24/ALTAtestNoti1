@@ -20,6 +20,25 @@ Variables expected:
     <article style="background: #fff3cd; border-color: #f6c343;">
       <strong>Skipped.</strong>
       <br><small>{{ batch.skipped_reason }}</small>
+
+      {% if batch.errors %}
+        <p style="margin-top: 0.5rem"><small><strong>Details:</strong></small></p>
+        <ul>
+          {% for e in batch.errors %}
+          <li><small>{{ e }}</small></li>
+          {% endfor %}
+        </ul>
+        {% set _joined = batch.errors|join(' ')|lower %}
+        {% if 'trunc' in _joined %}
+          <p><small><em>
+            The model's output was cut off at the token cap.  This usually
+            means the project has so much document text that the reply
+            didn't fit.  The next attempt will automatically use a larger
+            cap (via complete_json's truncation-retry).  Try again --
+            if it still fails, ask the team to shrink the prompt budget.
+          </em></small></p>
+        {% endif %}
+      {% endif %}
     </article>
     {% include "_partials/propose_buttons.html" %}
   {% elif batch %}

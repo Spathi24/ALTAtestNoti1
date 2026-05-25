@@ -444,7 +444,14 @@ def generate_scope_proposals(
     *,
     token_budget: int = 20_000,
     max_documents_with_text: int = 30,
-    max_output_tokens: int = 3000,
+    # Scope responses tend to be longer than timeline responses -- the
+    # model lists multiple gap items, each with scope_item +
+    # suggested_task_title + reasoning + source_document.  5000 leaves
+    # enough room for ~15-20 well-cited gaps; complete_json bumps further
+    # via its truncation-detection retry path.  Was 3000 -- raised after
+    # 6554 Rue Saint Hubert produced 9k-character truncated JSON on the
+    # first attempt AND the retry, with no useful result.
+    max_output_tokens: int = 5000,
 ) -> ProposalBatch:
     """Flag scope-of-work items in a project's documents that have no Monday task.
 

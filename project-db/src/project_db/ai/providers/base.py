@@ -100,6 +100,12 @@ class LLMProvider(ABC):
                            if you need a parsed result.
         """
 
+    # Backend finish_reason values that mean "I ran out of room, the
+    # output is truncated."  Normalized across backends:
+    #   - Anthropic: stop_reason = "max_tokens"
+    #   - OpenAI / OpenAI-compatible: finish_reason = "length"
+    _TRUNCATION_REASONS = frozenset({"max_tokens", "length"})
+
     def complete_json(
         self,
         *,
@@ -108,6 +114,7 @@ class LLMProvider(ABC):
         model: str | None = None,
         max_retries: int = 1,
         max_tokens: int = 4000,
+        max_tokens_ceiling: int = 16000,
     ) -> Any:
         """Convenience: call ``complete`` and parse the response as JSON.
 
@@ -116,10 +123,21 @@ class LLMProvider(ABC):
         valid JSON, here is the parse error" instruction.  Works on
         every backend regardless of native structured-output support.
 
+        Truncation handling: when the previous response had
+        ``finish_reason`` in ``_TRUNCATION_REASONS``, the parse failure
+        is almost certainly because the model ran out of room.  Retrying
+        with the same cap is wasted -- the next call will also truncate.
+        We bump ``max_tokens`` by 1.5x (capped at ``max_tokens_ceiling``)
+        for the retry, and the error message names truncation
+        specifically so the caller can render a useful hint instead of
+        a generic "bad JSON" message.
+
         Raises ``LLMProviderError`` after exhausting retries.
         """
         attempt = 0
         last_error: Exception | None = None
+        last_was_truncated = False
+        current_max_tokens = max_tokens
         convo = list(messages)
         while attempt <= max_retries:
             resp = self.complete(
@@ -127,7 +145,7 @@ class LLMProvider(ABC):
                 system=system,
                 model=model,
                 temperature=0.0,
-                max_tokens=max_tokens,
+                max_tokens=current_max_tokens,
                 response_format="json_object",
             )
             text = resp.content.strip()
@@ -141,23 +159,53 @@ class LLMProvider(ABC):
                 return json.loads(text)
             except json.JSONDecodeError as exc:
                 last_error = exc
+                truncated = resp.finish_reason in self._TRUNCATION_REASONS
+                last_was_truncated = truncated
                 logger.warning(
-                    "[%s] JSON parse failed on attempt %d: %s",
-                    self.name, attempt + 1, exc,
+                    "[%s] JSON parse failed on attempt %d (finish_reason=%s%s): %s",
+                    self.name, attempt + 1, resp.finish_reason,
+                    "; output truncated -- bumping max_tokens for retry"
+                    if truncated else "",
+                    exc,
                 )
+                # If we ran out of room last time, retrying with the same
+                # cap is wasted -- bump it.  Cap the growth so we don't
+                # spend unboundedly on a misbehaving prompt.
+                if truncated:
+                    current_max_tokens = min(
+                        int(current_max_tokens * 1.5),
+                        max_tokens_ceiling,
+                    )
                 convo = list(messages) + [
                     LLMMessage(role="assistant", content=resp.content),
                     LLMMessage(
                         role="user",
                         content=(
                             f"Your previous output was not valid JSON.  "
-                            f"Parse error: {exc}.  Reply with ONLY valid "
-                            f"JSON, no prose, no markdown fences."
+                            f"Parse error: {exc}.  "
+                            + (
+                                "Your previous reply was cut off because "
+                                "you ran out of token budget; be more "
+                                "concise this time.  "
+                                if truncated else ""
+                            )
+                            + "Reply with ONLY valid JSON, no prose, no "
+                            "markdown fences."
                         ),
                     ),
                 ]
                 attempt += 1
+        # Surface truncation explicitly so callers can render a useful
+        # message ("the model's output was too long for the configured
+        # max_tokens") instead of a generic "bad JSON".
+        truncation_hint = (
+            "  The model's output was truncated at the token cap on the "
+            "last attempt -- pass a larger max_tokens, or shrink the "
+            "input prompt."
+            if last_was_truncated else ""
+        )
         raise LLMProviderError(
             f"{self.name}: response was not parseable JSON after "
-            f"{max_retries + 1} attempts.  Last error: {last_error}"
+            f"{max_retries + 1} attempts.  Last error: {last_error}."
+            + truncation_hint
         )

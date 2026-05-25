@@ -12,6 +12,8 @@ Variables expected:
     <form hx-post="/tasks/{{ task.canonical_id }}/set-dates"
           hx-target="#task-row-{{ task.canonical_id }}"
           hx-swap="outerHTML"
+          hx-indicator="#task-spinner-{{ task.canonical_id }}"
+          hx-disabled-elt="find button"
           style="margin: 0">
       <div style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
         <div style="flex: 1 1 auto; min-width: 250px;">
@@ -43,6 +45,9 @@ Variables expected:
                   hx-swap="outerHTML">
             Cancel
           </button>
+          <span id="task-spinner-{{ task.canonical_id }}" class="htmx-indicator">
+            <span class="working">Writing to Monday...</span>
+          </span>
         </fieldset>
       </div>
 

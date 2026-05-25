@@ -9,17 +9,42 @@
      the fast LLM (Haiku) over a JSON snapshot of the whole database.</p>
 </hgroup>
 
-<form method="post" action="/ask">
+<form method="post" action="/ask" id="ask-form">
   <label>
     Question
     <textarea name="question" rows="3" autofocus
               placeholder="e.g. 'what active projects do we have?', 'budget vs contract for 923 Rockland', 'which project looks most at risk?', 'help'">{{ question or "" }}</textarea>
   </label>
   <fieldset role="group">
-    <button type="submit">Ask</button>
+    <button type="submit"
+            hx-disabled-elt="#ask-form button">
+      Ask
+    </button>
     <a href="/ask" role="button" class="secondary outline">Clear</a>
+    <span id="ask-spinner" class="htmx-indicator">
+      <span class="working">
+        Routing your question... if it falls to the LLM this can take 5-15s.
+      </span>
+    </span>
   </fieldset>
 </form>
+
+{# The form posts normally (full page reload).  The spinner above only
+   appears for HTMX requests -- which this form isn't.  For consistent
+   UX a tiny inline JS submit listener flips the spinner visible too,
+   so the user gets feedback during the normal POST as well. #}
+<script>
+  (function() {
+    var form = document.getElementById('ask-form');
+    if (!form) return;
+    form.addEventListener('submit', function() {
+      var spin = document.getElementById('ask-spinner');
+      var btn = form.querySelector('button[type=submit]');
+      if (spin) spin.style.display = 'inline-block';
+      if (btn) btn.setAttribute('disabled', 'disabled');
+    });
+  })();
+</script>
 
 {% if result is not none %}
 <section>

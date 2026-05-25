@@ -33,11 +33,13 @@ Variables expected:
     {% endif %}
   </small></p>
 
-  <fieldset role="group" style="margin-bottom: 0.5rem">
+  <fieldset role="group" id="decision-idle-buttons" style="margin-bottom: 0.5rem">
     <button type="button"
             hx-post="/proposals/{{ proposal_id }}/dry-run"
             hx-target="#decision"
             hx-swap="outerHTML"
+            hx-indicator="#decision-spinner"
+            hx-disabled-elt="#decision-idle-buttons"
             {% if not can_accept %}disabled{% endif %}>
       Preview Monday write (dry-run)
     </button>
@@ -50,6 +52,8 @@ Variables expected:
     <form hx-post="/proposals/{{ proposal_id }}/reject"
           hx-target="#decision"
           hx-swap="outerHTML"
+          hx-indicator="#decision-spinner"
+          hx-disabled-elt="find button"
           style="margin-top: 0.5rem">
       <label>
         Reason (recorded on the proposal)
@@ -59,4 +63,8 @@ Variables expected:
       <button type="submit" class="secondary">Confirm reject</button>
     </form>
   </details>
+
+  <span id="decision-spinner" class="htmx-indicator">
+    <span class="working">Working...</span>
+  </span>
 </section>

@@ -28,22 +28,31 @@ Variables expected:
     <pre style="background: #fff; padding: 0.5rem; margin: 0.5rem 0; font-size: 0.85rem;">{{ preview.would_write|tojson(indent=2) }}</pre>
   </article>
 
-  <fieldset role="group">
+  <fieldset role="group" id="dry-run-buttons">
     <button type="button"
             hx-post="/proposals/{{ proposal_id }}/accept"
             hx-target="#decision"
             hx-swap="outerHTML"
-            hx-confirm="Write this change to the live Monday workspace?">
+            hx-confirm="Write this change to the live Monday workspace?"
+            hx-indicator="#accept-spinner"
+            hx-disabled-elt="#dry-run-buttons">
       Confirm accept &mdash; write to Monday
     </button>
     <button type="button"
             class="secondary outline"
             hx-get="/proposals/{{ proposal_id }}/decision"
             hx-target="#decision"
-            hx-swap="outerHTML">
+            hx-swap="outerHTML"
+            hx-indicator="#accept-spinner"
+            hx-disabled-elt="#dry-run-buttons">
       Cancel
     </button>
   </fieldset>
+  <span id="accept-spinner" class="htmx-indicator">
+    <span class="working">
+      Writing to Monday... <strong>do not click again.</strong>
+    </span>
+  </span>
 
   <p><small><em>The proposal remains PENDING until you click Confirm.</em></small></p>
 </section>

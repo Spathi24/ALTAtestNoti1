@@ -9,6 +9,82 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-25 (late night) — Phase D.1 fixes: truncation handling + UI spinners
+
+**Theme:** Two concrete bugs the user hit immediately after Phase D.1
+shipped, both fixed in one push.
+
+### Bug 1: scope generation failed silently on 6554 Rue Saint Hubert
+- Symptom: `POST /projects/{6554}/propose/scope` returned HTTP 200 but
+  with the "Skipped: LLM call failed" panel.
+- Cause: Sonnet's reply was cut off at the 3000-token cap mid-JSON,
+  twice in a row (`complete_json` retried with the SAME cap, hit the
+  same wall).  The 9000-char and 9700-char truncated payloads both
+  failed parse.
+- Root fix (`ai/providers/base.py::complete_json`): inspect
+  `resp.finish_reason` after a failed parse.  When it equals
+  `"max_tokens"` (Anthropic) or `"length"` (OpenAI-compatible), the
+  output was truncated -- bump `max_tokens` by 1.5x for the retry (up
+  to a 16k ceiling).  The follow-up user turn explicitly tells the
+  model "your previous reply was cut off; be more concise."  When all
+  retries truncate, the final `LLMProviderError` now names truncation
+  so the UI can render a useful hint instead of a generic "bad JSON"
+  message.
+- Secondary fix: `generate_scope_proposals` default
+  `max_output_tokens` raised 3000 -> 5000.  Scope replies tend to be
+  longer than timeline replies (each gap carries scope_item +
+  suggested_task_title + reasoning + source_document).
+- Surface fix: `propose_result.html` now renders `batch.errors` even
+  when `batch.skipped_reason` is set, so the user sees the real
+  parse error.  When the joined errors mention "trunc", an extra
+  hint paragraph explains that the next attempt will use a larger
+  cap and to try again.
+- **Live verified**: the same 6554 scope-generate that previously
+  produced "Skipped: LLM call failed" now produces **20 scope
+  proposals, 0 rejected, 0 warnings** in 66s.  Both `complete_json`
+  attempts succeeded; the bumped cap was needed.
+
+### Bug 2: no loading indicator on action buttons
+- Symptom: clicking "Propose timelines" gave no feedback for 10-30s,
+  so the user could click again (wasting tokens) or click "Propose
+  scope" while the first call was still in flight.
+- Fix: every action button now carries `hx-indicator` + `hx-disabled-elt`:
+  - Propose timelines / scope: amber "Calling Sonnet... 10-30s.
+    Don't click again." pill, both buttons disabled in the same
+    `<fieldset>` during the request.
+  - Dry-run / Accept: amber "Working..." / "Writing to Monday... do
+    not click again" pill, button group disabled.
+  - Reject: same.
+  - Task date Save: amber "Writing to Monday..." pill.
+  - Ask form: amber "Routing your question..." pill (plus a tiny inline
+    JS submit listener since /ask is a regular POST, not HTMX).
+- CSS in `web/static/app.css`: `.htmx-indicator` hides by default;
+  the `htmx-request` class HTMX adds during the in-flight period
+  reveals it.  `.working` is an amber pill with a CSS-only spinning
+  border.
+
+### Verification
+- **+8 tests** (`tests/test_complete_json_truncation.py`),
+  **544 / 544 total passing**.
+- New tests pin: succeed-first-try, retry-after-prose keeps same cap,
+  retry-after-truncation bumps the cap (Anthropic `max_tokens` AND
+  OpenAI-compatible `length`), ceiling respected, exhausted retries
+  on truncation surface a "truncation" hint, exhausted retries on
+  non-truncation do NOT claim truncation, retry conversation appends
+  a "be more concise" follow-up.
+- Live: re-running scope generation on the previously-failed
+  6554 Rue Saint Hubert produced 20 grounded proposals in one click.
+
+### State at EOD
+- **544 tests** passing.
+- The two user-reported bugs are gone:
+  1. Long LLM replies that exceed the token cap now succeed via the
+     auto-bumping retry, and surface a useful hint when they don't.
+  2. Every action button shows an amber spinner pill and disables
+     its button group during the request.
+
+---
+
 ## 2026-05-25 (night) — Phase 6 / M5 part D.1: action surfaces
 
 **Theme:** The user observed that Phase D shipped an Accept button but
