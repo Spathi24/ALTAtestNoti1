@@ -22,13 +22,18 @@ corrections to what Monday says is happening.
   Haiku fallback, inline task date editing, propose-from-UI with
   hx-confirm token-cost dialogs, `/doctor`, `/db` raw inspector.
   **Closed 2026-05-26.**
+- **Post-M5 (2026-05-26):** Roadmap integration -- 44 canonical
+  design-phase tasks live in `roadmap_task`, actor-classified,
+  filter-injected into both proposal prompts.  **Quoted-excerpt
+  reasoning** on every contract-sourced gap (verifiable against
+  the source document).
 
-**578-test suite.** Day-by-day work log in
+**625-test suite.** Day-by-day work log in
 **[CHANGELOG.md](CHANGELOG.md)**.  Developer handoff (architecture
-invariants, footguns, testing patterns, M5 retrospective) in
+invariants, footguns, testing patterns, M5 retrospective, roadmap
+integration, prompt-philosophy boundary) in
 **[docs/HANDOFF.md](docs/HANDOFF.md)**.  Forward-looking plans
-(RAG, financial extraction, prompt-philosophy boundary) in
-**[docs/ROADMAP.md](docs/ROADMAP.md)**.
+(RAG, financial extraction) in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ---
 

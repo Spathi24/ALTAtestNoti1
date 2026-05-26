@@ -96,6 +96,73 @@ projects.
   normalized-name. Ambiguous or zero hits → no match (resolver creates;
   `doctor` flags). No substring.
 
+### Roadmap integration (post-M5, 2026-05-26)
+
+The canonical design-phase roadmap (SD/DD/CD/CA, 44 tasks) is imported
+from `docs/Project Roadmap.xlsx` into the `roadmap_task` table and
+filter-injected into both proposal prompts.
+
+**Two-layer architecture (Layer 3 was deliberately skipped):**
+- **Layer 1 -- storage.** `RoadmapTask` model, `import-roadmap` CLI.
+  The xlsx itself is tracked in git so fresh clones can re-import.
+- **Layer 2 -- prompt injection.**  `RoadmapActor` enum
+  (ARCHITECT/CONTRACTOR/BOTH) on each row.  `classify-roadmap` CLI
+  does a one-shot Sonnet pass to populate.  `_render_roadmap_for_prompt`
+  filters to CONTRACTOR + BOTH (ARCHITECT-only is noise on contractor
+  boards) and injects into both `_build_timeline_prompt` and
+  `_build_scope_prompt`.  Scope output gains a `source` field
+  (`"contract"` | `"roadmap"`) so the UI can break flags down by
+  origin.  Pre-classify state (no actor) -> empty inject block ->
+  prompts behave as pre-Layer-2.
+
+**Layer 3 skip rationale:** the original plan was a deterministic
+`roadmap-gaps` CLI doing fuzzy match between Monday tasks and the 44
+roadmap entries.  On evaluation: the roadmap is architect-side work,
+the Monday boards are contractor execution.  A naive matcher would
+flag 30-40 "missing" architect tasks per project -- pure noise.  The
+LLM-driven Layer 2 with actor filter does the same job contextually,
+producing zero architect-noise on the live 5768 St-Laurent test (4
+roadmap flags, all legitimately contractor-relevant).  The user
+approved skipping Layer 3.
+
+**Live verified (2026-05-26):** `propose scope` on 5768 St-Laurent
+produced 6 contract-sourced + 4 roadmap-sourced gaps, all useful.
+
+**Behavior observation worth knowing:** the prompt asks the model to
+cite roadmap entries by `[phase-ordinal]+name` (e.g. `[CA-04]`).
+In practice the model OFTEN cites by **pattern parallelism** instead
+when the project's own task list provides better evidence (e.g.
+"Phase 1 has X but Phase 2 doesn't").  This isn't a prompt failure
+-- it's the model choosing project-specific evidence over generic
+template evidence, which is generally better.  If you want strict
+`[CA-XX]` citation in all cases, tighten the prompt or post-filter.
+
+### Quoted-excerpt reasoning (2026-05-26)
+
+Both proposal bots' `reasoning` field is now required to contain
+verifiable evidence, not summaries:
+
+| Evidence type | Required citation |
+|---|---|
+| Contract / document | Direct QUOTED EXCERPT in double quotes (~30 words max), + document name |
+| Schedule sequence (timeline only) | Named neighbour tasks + dates (e.g. "between Demolition (2026-06-01 to 06-10) and Final Inspection (2026-08-12)") |
+| Roadmap entry | `[phase-ordinal]+name` citation (when used; see observation above) |
+
+Lazy reasoning ("the contract states this", "per the schedule") is
+explicitly REJECTED in the prompt.
+
+The proposal detail UI shows the reasoning in a `<blockquote>` and
+the source documents below with an `open` link to `/documents/{id}`,
+where the user can Ctrl-F to verify the quote against the full
+extracted text.  Excerpt offsets are NOT stored on Proposal -- the
+disclaimer "this document supports the claim, not necessarily this
+exact span" is rendered explicitly per the M5 plan review #7.
+
+**Prompt versions:** `timeline-v4-quoted`, `scope-v3-quoted`.
+A regression test (`tests/test_prompt_quoted_excerpts.py`) pins the
+EVIDENCE-CITATION REQUIREMENT block in both prompts so a future
+"clean up the prompt" edit can't accidentally drop it.
+
 ### Web UI (M5)
 - **Stack**: FastAPI + Jinja2 + HTMX + Pico.css.  Vendored static in
   `web/static/`.  No build pipeline, no JS toolchain.
@@ -365,6 +432,45 @@ Regression test pinning the boundary:
   Stop-Process -Id $_.OwningProcess -Force }`.  `TestClient` runs
   in-process so this only affects manual `project_db serve`.
 
+### Post-M5 roadmap-integration footguns (2026-05-26)
+
+- **`hx-disabled-elt` on a `<form>` inherits to child buttons with
+  hx-* attrs.**  This was the 2025-05-26 v2 Cancel-doesn't-close bug:
+  HTMX form-level attrs inherit, AND HTMX serializes form data on any
+  request inside a `<form>`, so Cancel's `hx-get` was hitting
+  `/tasks/X/row?start_date=&end_date=` with an inherited disable
+  rule -- the swap silently failed in some browsers.  Pattern: keep
+  hx-* attrs on the SPECIFIC buttons that should have them, never on
+  the wrapping `<form>`.  Add `hx-params="none"` to buttons that
+  shouldn't ship form data.  Two regression tests pin this in
+  `tests/test_web_phase_d1.py::TestTaskDateEdits`.
+- **The roadmap xlsx is the editorial source of truth, not the DB.**
+  Edit `docs/Project Roadmap.xlsx` if the canonical roadmap changes;
+  re-run `project_db import-roadmap --overwrite`.  Then re-run
+  `project_db classify-roadmap` to repopulate actors.  The DB rows
+  are a *projection*; never edit them directly.
+- **Pre-classify state is silent: empty roadmap_block in prompts.**
+  If `classify-roadmap` has never run on a fresh DB, every
+  `roadmap_task` row has `actor=NULL` and `_render_roadmap_for_prompt`
+  returns `""`.  The proposal prompts then behave as pre-Layer-2.
+  This is intentional (don't inject unclassified data), but it can
+  surprise: "I imported the roadmap; why aren't my scope proposals
+  using it?"  Answer: run `classify-roadmap`.
+- **Roadmap source label defaults to "contract" silently.**  If the
+  model returns a scope_gap without a `source` field, we default to
+  "contract" for back-compat with pre-Layer-2 outputs.  When
+  debugging "why does this look like a contract gap when I thought
+  it was roadmap?", check the model's actual JSON output (raw panel
+  on the proposal page) before assuming the persistence layer is
+  wrong.
+- **The model has discretion on roadmap citation style.**  The
+  prompt asks for `[phase-ordinal]+name` for roadmap entries, but
+  the model legitimately substitutes project-specific parallelism
+  reasoning when that's more evidence-grounded (see "Behavior
+  observation" in Section 3 / Roadmap integration above).  Both
+  styles are acceptable; if you need strict `[CA-XX]` citation,
+  tighten the prompt and add a parse-side check.
+
 ---
 
 ## 9. What is deliberately deferred and why
@@ -402,18 +508,22 @@ Regression test pinning the boundary:
 
 ## 10. How to continue (per the current operating plan)
 
-**M5 closed (2026-05-26).**  The local web UI is shipped; 578 tests
-passing; the full read+decision+action loop is in the browser.
+**M5 closed (2026-05-26).**  The local web UI is shipped; the full
+read+decision+action loop is in the browser.  **Post-M5 work today:**
+roadmap integration Layers 1+2 (Layer 3 deliberately skipped) and
+quoted-excerpt reasoning in both proposal bots.  **625 tests passing.**
 
 The ROADMAP's "Current operating plan (2026-05-26)" is the
 authoritative next-step list.  In priority order:
 
-1. **Tighten proposal reasoning prompts with quoted excerpts** -- one
-   prompt change in `_build_timeline_prompt` and `_build_scope_prompt`.
-   ~1 session.  High quality lift, low risk.
+1. ~~**Tighten proposal reasoning prompts with quoted excerpts**~~
+   **DONE** (commit `68c1904`).  Both prompts now demand QUOTED
+   EXCERPTS for contract evidence; lazy reasoning REJECTED.
+   Verified live on 5768 St-Laurent.
 2. **RAG over `DocumentText`** -- the biggest capability unlock.
    ~4 sessions.  Detailed plan in ROADMAP "RAG over DocumentText
    (detailed plan)" section.  Both askbot and proposal bots gain.
+   **This is now the highest-leverage next move.**
 3. **Structured financial extraction** -- per-doc-type LLM extractor
    into new tables (Invoice line items, ContractLineItem,
    ChangeOrder).  ~3-4 sessions.  Detailed plan in ROADMAP

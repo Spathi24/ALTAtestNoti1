@@ -25,17 +25,18 @@ retrospective.  Live validation on 5768 St-Laurent produced 6
 contract-sourced + 4 roadmap-sourced gaps, with zero architect-noise
 flags.
 
+**Shipped 2026-05-26 (Quoted-excerpt reasoning):** Both proposal
+prompts now demand direct QUOTED EXCERPTS for contract evidence and
+explicit citations for schedule-sequence / roadmap evidence.  Lazy
+reasoning REJECTED.  Live-verified on 5768 St-Laurent: every
+contract-sourced gap now carries a literal contract quote with the
+document name.  Versions: `timeline-v4-quoted`, `scope-v3-quoted`.
+625 tests.
+
 **Next sequence, in priority order:**
 
-1. **Tighten proposal reasoning prompts with quoted excerpts.**  Low
-   effort, high quality lift.  The current `reasoning` field is
-   structural ("there's a Phase 2 prep task but no inspection task");
-   the user wants direct quotes ("Final SOW §4: 'Contractor shall
-   perform a quality inspection at the conclusion of each phase'").
-   One prompt change in `_build_timeline_prompt` and
-   `_build_scope_prompt`; ~20-40% larger responses, but the
-   `complete_json` truncation-retry fix covers the cap risk.
-   ~1 session.
+1. ~~**Tighten proposal reasoning prompts with quoted excerpts.**~~
+   DONE.
 2. **RAG over `DocumentText`.**  The biggest capability unlock.  See
    the [RAG plan](#rag-over-documenttext-detailed-plan) section below
    for the full breakdown.  ~4 sessions.  Both the askbot AND the
