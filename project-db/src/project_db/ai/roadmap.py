@@ -22,7 +22,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from project_db.db.models import RoadmapPhase, RoadmapTask
+from project_db.db.models import RoadmapActor, RoadmapPhase, RoadmapTask
 
 
 # Sentinel values that show up in the xlsx as "blank" but read as
@@ -218,15 +218,27 @@ def import_roadmap_rows(
     }
 
 
-def list_roadmap_tasks(session: Session) -> list[dict[str, Any]]:
+def list_roadmap_tasks(
+    session: Session,
+    *,
+    actors: list[RoadmapActor] | None = None,
+) -> list[dict[str, Any]]:
     """Return every roadmap task, ordered by phase then ordinal.
 
     JSON-serializable.  Used by the AI layer (Layer 2: prompt
     injection) and by any UI / report consumer.
+
+    When ``actors`` is set, only tasks whose ``actor`` is in the list
+    are returned -- this is how the proposal-prompt filter ignores
+    architect-only tasks before injecting the roadmap into a
+    contractor-side prompt.  Pass ``None`` (default) for all tasks.
     """
     from project_db.db.models import ROADMAP_PHASE_ORDER
 
-    rows = session.query(RoadmapTask).all()
+    q = session.query(RoadmapTask)
+    if actors is not None:
+        q = q.filter(RoadmapTask.actor.in_(actors))
+    rows = q.all()
     rows.sort(key=lambda r: (ROADMAP_PHASE_ORDER[r.phase], r.ordinal))
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -241,5 +253,146 @@ def list_roadmap_tasks(session: Session) -> list[dict[str, Any]]:
             "task_name": r.task_name,
             "sub_tasks": sub,
             "notes": r.notes,
+            "actor": (
+                r.actor.value if r.actor is not None and hasattr(r.actor, "value")
+                else (str(r.actor) if r.actor is not None else None)
+            ),
         })
     return out
+
+
+def classify_roadmap_actors(
+    session: Session,
+    provider,
+) -> dict[str, Any]:
+    """Use the LLM to draft an actor for each roadmap_task row.
+
+    Sends the 44 tasks + sub-tasks in ONE call to Sonnet, asks for
+    strict JSON ``{phase, ordinal, actor}`` per task.  Validates each
+    item; bad ones go to errors, never crash the batch.  Writes the
+    actor values back to ``roadmap_task``.  Does NOT commit -- caller
+    owns the transaction.
+
+    Returns ``{"ok": bool, "updated": int, "errors": list[str],
+    "by_actor": {...}}``.
+    """
+    from project_db.ai.providers.base import LLMMessage
+
+    tasks = list_roadmap_tasks(session)
+    if not tasks:
+        return {
+            "ok": False,
+            "error": "no roadmap_task rows -- run `import-roadmap` first.",
+        }
+
+    # Build the prompt.  Conservative posture; this is an extractor
+    # not an analyst (per the askbot/proposal-bot prompt-philosophy
+    # boundary).
+    system = (
+        "You classify construction project roadmap tasks by who is "
+        "primarily responsible for executing them.  Three possible "
+        "actors:\n"
+        "- ARCHITECT: pure architect / designer work (e.g. site analysis, "
+        "envelope detailing, code compliance drawings).\n"
+        "- CONTRACTOR: pure contractor / builder work (e.g. cost "
+        "estimating, fabricator coordination, punch list, "
+        "preconstruction planning).\n"
+        "- BOTH: genuinely co-responsible (e.g. project kickoff, "
+        "client sign-off meetings, submittal review, clarification "
+        "requests).\n\n"
+        "Rules:\n"
+        "- Use the task NAME and the SUB-TASKS as evidence.  When the "
+        "sub-tasks describe drawing / modelling / certification work, "
+        "lean ARCHITECT.  When they describe cost / RFP / build / "
+        "installation work, lean CONTRACTOR.  When both are described "
+        "or a sign-off / coordination action is named, BOTH.\n"
+        "- Be conservative: prefer BOTH over guessing one side when "
+        "the task could plausibly involve both.\n"
+        "- Output STRICT JSON only.  No prose, no markdown fences."
+    )
+
+    lines = ["=== ROADMAP TASKS TO CLASSIFY ==="]
+    for t in tasks:
+        sub = " | ".join(t["sub_tasks"]) if t["sub_tasks"] else "(no sub-tasks)"
+        lines.append(
+            f'\n[{t["phase"]}-{t["ordinal"]}] "{t["task_name"]}"\n'
+            f'  sub-tasks: {sub}'
+        )
+
+    user = (
+        "\n".join(lines)
+        + "\n\n---\n\n"
+        "INSTRUCTION: Classify EVERY task above by actor.  Return strict "
+        "JSON:\n\n"
+        "{\n"
+        '  "classifications": [\n'
+        "    {\n"
+        '      "phase": "SD" | "DD" | "CD" | "CA",\n'
+        '      "ordinal": <int>,\n'
+        '      "actor": "ARCHITECT" | "CONTRACTOR" | "BOTH",\n'
+        '      "reasoning": "<one short sentence explaining the call>"\n'
+        "    }, ...\n"
+        "  ]\n"
+        "}\n\n"
+        f"Classify exactly {len(tasks)} task(s)."
+    )
+
+    try:
+        raw = provider.complete_json(
+            messages=[LLMMessage(role="user", content=user)],
+            system=system,
+            max_tokens=4000,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"LLM call failed: {exc}"}
+
+    classifications = raw.get("classifications") or []
+    if not isinstance(classifications, list):
+        return {"ok": False, "error": "LLM returned no 'classifications' list"}
+
+    # Index our rows by (phase, ordinal) for fast lookup.
+    by_key: dict[tuple[str, int], RoadmapTask] = {}
+    for r in session.query(RoadmapTask).all():
+        phase_val = r.phase.value if hasattr(r.phase, "value") else str(r.phase)
+        by_key[(phase_val, int(r.ordinal))] = r
+
+    errors: list[str] = []
+    by_actor: dict[str, int] = {a.value: 0 for a in RoadmapActor}
+    updated = 0
+    for item in classifications:
+        if not isinstance(item, dict):
+            errors.append(f"non-dict item: {item!r}")
+            continue
+        phase = str(item.get("phase", "")).upper()
+        try:
+            ordinal = int(item.get("ordinal"))
+        except (TypeError, ValueError):
+            errors.append(f"bad ordinal: {item!r}")
+            continue
+        actor_raw = str(item.get("actor", "")).upper()
+        try:
+            actor = RoadmapActor(actor_raw)
+        except ValueError:
+            errors.append(
+                f"[{phase}-{ordinal}] unknown actor {actor_raw!r} "
+                f"(expected one of {[a.value for a in RoadmapActor]})"
+            )
+            continue
+        row = by_key.get((phase, ordinal))
+        if row is None:
+            errors.append(
+                f"[{phase}-{ordinal}] no matching roadmap_task row"
+            )
+            continue
+        row.actor = actor
+        by_actor[actor.value] += 1
+        updated += 1
+    session.flush()
+
+    return {
+        "ok": True,
+        "updated": updated,
+        "by_actor": by_actor,
+        "errors": errors,
+        "total_classifications_returned": len(classifications),
+    }

@@ -52,6 +52,25 @@ def create_app() -> FastAPI:
     templates.env.globals["app_version"] = app_version
     templates.env.globals["uptime_str"] = uptime_str
 
+    # `| from_json` -- safely parse a JSON string in templates.  Used by
+    # propose_result.html to break scope proposals down by source label
+    # (contract / roadmap) without forcing the service module to
+    # pre-parse every proposed_value.  Returns None on bad JSON so
+    # templates can fall back via `| default({})`.
+    import json as _json
+
+    def _from_json(value):
+        if value is None:
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        try:
+            return _json.loads(value)
+        except (_json.JSONDecodeError, TypeError):
+            return None
+
+    templates.env.filters["from_json"] = _from_json
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)

@@ -15,22 +15,18 @@ parallelized.
 M5 (local web UI) **closed**.  The full read+decision+action loop is in
 the browser; the CLI surface stays intact.  578 tests passing.
 
-**Shipped 2026-05-26 (Roadmap integration Layer 1):** `RoadmapTask`
-table + `project_db import-roadmap` CLI.  44 canonical design-phase
-tasks (SD/DD/CD/CA) now live in the DB and visible via
-`/db/roadmap_task`.  Foundation for the next two layers.  601 tests.
+**Shipped 2026-05-26 (Roadmap integration Layers 1+2):**
+`RoadmapTask` table, `import-roadmap` CLI, `RoadmapActor` enum,
+`classify-roadmap` Sonnet pass, and the actual prompt injection in
+both proposal bots (`scope-v2-roadmap` and `timeline-v3-roadmap`).
+**617 tests.**  Layer 3 (deterministic gap-finder) was DELIBERATELY
+SKIPPED -- see the "Layer 3 skip rationale" subsection in the M5
+retrospective.  Live validation on 5768 St-Laurent produced 6
+contract-sourced + 4 roadmap-sourced gaps, with zero architect-noise
+flags.
 
 **Next sequence, in priority order:**
 
-0. **Roadmap integration Layer 3** (~1 session) -- deterministic
-   `project_db roadmap-gaps <project>` CLI + UI route.  Fuzzy + LLM
-   tie-break matching of project tasks against the canonical roadmap.
-   Zero-token for the obvious cases.  Builds the baseline that
-   Layer 2 prompt-injection can be compared against.
-0b. **Roadmap integration Layer 2** (~1 session) -- inject the
-   roadmap into `_build_timeline_prompt` and `_build_scope_prompt`.
-   Timeline gets the canonical phase ordering; scope gets a checklist
-   of standard tasks to compare against documented scope.
 1. **Tighten proposal reasoning prompts with quoted excerpts.**  Low
    effort, high quality lift.  The current `reasoning` field is
    structural ("there's a Phase 2 prep task but no inspection task");

@@ -80,9 +80,16 @@ CREATE TABLE roadmap_task (
     ordinal INTEGER NOT NULL,
     task_name VARCHAR NOT NULL,
     sub_tasks_json TEXT,
+    actor VARCHAR,
     CONSTRAINT uq_roadmap_phase_ordinal UNIQUE (phase, ordinal)
 )
 """
+
+# Columns added AFTER the initial roadmap_task DDL shipped.  ALTER TABLE
+# in SQLite for existing local DB files.
+SQLITE_ROADMAP_TASK_COLUMNS: dict[str, str] = {
+    "actor": "VARCHAR",
+}
 
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
@@ -111,3 +118,10 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(conn, tables, "document_text", SQLITE_DOCUMENT_TEXT_DDL)
         _create_table_if_missing(conn, tables, "proposal", SQLITE_PROPOSAL_DDL)
         _create_table_if_missing(conn, tables, "roadmap_task", SQLITE_ROADMAP_TASK_DDL)
+        # Post-DDL columns on roadmap_task (for DB files created before
+        # the actor column landed).
+        if "roadmap_task" in tables:
+            _add_missing_columns(
+                conn, inspector, "roadmap_task",
+                SQLITE_ROADMAP_TASK_COLUMNS,
+            )

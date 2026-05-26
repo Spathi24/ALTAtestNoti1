@@ -51,6 +51,32 @@ Variables expected:
         flagged for review: {{ batch.warnings|length }}
       </small>
 
+      {# Layer 2: for scope batches, break down by source (contract /
+         roadmap).  Roadmap-sourced gaps are template-derived; the PM
+         should review them with different attention than contract-
+         sourced gaps which are project-specific. #}
+      {% if kind == "scope" and batch.proposals %}
+        {% set ns = namespace(contract=0, roadmap=0) %}
+        {% for p in batch.proposals %}
+          {% set pv = p.proposed_value %}
+          {% if pv is string %}{% set pv_d = pv | from_json | default({}) %}{% else %}{% set pv_d = pv %}{% endif %}
+          {% set src = (pv_d.source if pv_d.source else 'contract') %}
+          {% if src == 'roadmap' %}{% set ns.roadmap = ns.roadmap + 1 %}
+          {% else %}{% set ns.contract = ns.contract + 1 %}{% endif %}
+        {% endfor %}
+        <p style="margin-top: 0.5rem"><small>
+          <strong>By source:</strong>
+          contract: <strong>{{ ns.contract }}</strong> &middot;
+          roadmap: <strong>{{ ns.roadmap }}</strong>
+          {% if ns.roadmap %}
+            <br><em>Roadmap-sourced gaps are template-derived (the
+            canonical contractor-relevant design-phase roadmap), not
+            specific to this project's documents.  Review them with
+            "does this template task actually apply here?" in mind.</em>
+          {% endif %}
+        </small></p>
+      {% endif %}
+
       {% if batch.warnings %}
         <details style="margin-top: 0.5rem">
           <summary>{{ batch.warnings|length }} warning(s) -- scrutinize before accepting</summary>

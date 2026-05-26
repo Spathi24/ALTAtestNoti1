@@ -1169,6 +1169,52 @@ def cmd_import_roadmap(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_classify_roadmap(args: argparse.Namespace) -> int:
+    """Use Sonnet to draft an actor (ARCHITECT/CONTRACTOR/BOTH) for each
+    roadmap_task row.
+
+    One-shot batch call: sends all 44 tasks to the LLM, parses the
+    structured JSON response, writes actor values back.  Idempotent --
+    re-running re-classifies all rows (overwrites previous actors).
+    Per the M5 prompt-philosophy boundary, this uses the DEEP provider
+    (Sonnet) because correctness matters more than latency here, and
+    the call only happens when the user explicitly runs this command.
+    """
+    from project_db.ai.providers import get_default_provider
+    from project_db.ai.roadmap import classify_roadmap_actors
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        provider = get_default_provider()
+    except Exception as exc:  # noqa: BLE001
+        print(f"FAIL: could not build LLM provider: {exc}", file=sys.stderr)
+        return 2
+
+    print("Calling Sonnet to classify roadmap tasks (this is a single "
+          "LLM call; ~5-15s)...")
+    with session_scope() as s:
+        result = classify_roadmap_actors(s, provider)
+
+    if not result.get("ok"):
+        print(f"FAIL: {result.get('error')}", file=sys.stderr)
+        return 1
+
+    print(f"OK -- classified {result['updated']} task(s):")
+    for actor, n in result["by_actor"].items():
+        print(f"  {actor:<10} {n}")
+    if result["errors"]:
+        print(f"\n{len(result['errors'])} item(s) rejected as malformed:")
+        for e in result["errors"][:10]:
+            print(f"  - {e}")
+    print("\nReview the results with:  project_db ask "
+          "\"list roadmap tasks by actor\"  (placeholder -- use /db/roadmap_task)")
+    print("Or open the UI:  http://127.0.0.1:8000/db/roadmap_task")
+    return 0
+
+
 def cmd_rebuild(args: argparse.Namespace) -> int:
     """Re-derive the canonical DB from the sources (Drive first, then Monday).
 
@@ -1550,6 +1596,13 @@ def build_parser() -> argparse.ArgumentParser:
              "on re-import after edits)",
     )
     impr.set_defaults(func=cmd_import_roadmap)
+
+    classify = sub.add_parser(
+        "classify-roadmap",
+        help="Use Sonnet to draft actor (ARCHITECT/CONTRACTOR/BOTH) for "
+             "each roadmap_task row.  Single LLM call.  Re-runnable.",
+    )
+    classify.set_defaults(func=cmd_classify_roadmap)
 
     serve = sub.add_parser(
         "serve",

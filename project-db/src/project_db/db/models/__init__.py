@@ -15,6 +15,7 @@ from project_db.db.models.finance import Invoice, InvoiceStatus
 from project_db.db.models.proposals import Proposal, ProposalStatus
 from project_db.db.models.roadmap import (
     ROADMAP_PHASE_ORDER,
+    RoadmapActor,
     RoadmapPhase,
     RoadmapTask,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "Property",
     "Proposal",
     "ProposalStatus",
+    "RoadmapActor",
     "RoadmapPhase",
     "RoadmapTask",
     "ROADMAP_PHASE_ORDER",

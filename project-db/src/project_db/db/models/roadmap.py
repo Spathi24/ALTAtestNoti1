@@ -42,6 +42,20 @@ class RoadmapPhase(str, enum.Enum):
     CA = "CA"   # Construction Administration
 
 
+class RoadmapActor(str, enum.Enum):
+    """Who's primarily responsible for executing this roadmap task.
+
+    The AI layer FILTERS the roadmap by actor before injecting it into
+    proposal prompts -- our Monday boards are contractor-side, so a
+    pure ARCHITECT task showing up as a "gap" is noise, not signal.
+    BOTH is for kickoff / sign-off / submittal review style tasks
+    where the contractor is genuinely co-responsible.
+    """
+    ARCHITECT = "ARCHITECT"
+    CONTRACTOR = "CONTRACTOR"
+    BOTH = "BOTH"
+
+
 # Numeric ordering for sort comparisons.  Used by ai.roadmap helpers
 # that need to ask "is this task in an earlier phase than that one?".
 ROADMAP_PHASE_ORDER: dict[RoadmapPhase, int] = {
@@ -76,3 +90,9 @@ class RoadmapTask(Base, CanonicalMixin):
     # portability across SQLite / Postgres.  None when the xlsx cell
     # was blank.
     sub_tasks_json = Column(Text, nullable=True)
+    # Who's primarily responsible for this task.  Nullable -- a fresh
+    # import has NULL here until ``project_db classify-roadmap`` runs
+    # (Sonnet drafts; reviewer confirms).  The proposal-prompt
+    # filter ignores NULL rows so we don't accidentally inject
+    # unclassified tasks before review.
+    actor = Column(SAEnum(RoadmapActor), nullable=True)

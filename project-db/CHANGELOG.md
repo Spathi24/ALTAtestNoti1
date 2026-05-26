@@ -9,6 +9,142 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-26 (post-M5) — Roadmap integration Layer 2: actor classification + prompt injection
+
+**Theme:** Second of two layers shipped (Layer 3 was deliberately
+SKIPPED -- see decision rationale below).  This is the layer that
+delivers the user-visible value: scope proposals now flag two kinds
+of gaps with explicit source labels.
+
+### Decision: skip Layer 3, go straight to Layer 2
+
+Earlier plan was Layer 1 (storage) -> Layer 3 (deterministic
+gap-finder) -> Layer 2 (prompt injection).  After Layer 1 shipped,
+honest evaluation showed Layer 3 (naive matching of all 44 roadmap
+tasks against a project's Monday board) would produce **30-40
+false-positive "missing" tasks per project** because:
+- The roadmap is the architect/designer workflow (SD -> DD -> CD -> CA).
+- Most Monday boards are construction execution (CA-phase + execution).
+- A deterministic fuzzy matcher would flag every architect-side task
+  as "missing" from contractor-side boards.
+
+The user agreed: "a great program can do a little but very well."
+Layer 3 was dropped.  Layer 2 with the LLM as a contextual filter
+became the path -- the model decides which roadmap entries plausibly
+apply to *this* project, not us assuming all 44 do.
+
+### Step A: RoadmapActor enum + actor column
+
+- New `RoadmapActor` enum: `ARCHITECT` / `CONTRACTOR` / `BOTH`.
+- Nullable `actor` column on `RoadmapTask`.  NULL = "not classified
+  yet"; the prompt-injection filter treats NULL as "do not inject."
+- SQLite migration: new DDL includes the column; existing DBs get
+  `ALTER TABLE roadmap_task ADD COLUMN actor VARCHAR` via the
+  `SQLITE_ROADMAP_TASK_COLUMNS` map (mirrors the task / document
+  back-compat pattern).
+
+### Step B: `project_db classify-roadmap` CLI
+
+- New `classify_roadmap_actors(session, provider)` -- single Sonnet
+  call gets the 44 tasks + sub-tasks, returns strict JSON
+  `{phase, ordinal, actor, reasoning}` per task.  Validated;
+  bad items go to errors.  Updates roadmap_task rows in place.
+- CLI command `project_db classify-roadmap` uses the deep provider.
+  Re-runnable.
+- **Live run on the 44 tasks: 24 ARCHITECT / 2 CONTRACTOR / 18 BOTH**.
+  After filtering to CONTRACTOR + BOTH, 20 contractor-relevant tasks
+  are available for prompt injection.
+
+### Step C: Layer 2 -- the actual prompt injection
+
+- New `_render_roadmap_for_prompt(session)` helper -- pulls
+  CONTRACTOR + BOTH rows, formats as a compact text block grouped by
+  phase.  Returns "" when no rows have an actor (pre-classify state),
+  so the prompt behavior is exactly pre-Layer-2 in that case.
+- Both `_build_timeline_prompt` and `_build_scope_prompt` now accept
+  a `roadmap_block` parameter.  When non-empty:
+  - Timeline: section + system rule that the canonical phase order
+    is an additional ordering anchor.
+  - Scope: section + system rule that the model MAY flag a
+    roadmap-sourced gap when a roadmap entry plausibly applies but
+    isn't on the Monday board.  Explicit warning: "do not flag SD/DD
+    entries on a project whose tasks are all CA-phase execution."
+- The scope output JSON gains a required `source` field
+  (`"contract"` | `"roadmap"`) when roadmap is injected.  Backward
+  compatible: missing field defaults to `"contract"`.
+- `_persist_scope_items` captures and validates the `source` label;
+  warns on unknown values.  Contract-sourced source-doc hallucination
+  warnings only fire on `source == "contract"` (roadmap-sourced gaps
+  legitimately have no source_document).
+- Prompt versions bumped: `timeline-v3-roadmap`, `scope-v2-roadmap`.
+
+### Step D: live validation against the real DB
+
+Ran `propose scope` on **5768 St-Laurent** (pure-execution multi-unit
+renovation, 16 tasks, 5 dateless, 143 documents).
+
+**Result: 10 gaps total -- 6 contract-sourced + 4 roadmap-sourced.**
+
+Contract-sourced (project-specific from SOW / settlement docs):
+- Homologation of settlement agreements (Tribunal)
+- Confidentiality between 5768 and 5770 buildings
+- Settlement compensation payment
+- Unit 5 vacate (Majd El-Merhebi)
+- Unit 8 vacate (Kawtar Lahyane)
+- Units 6-10 vacations per settlement agreements
+
+Roadmap-sourced (canonical, contractor-relevant, plausibly applicable):
+- **Cost Estimate + Schedule Alignment** (DD-12, CONTRACTOR)
+- **Preliminary Cost + Feasibility Review** (SD-07, CONTRACTOR)
+- **Submittal Review** (CA-01, BOTH)
+- **Close-Out Documentation** (CA-05, BOTH)
+
+What did NOT get flagged from the roadmap (the noise we were worried
+about): Site Analysis, Energy Performance Criteria, Conceptual Design
+Development, 3D Massing, Develop Envelope Assembly Details, etc.  The
+actor filter (ARCHITECT-only excluded) + the prompt's "don't flag SD
+items on execution projects" rule combined to produce exactly the
+useful contractor-side template tasks, no architect noise.
+
+### UI changes
+- `propose_result.html` now shows a "By source: contract: N &middot;
+  roadmap: M" breakdown for scope batches.  When roadmap entries
+  appear, an explanatory note ("template-derived; review with
+  'does this apply here?' in mind") renders.
+- New Jinja `from_json` filter (`web/app.py`) so the template can
+  parse `proposed_value` JSON strings for the source breakdown
+  without forcing every service module to pre-parse them.
+
+### Verification
+- **+16 Layer-2 tests** (`tests/test_roadmap_layer2.py`),
+  **617 / 617 total passing**.
+- Tests pin: nullable actor column, list filter behavior,
+  `_render_roadmap_for_prompt` empty/non-empty conditions, prompt
+  builders conditional on roadmap_block presence, prompt versions
+  bumped, `_persist_scope_items` source-label capture (including
+  backward-compat default and unknown-value warning), end-to-end
+  via mocked LLM with both contract + roadmap items in one batch.
+- Live scope generate on 5768 St-Laurent produced the 6+4 result
+  documented above.
+
+### What's next (per the next-step list in ROADMAP)
+1. Tighten proposal reasoning prompts with quoted excerpts
+   (~1 session, high-value)
+2. RAG over `DocumentText` (~4 sessions, biggest unlock)
+3. Structured financial extraction (~3-4 sessions)
+4. Live QB integration (pending creds)
+5. One real Monday accept through the UI (pending sign-off)
+
+### State at EOD
+- **617 tests** passing.
+- Roadmap integration complete: data ingested (Layer 1), actor-classified
+  (Layer 2 step B), and live-injected into both proposal bots
+  (Layer 2 step C).  Live validation confirms the contextual filter
+  works -- pure-execution projects get useful roadmap flags without
+  architect-side noise.
+
+---
+
 ## 2026-05-26 (post-M5) — Roadmap integration Layer 1: storage + import CLI
 
 **Theme:** First of three layers (per ROADMAP "Forward-looking AI
