@@ -9,10 +9,14 @@ Variables expected:
 #}
 <tr id="task-row-{{ task.canonical_id }}">
   <td colspan="8" style="background: #fff3cd;">
+    {# `hx-indicator` is INTENTIONALLY on the Save button only, NOT on
+       the form.  If it were on the form, the Cancel button's hx-get
+       would inherit it and show "Writing to Monday..." -- which is
+       wrong because Cancel just closes the inline form without any
+       Monday write.  See bug report 2025-05-26. #}
     <form hx-post="/tasks/{{ task.canonical_id }}/set-dates"
           hx-target="#task-row-{{ task.canonical_id }}"
           hx-swap="outerHTML"
-          hx-indicator="#task-spinner-{{ task.canonical_id }}"
           hx-disabled-elt="find button"
           style="margin: 0">
       <div style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
@@ -37,7 +41,10 @@ Variables expected:
                  style="margin: 0">
         </label>
         <fieldset role="group" style="margin: 0">
-          <button type="submit">Save -&gt; Monday</button>
+          <button type="submit"
+                  hx-indicator="#task-spinner-{{ task.canonical_id }}">
+            Save -&gt; Monday
+          </button>
           <button type="button"
                   class="secondary outline"
                   hx-get="/tasks/{{ task.canonical_id }}/row"

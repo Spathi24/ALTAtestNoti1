@@ -63,6 +63,10 @@
     <pre style="max-height: 30rem; overflow: auto; padding: 0.5rem;
                 background: #f7f7f7; border: 1px solid #ddd;
                 font-size: 0.85rem;">{{ result }}</pre>
+  {% elif format == "html" %}
+    {# Markdown-rendered LLM output.  Safe because `markdown` lib
+       escapes embedded HTML by default. #}
+    <article class="ask-answer">{{ result|safe }}</article>
   {% else %}
     <article>{{ result }}</article>
   {% endif %}

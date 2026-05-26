@@ -19,16 +19,52 @@ from project_db.ai.query import AiAssistant, AiResponse
 from project_db.web.deps import db
 
 
-def _format_answer(answer) -> tuple[str, str]:
-    """Return (pretty_json_or_text, mode_for_display).
+def _render_markdown(text: str) -> str:
+    """Render LLM-style markdown to HTML.
 
-    Canned reports return dicts / lists -- pretty-print as JSON so the
-    page is honest about what came back.  LLM answers are already plain
-    text -- preserve them as-is.
+    Haiku's answers come back with `**bold**`, `*italic*`, bullet lists,
+    line breaks, headings, fenced code, etc.  Rendering them as plain
+    text drops all of that on the floor (the user noticed -- 2025-05-26).
+
+    Safety: the `markdown` library passes raw HTML through by design,
+    so we ESCAPE the input first.  That turns any embedded ``<script>``
+    into inert ``&lt;script&gt;`` text BEFORE markdown sees it, while
+    leaving markdown's own ``**`` / ``#`` / ``-`` syntax untouched
+    (the escape only touches angle brackets / ampersands / quotes).
+    Localhost-only single-user, but defence-in-depth is cheap here.
+    """
+    from html import escape as _escape
+
+    try:
+        import markdown as _markdown
+    except ImportError:
+        # If the [ui] extra isn't installed, fall back to a tiny
+        # whitespace-preserving wrapper.  No prettification, but at
+        # least line breaks survive.
+        return f"<pre style='white-space: pre-wrap'>{_escape(text)}</pre>"
+
+    # Pre-escape, then render markdown.  Order matters: escape first
+    # so `<script>` becomes inert; THEN markdown converts `**bold**`
+    # without touching the escaped entities.
+    safe = _escape(text, quote=False)
+    return _markdown.markdown(
+        safe,
+        extensions=["sane_lists", "nl2br", "fenced_code"],
+        output_format="html5",
+    )
+
+
+def _format_answer(answer) -> tuple[str, str]:
+    """Return (rendered_html_or_json, format_for_display).
+
+    Canned reports return dicts / lists -- pretty-print as JSON inside
+    a <pre> so the page is honest about what came back.  LLM answers
+    are markdown -- render to HTML so `**bold**`, bullets, and line
+    breaks survive.
     """
     if isinstance(answer, (dict, list)):
         return json.dumps(answer, indent=2, default=str), "json"
-    return str(answer), "text"
+    return _render_markdown(str(answer)), "html"
 
 
 def register(router: APIRouter, templates: Jinja2Templates) -> None:

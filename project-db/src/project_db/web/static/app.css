@@ -12,6 +12,74 @@ footer small {
 .pill-superseded { background: #aaaaaa20; color: #888; text-decoration: line-through; }
 .pill-warn       { background: #e74c3c20; color: #b03020; }
 
+/* Dashboard counts grid: equal-height articles with consistent rhythm.
+   Without this Pico's .grid lays them side by side but the internal
+   header / number / breakdown rows can land at different vertical
+   positions depending on text length, which looks crooked. */
+.dash-counts .dash-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0;
+}
+.dash-counts .dash-card > header {
+  flex: 0 0 auto;
+  margin-bottom: 0.25rem;
+}
+.dash-counts .dash-number {
+  flex: 1 1 auto;
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+  margin: 0 0 0.5rem 0;
+  /* keeps the big number row a fixed visual height across cards
+     even when the value is 0 vs 4-digit */
+  min-height: 2rem;
+}
+/* Ask page markdown output -- tighten Pico's default spacing so a
+   short two-sentence answer doesn't take half the viewport. */
+.ask-answer p { margin: 0.5rem 0; }
+.ask-answer p:first-child { margin-top: 0; }
+.ask-answer p:last-child { margin-bottom: 0; }
+.ask-answer ul, .ask-answer ol { margin: 0.5rem 0 0.5rem 1.5rem; }
+.ask-answer li { margin: 0.15rem 0; }
+.ask-answer h1, .ask-answer h2, .ask-answer h3, .ask-answer h4 {
+  margin: 0.8rem 0 0.3rem 0;
+}
+.ask-answer code {
+  background: #f1f3f5;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.2rem;
+  font-size: 0.9em;
+}
+.ask-answer pre {
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+.ask-answer pre code {
+  background: transparent;
+  padding: 0;
+}
+.ask-answer blockquote {
+  border-left: 3px solid #ccc;
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.75rem;
+  color: #555;
+}
+
+.dash-counts .dash-breakdown {
+  flex: 0 0 auto;
+  display: block;
+  /* keep breakdown text aligned to the bottom of the card */
+  margin-top: auto;
+  /* prevent long breakdown lines from pushing the next card */
+  word-spacing: 0.05rem;
+  line-height: 1.4;
+}
+
 /* HTMX loading indicators.
    - .htmx-indicator hides until the in-flight class arrives.
    - HTMX adds `htmx-request` to the triggering element AND to anything

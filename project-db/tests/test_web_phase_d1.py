@@ -360,6 +360,51 @@ class TestTaskDateEdits:
         assert "Save" in body
         assert "Cancel" in body
 
+    def test_cancel_button_has_no_spinner_inheritance(self, client, world):
+        """Regression test for 2025-05-26 bug: clicking Cancel on the
+        inline date-edit form briefly showed "Writing to Monday..."
+        because the form-level hx-indicator was inherited by the
+        Cancel button's hx-get.  Fix: hx-indicator lives on the Save
+        button ONLY.
+
+        Pins:
+          - the <form> tag itself has no hx-indicator attribute
+          - the Cancel button has no hx-indicator attribute
+          - the Save (submit) button DOES have hx-indicator
+        """
+        tid = str(world["task"].canonical_id)
+        resp = client.get(f"/tasks/{tid}/dates-form")
+        body = resp.text
+
+        # Pull the form open-tag and check no indicator on it.
+        import re
+        form_open = re.search(r'<form\s+([^>]+)>', body)
+        assert form_open, "form open tag should be present"
+        assert "hx-indicator" not in form_open.group(1), (
+            "form must NOT carry hx-indicator -- otherwise Cancel "
+            "inherits it.  See 2025-05-26 bug report."
+        )
+
+        # Cancel button block: starts with the hx-get to /row, ends at </button>.
+        cancel_match = re.search(
+            r'(<button[^>]+hx-get="/tasks/[^"]+/row"[^>]*>)',
+            body, re.DOTALL,
+        )
+        assert cancel_match, "Cancel button should be present"
+        assert "hx-indicator" not in cancel_match.group(1), (
+            "Cancel button must NOT carry hx-indicator."
+        )
+
+        # Save (submit) button: this one SHOULD have the spinner.
+        save_match = re.search(
+            r'(<button[^>]+type="submit"[^>]*>)', body, re.DOTALL,
+        )
+        assert save_match, "Save button should be present"
+        assert "hx-indicator" in save_match.group(1), (
+            "Save button must carry hx-indicator so the spinner shows "
+            "during a real Monday write."
+        )
+
     def test_row_endpoint_returns_static_row(self, client, world):
         tid = str(world["task"].canonical_id)
         resp = client.get(f"/tasks/{tid}/row")

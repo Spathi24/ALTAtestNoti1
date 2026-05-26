@@ -10,13 +10,13 @@
 
 <section>
   <h3>Counts</h3>
-  <div class="grid">
-    <article>
+  <div class="grid dash-counts">
+    <article class="dash-card">
       <header><strong>Projects</strong></header>
-      <p data-testid="projects-total" style="font-size: 2rem; margin: 0">
+      <p class="dash-number" data-testid="projects-total">
         {{ summary.projects.total }}
       </p>
-      <small>
+      <small class="dash-breakdown">
         {% for status, n in summary.projects.by_status.items() %}
           <span>{{ status }}: {{ n }}</span>{% if not loop.last %} &middot; {% endif %}
         {% endfor %}
@@ -24,47 +24,50 @@
       </small>
     </article>
 
-    <article>
+    <article class="dash-card">
       <header><strong>Tasks</strong></header>
-      <p data-testid="tasks-total" style="font-size: 2rem; margin: 0">
+      <p class="dash-number" data-testid="tasks-total">
         {{ summary.tasks.total }}
       </p>
-      <small>
+      <small class="dash-breakdown">
         without dates:
         <strong data-testid="tasks-dateless">{{ summary.tasks.without_dates }}</strong>
       </small>
     </article>
 
-    <article>
+    <article class="dash-card">
       <header><strong>Documents</strong></header>
-      <p data-testid="docs-total" style="font-size: 2rem; margin: 0">
+      <p class="dash-number" data-testid="docs-total">
         {{ summary.documents.total }}
       </p>
-      <small>
+      <small class="dash-breakdown">
         with extracted text:
         <strong data-testid="docs-with-text">{{ summary.documents.with_text }}</strong>
       </small>
     </article>
 
-    <article>
+    <article class="dash-card">
       <header><strong>Proposals</strong></header>
-      <p data-testid="proposals-total" style="font-size: 2rem; margin: 0">
+      <p class="dash-number" data-testid="proposals-total">
         {{ summary.proposals.total }}
       </p>
-      <small>
+      <small class="dash-breakdown">
         PENDING: <strong data-testid="proposals-pending">{{ summary.proposals.PENDING }}</strong> &middot;
-        ACCEPTED: {{ summary.proposals.ACCEPTED }} &middot;
-        REJECTED: {{ summary.proposals.REJECTED }} &middot;
-        SUPERSEDED: {{ summary.proposals.SUPERSEDED }}
+        ACC: {{ summary.proposals.ACCEPTED }} &middot;
+        REJ: {{ summary.proposals.REJECTED }} &middot;
+        SUP: {{ summary.proposals.SUPERSEDED }}
       </small>
     </article>
 
-    <article>
+    <article class="dash-card">
       <header><strong>CRM</strong></header>
-      <p style="font-size: 1.5rem; margin: 0">
-        Deals: {{ summary.deals }} &middot; Leads: {{ summary.leads }}
+      <p class="dash-number">
+        {{ summary.deals + summary.leads }}
       </p>
-      <small><em>Counts only; details in Phase B.</em></small>
+      <small class="dash-breakdown">
+        deals: <strong>{{ summary.deals }}</strong> &middot;
+        leads: <strong>{{ summary.leads }}</strong>
+      </small>
     </article>
   </div>
 </section>
