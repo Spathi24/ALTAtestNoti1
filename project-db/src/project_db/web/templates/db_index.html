@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}DB inspector{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>DB inspector <small>(dev affordance, read-only)</small></h2>
+  <p>Every SQLAlchemy table with its row count.  Click into one to see
+     the top 100 rows.  No edit / exec / query -- DB Browser for SQLite
+     covers anything beyond this.</p>
+</hgroup>
+
+<table>
+  <thead><tr><th>Table</th><th>Rows</th><th></th></tr></thead>
+  <tbody>
+    {% for t in tables %}
+    <tr data-testid="db-row">
+      <td><code>{{ t.name }}</code></td>
+      <td>{{ t.row_count }}</td>
+      <td><a href="/db/{{ t.name }}">browse top 100 &rarr;</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

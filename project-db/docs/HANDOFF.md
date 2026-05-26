@@ -96,6 +96,33 @@ projects.
   normalized-name. Ambiguous or zero hits → no match (resolver creates;
   `doctor` flags). No substring.
 
+### Web UI (M5)
+- **Stack**: FastAPI + Jinja2 + HTMX + Pico.css.  Vendored static in
+  `web/static/`.  No build pipeline, no JS toolchain.
+- **Service-module discipline** (`web/ui_views.py`): EVERY derived
+  value the templates render is computed there, not in templates or
+  routes.  Mirrors the `ai/views.py` pattern for the CLI.  The same
+  data shape (`report_doctor`, `dashboard_summary`, `project_detail`,
+  etc.) drives both surfaces.
+- **Route boundary**: routes are thin adapters (dep → service →
+  template).  Mutation routes (accept / reject / set-dates) are
+  pinned to four steps: re-read state, build connector, delegate to
+  the existing service function, render one of {idle / dry_run /
+  decided / stale} partials.
+- **HTMX patterns**:
+  - `hx-confirm` on every Sonnet-spending button (proposals
+    generation, confirm-accept).
+  - `hx-indicator` + `hx-disabled-elt` on every action button (spinner
+    + button-group disable during in-flight request).
+  - `outerHTML` swap on `<section id="decision">` for the four-state
+    decision partial machine (idle ↔ dry_run → decided; any →
+    stale on cross-tab race).
+  - Stale-state guard: every mutation POST re-reads the proposal
+    BEFORE delegating; non-PENDING → render `decision_stale`
+    fragment, not a 4xx.
+- **Localhost only**: hard-bound to `127.0.0.1`, no `--host` flag,
+  no CORS middleware, no auth.  Multi-user is a different product.
+
 ---
 
 ## 4. AI layer
@@ -195,9 +222,48 @@ to lock this in.
 | `doctor` | Read-only data audit (provenance, mislinks, orphans, duplicate civics). |
 | `rebuild --yes` | Re-derive canonical DB. Preserves Document+DocumentText; exports Proposals to JSON first. |
 | `list-sources`, `list-external <type> <uuid>` | Plumbing introspection. |
+| **`serve [--port 8000]`** | **Launch the local web UI on 127.0.0.1 (M5).** No auth, single-user, localhost-only. |
 
 Exit codes: 0 ok, 1 caller-facing failure (e.g. proposal validation),
 2 configuration / not-found / missing prerequisite.
+
+### Web UI route map (M5)
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/` | GET | Dashboard (live counts + pending-proposal strip) |
+| `/projects` | GET | All projects table |
+| `/projects/{id}` | GET | 5-panel project detail + Generate panel + raw JSON |
+| `/projects/{id}/propose/timelines` | POST | Generate timeline proposals (Sonnet, hx-confirm) |
+| `/projects/{id}/propose/scope` | POST | Generate scope proposals (Sonnet, hx-confirm) |
+| `/documents/{id}` | GET | Document metadata + full extracted text + citing proposals |
+| `/proposals` | GET | Filterable proposal queue |
+| `/proposals/{id}` | GET | 5-panel review page |
+| `/proposals/{id}/decision` | GET | Re-render idle fragment (used as dry-run Cancel target) |
+| `/proposals/{id}/dry-run` | POST | Preview Monday payload; no DB / API change |
+| `/proposals/{id}/accept` | POST | Write to Monday, flip status (write-first/mirror-second) |
+| `/proposals/{id}/reject` | POST | Pure DB; optional reason via Form |
+| `/tasks/{id}/dates-form` | GET | Inline edit form |
+| `/tasks/{id}/row` | GET | Static row (Cancel target) |
+| `/tasks/{id}/set-dates` | POST | Manual date edit; write Monday + mirror |
+| `/ask` | GET, POST | Canned dispatcher + Haiku LLM fallback |
+| `/doctor` | GET | Data integrity audit (HTML render of `report_doctor()`) |
+| `/db` | GET | Table index (dev affordance) |
+| `/db/{table}` | GET | Top-100 rows of one table (dev affordance) |
+| `/static/*` | GET | Vendored Pico, HTMX, app.css |
+| `/docs` | GET | FastAPI auto Swagger (free debugging surface) |
+
+### M5 prompt-philosophy boundary (load-bearing)
+
+| Role | Function | Style |
+|---|---|---|
+| Askbot | `ai/query.py::answer_with_llm` | **Assertive, inferential**.  Recommends; labels inferences; "Never end at a dead end." |
+| Timeline proposals | `ai/proposals.py::generate_timeline_proposals` | **Conservative**.  "Returning fewer proposals, or none, is correct."  Past-dated proposals rejected outright. |
+| Scope proposals | `ai/proposals.py::generate_scope_proposals` | **Conservative**.  "Flag ONLY scope items explicitly stated."  Advisory-only -- can't be accepted via `accept_proposal`. |
+
+Regression test pinning the boundary:
+`tests/test_askbot_assertive_prompt.py::TestProposalBotsStayConservative`.
+**Do not apply the askbot's assertive style to a proposal bot.**
 
 ---
 
@@ -253,51 +319,122 @@ Exit codes: 0 ok, 1 caller-facing failure (e.g. proposal validation),
 - **`.env.example` is gitignored** by a `.env*` rule. The README is the
   authoritative config doc; `.env.example` is best-effort.
 
+### M5-era web footguns (read before touching `web/`)
+
+- **Starlette 1.x changed `TemplateResponse` signature.**  Old form
+  `TemplateResponse(name, {"request": req, ...})` is removed.  New
+  form is `TemplateResponse(request, name, {...})`.  Symptom of
+  accidental regression: `TypeError: unhashable type: 'dict'` from
+  Jinja's template cache.  Every route in `web/routes/` uses the new
+  form; don't revert.
+- **SQLite `:memory:` + FastAPI TestClient threadpool.**  Sync routes
+  dispatch through a threadpool; SQLite's default `check_same_thread=True`
+  refuses cross-thread access.  Every web test file overrides
+  `db_engine` with a `StaticPool` + `check_same_thread=False` engine.
+  Don't remove that fixture override.
+- **`hx-indicator` inherits down the DOM.**  If on a `<form>`, child
+  buttons with their own `hx-*` (e.g. Cancel's `hx-get`) trigger the
+  spinner too.  Put `hx-indicator` on the specific button that should
+  spin (e.g. Save), not the form.  Pinned by
+  `tests/test_web_phase_d1.py::TestTaskDateEdits::test_cancel_button_has_no_spinner_inheritance`.
+- **`complete_json` must detect truncation.**  If `finish_reason ==
+  "max_tokens"` (Anthropic) or `"length"` (OpenAI), the retry bumps
+  `max_tokens` by 1.5x.  Same cap on retry == same wall.  Pinned by
+  `tests/test_complete_json_truncation.py`.
+- **`markdown` library passes raw HTML through by default.**  The
+  askbot pre-escapes input via `html.escape()` BEFORE rendering, so
+  embedded `<script>` becomes inert text.  See
+  `web/routes/ask.py::_render_markdown`.  Don't bypass the pre-escape.
+- **Partial templates serve two consumers, two variable shapes.**
+  E.g. `_partials/decision_idle.html` is rendered (a) inline from
+  `proposal_detail.html` where the parent context has `p.proposal_id`,
+  and (b) standalone by the accept/reject routes where the context
+  has `proposal_id` directly.  The page template uses `{% with %}`
+  to alias.  If you change the partial's variable names, update both
+  consumers.
+- **Vendored Pico + HTMX in `web/static/`** -- 130 KB total.  Bumping
+  versions: replace the files in place; comments in `base.html` link
+  to the original URLs.  Do NOT re-introduce CDN links;
+  `tests/test_web_phase_e.py::TestVendoredAssets::test_base_template_does_not_reference_cdn`
+  fails loud if you do.
+- **Background processes (uvicorn) detach from the parent shell on
+  Windows.**  When testing manually, kill the port with
+  `Get-NetTCPConnection -LocalPort 8000 | ForEach-Object {
+  Stop-Process -Id $_.OwningProcess -Force }`.  `TestClient` runs
+  in-process so this only affects manual `project_db serve`.
+
 ---
 
 ## 9. What is deliberately deferred and why
 
-- **CompanyCam, QuickBooks live sync, Webhooks, Postgres + Alembic,
-  pgvector, text-to-SQL, multi-tenant, scheduling** — plumbing-not-brain.
-  Per STRATEGY.md, don't pick these up until a PM is using the daily
-  Monday+Drive loop.
-- **Anomaly detection prompt** — same engine shape as scope; held until
-  scope quality is validated by a PM.
-- **Auto-creating Monday tasks from accepted scope proposals** — would
-  require a write-back action for `field_name="scope_gap"`. Not built;
-  scope is advisory-only for now. The natural place to add it: a new
-  branch in `accept_proposal` (or a sibling function) that calls a
-  `MondayConnector.create_item_for_scope_gap`.
-- **RAG over DocumentText / fine-tuning corpus / minimal UI** — see
-  ROADMAP "Future architecture notes" and Phase 6. Not next.
+- **CompanyCam, Webhooks, Postgres + Alembic, pgvector, text-to-SQL,
+  multi-tenant, scheduling** — plumbing-not-brain.  Per STRATEGY.md,
+  don't pick these up until a PM is using the daily Monday+Drive loop
+  AND the brain (RAG + financial extraction) has shipped.
+- **QuickBooks live sync** -- still pending real credentials.  Code
+  is ready; ~1 session once creds exist.  Per ROADMAP's current
+  operating plan, this happens concurrent with structured financial
+  extraction (option A there).
+- **Anomaly detection prompt** — same engine shape as scope; held
+  until scope quality is validated by a PM at scale (M4 ongoing).
+- **Auto-creating Monday tasks from accepted scope proposals** —
+  would require a write-back action for `field_name="scope_gap"`.
+  Not built; scope is advisory-only for now.  The natural place to
+  add it: a new branch in `accept_proposal` (or a sibling function)
+  that calls a `MondayConnector.create_item_for_scope_gap`.
+- **Intent classification + per-question context selection** in the
+  askbot.  ChatGPT recommended this on 2026-05-26.  Not urgent at
+  21 projects; reasonable to add when DB size hurts Haiku recall.
+  See ROADMAP "Deferred but considered" section.
+- **Bulk accept / bulk reject in the UI.**  CLI has it; UI doesn't.
+  Deliberately omitted to keep the failure mode bounded -- one bad
+  proposal in a batch of 20 writes to Monday before anyone notices.
+  See M5 retrospective in ROADMAP for the full rationale.
+- **Multi-user / hosting / auth.**  The current architecture assumes
+  single-machine single-user.  Adding multi-user is a fundamentally
+  different product and would invalidate most of the M5 decisions
+  (no CORS, no `--host` flag, no session auth, no rate limiting).
+  If this comes up, it's a separate project, not a feature.
 
 ---
 
-## 10. How to continue (per the operating plan)
+## 10. How to continue (per the current operating plan)
 
-The roadmap's near-term milestones are M1-M5; M1-M3 are done. Next:
+**M5 closed (2026-05-26).**  The local web UI is shipped; 578 tests
+passing; the full read+decision+action loop is in the browser.
 
-- **M4 — Scope reconciliation quality validation.** `propose scope` ships,
-  but a PM hasn't reviewed enough output to tune the prompt. The next
-  reasonable step is to run it on 3-5 projects, look at the rejection
-  rate, and iterate the prompt. Don't add more LLM features until scope
-  output is trusted.
-- **M5 — Minimal UI.** Thin FastAPI/Flask over `ai/views.py` reports +
-  the existing `accept_proposal` / `reject_proposal`. No new business
-  logic in the UI. Pull this forward if discoverability is the blocker.
-- If anomaly detection is requested, mirror `generate_scope_proposals`:
-  new prompt version, new `field_name`, supersede-by-project pattern.
+The ROADMAP's "Current operating plan (2026-05-26)" is the
+authoritative next-step list.  In priority order:
 
-If the next session is about a bug or a small feature, **read CHANGELOG's
-top entry first** for the live snapshot of what works.
+1. **Tighten proposal reasoning prompts with quoted excerpts** -- one
+   prompt change in `_build_timeline_prompt` and `_build_scope_prompt`.
+   ~1 session.  High quality lift, low risk.
+2. **RAG over `DocumentText`** -- the biggest capability unlock.
+   ~4 sessions.  Detailed plan in ROADMAP "RAG over DocumentText
+   (detailed plan)" section.  Both askbot and proposal bots gain.
+3. **Structured financial extraction** -- per-doc-type LLM extractor
+   into new tables (Invoice line items, ContractLineItem,
+   ChangeOrder).  ~3-4 sessions.  Detailed plan in ROADMAP
+   "Financial extraction strategy" section.  Concurrent with #2 OK.
+4. **Live QB integration** -- pending real creds.  ~1 session.
+5. **One real Monday accept through the UI** -- needs user sign-off.
+
+**If the next session is a bug or small feature**, read CHANGELOG's
+top entry first for the live snapshot of what works.
+
+**If anomaly detection comes up**, mirror `generate_scope_proposals`:
+new prompt version, new `field_name`, supersede-by-project pattern.
 
 ---
 
 ## 11. Tracking conventions
 
-- Test count in README is hand-maintained. Update it when you add tests.
-- CHANGELOG is newest-on-top. Each entry has a date + theme + what shipped
-  + tests + state at EOD.
-- ROADMAP `[ ]` → `[x]` when a phase item ships.
+- Test count in README + ROADMAP is hand-maintained. Update when you
+  add tests.
+- CHANGELOG is newest-on-top. Each entry has a date + theme + what
+  shipped + tests + state at EOD.
+- ROADMAP `[ ]` → `[x]` when a phase item ships.  Closed milestones
+  get a one-line summary table + a "retrospective" subsection if
+  there are footguns / deferred ideas worth preserving.
 - Commit messages: imperative, group by concern, mention test count.
-- Co-author trailer on Claude commits: `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`.
+- Co-author trailer on Claude commits: `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.

@@ -9,6 +9,117 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-26 — Phase 6 / M5 part E: closeout
+
+**Theme:** Last UI slice -- the dev affordances + offline-readiness
+that polish M5 to closure.
+
+### What landed
+- **`/db` raw-row inspector.** Lists every SQLAlchemy table with row
+  counts; `/db/{table}` shows the top 100 rows.  Reflective via
+  `Base.metadata.tables`, so new tables appear automatically.  Read-only
+  by design -- no `/db/exec`, no `/db/query`, no edit, no export.  Per
+  the M5 plan review #4: this is a dev affordance, NOT a second product
+  surface.
+- **Raw-JSON debug panels.** `<details>` (collapsed) at the bottom of
+  the project detail and document detail pages, showing the full data
+  dict the template was rendered from.  Proposal detail already had
+  one; now everything does.  Eyeball what the service module returned
+  without firing up DB Browser.
+- **Vendored static assets.**  Pico.css (83 KB) and HTMX (48 KB) live
+  in `web/static/` -- no jsdelivr / unpkg dependency.  The tool runs
+  fully offline now (important for an internal company app on
+  inconsistent connections).
+- **Footer polish.**  Now carries app version, short git SHA, server
+  uptime, and DB path.  Tiny but useful for spotting "wait, am I on
+  the test DB?" mid-session.
+
+### Verification
+- **+21 tests** (`tests/test_web_phase_e.py`), **578 / 578 total
+  passing** (+155 across the whole M5 build).
+- Tests cover: `/db` index + table render, 404 on unknown table,
+  empty table renders politely, every read-only forbidden surface
+  (`/db/exec` / `/db/query` / `/db/sql` / `/db/{table}/edit` /
+  `/db/{table}/delete` / `/db/export`) returns 404 or 405, raw-JSON
+  panels render on project + document detail with the
+  `data-testid="raw-json-panel"` marker, footer carries all four
+  fields, pico.min.css + htmx.min.js are served from `/static`,
+  base.html does NOT reference `cdn.jsdelivr.net` or `unpkg.com`.
+- Live smoke against the real DB: `/db` lists all 14 canonical
+  tables with live counts; `/db/project` and `/db/document` render
+  top-100 rows; offline assets all 200 with the expected byte
+  sizes; footer renders `v0.1.0`, git SHA `dac9218`, `10s` uptime,
+  full DB path.
+
+### M5 milestone closed
+Phase 6 / M5 -- the local web UI -- shipped in five slices:
+A skeleton + dashboard, B+C read-only browsing, D HTMX
+accept/reject with two-click confirm + stale guard, D.1 action
+surfaces (propose / ask / manual task date edit), E this closeout.
+
+**Total scope of M5:** 14 routes, 23 templates, +155 tests, ~5500
+LOC added.  The full read+decision+action loop is in the browser;
+the CLI surface stays intact and authoritative.
+
+See **[docs/ROADMAP.md M5 RETROSPECTIVE](docs/ROADMAP.md)** for the
+extended writeup: what worked, footguns to know about, ideas
+revisited later, and the path forward.
+
+### State at EOD
+- **578 tests** passing.
+- M5 closed.  Next: tighten proposal reasoning prompts (high-value,
+  small) OR RAG over DocumentText (high-value, large), per ROADMAP.
+
+---
+
+## 2026-05-26 — Askbot assertive prompt rewrite + markdown rendering
+
+**Theme:** User report: the askbot was "annoying" -- gave up on broad
+questions with "I cannot determine that from the snapshot."  Root
+cause was the prompt literally instructing the model to bail.  Plus
+three UI bugs from the same review.
+
+### Askbot: assertive inferential prompt (commit `dac9218`)
+- Rewrote `ai/query.py::answer_with_llm` system + user prompts.  New
+  behavior: best-supported answer first, label inferences, identify
+  missing data only AFTER giving the strongest reasonable answer.
+- max_tokens 1024 -> 2048 (the assertive style produces longer answers
+  with Hard Facts + Inference + Recommendation sections).
+- Anti-hallucination rules preserved verbatim -- "never invent project
+  names, clients, invoices, tasks, dates, document contents, contract
+  terms, or dollar amounts" stays in place.
+- **Scope discipline**: this assertive style is the askbot's ONLY.
+  The timeline / scope proposal prompts (Sonnet) stay conservative --
+  they extract facts that get written to Monday; refusal-on-uncertainty
+  is desired behavior.  A regression test
+  (`TestProposalBotsStayConservative`) pins this boundary.
+- +8 tests (`tests/test_askbot_assertive_prompt.py`).
+- Live: "What should we focus on this week?" produced a multi-project
+  operational analysis with named tasks, real overdue dates, blockers,
+  recommendations, and a data-gaps inference section at the end.
+  Transformative vs. the previous "I cannot determine that" output.
+
+### UI fixes (commit `cbb3ace`)
+- **Dashboard counts alignment.**  Articles had inconsistent inner
+  rhythm (CRM panel 1.5rem vs 2rem on others).  Added `.dash-card`
+  flex column + `.dash-number` fixed-height row + `.dash-breakdown`
+  pinned to the bottom via `margin-top: auto`.  CRM panel reformatted
+  to show total deals+leads as the big number, breakdown below.
+- **Task edit Cancel showed "Writing to Monday..." infinitely.**
+  Cause: `hx-indicator` was on the `<form>` tag, so the Cancel
+  button's `hx-get` inherited it.  Moved to the Save (submit) button
+  only.  Regression test pins: form has no indicator, Cancel has
+  no indicator, Save does.
+- **/ask LLM responses rendered as plain text.**  Haiku's markdown
+  was getting dumped one-line.  Added the `markdown` library to the
+  [ui] extra; new `_render_markdown()` helper pre-escapes HTML (defense
+  in depth) then runs markdown -> HTML5 with `sane_lists` + `nl2br` +
+  `fenced_code`.  Template renders via `|safe`.  CSS tightens spacing
+  for short answers.  +4 tests pin: bold / italic / lists survive,
+  embedded `<script>` is escaped, canned dicts still go through JSON.
+
+---
+
 ## 2026-05-25 (late night) — Phase D.1 fixes: truncation handling + UI spinners
 
 **Theme:** Two concrete bugs the user hit immediately after Phase D.1

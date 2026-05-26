@@ -235,4 +235,15 @@ user has to explicitly acknowledge the token cost before each click.
     {% include "_partials/propose_buttons.html" %}
   {% endwith %}
 </section>
+
+<!-- ============================ RAW DATA ============================
+Dev affordance: the full data dict the template was rendered from.
+Collapsed by default.  Lets you eyeball exactly what `project_detail`
+returned without firing up DB Browser.
+================================================================== -->
+<details data-testid="raw-json-panel">
+  <summary><small>Raw data (dev)</small></summary>
+  <pre style="font-size: 0.8rem; padding: 0.5rem; background: #f7f7f7;
+              max-height: 30rem; overflow: auto;">{{ d|tojson(indent=2) }}</pre>
+</details>
 {% endblock %}

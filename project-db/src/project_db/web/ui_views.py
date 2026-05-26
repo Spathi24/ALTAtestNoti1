@@ -528,3 +528,90 @@ def doctor_report(session: Session) -> dict[str, Any]:
     """
     from project_db.ai.views import report_doctor
     return report_doctor(session)
+
+
+# ---------------------------------------------------------------------------
+# DB inspector -- /db and /db/{table}
+# ---------------------------------------------------------------------------
+
+
+def db_table_index(session: Session) -> list[dict[str, Any]]:
+    """List every SQLAlchemy table with a row count.
+
+    Reflective: walks ``Base.metadata.tables`` so new tables added
+    later show up automatically without a code change here.  Tables
+    are sorted alphabetically for predictability.
+    """
+    from project_db.db.base import Base
+
+    rows: list[dict[str, Any]] = []
+    for name in sorted(Base.metadata.tables.keys()):
+        table = Base.metadata.tables[name]
+        try:
+            count = session.execute(table.count()).scalar() or 0
+        except Exception:  # noqa: BLE001
+            # SQLAlchemy 2.x: table.count() may not exist; fall back
+            # to a raw COUNT(*).
+            from sqlalchemy import func, select
+            try:
+                count = session.execute(
+                    select(func.count()).select_from(table)
+                ).scalar() or 0
+            except Exception:  # noqa: BLE001
+                count = -1
+        rows.append({"name": name, "row_count": int(count)})
+    return rows
+
+
+def db_table_rows(
+    session: Session,
+    table_name: str,
+    *,
+    limit: int = 100,
+) -> dict[str, Any] | None:
+    """Top-N rows for one table, JSON-serializable.
+
+    Returns ``None`` when the table doesn't exist so the route can 404.
+
+    Read-only by design.  This is a dev affordance -- DB Browser for
+    SQLite covers any "I need to query / edit" use case.  Per the M5
+    plan review #4, this endpoint stays small and ugly.
+    """
+    from project_db.db.base import Base
+
+    if table_name not in Base.metadata.tables:
+        return None
+
+    table = Base.metadata.tables[table_name]
+    columns = [c.name for c in table.columns]
+
+    from sqlalchemy import select
+    result = session.execute(select(table).limit(limit)).fetchall()
+
+    rows: list[dict[str, Any]] = []
+    for r in result:
+        row: dict[str, Any] = {}
+        for col, val in zip(columns, r):
+            # Coerce to JSON-friendly shapes.
+            if val is None:
+                row[col] = None
+            elif isinstance(val, (str, int, float, bool)):
+                row[col] = val
+            else:
+                row[col] = str(val)
+        rows.append(row)
+
+    # True (possibly larger) total -- so the page can say "showing 100 of 750".
+    from sqlalchemy import func
+    total = (
+        session.execute(select(func.count()).select_from(table)).scalar() or 0
+    )
+
+    return {
+        "table": table_name,
+        "columns": columns,
+        "rows": rows,
+        "displayed": len(rows),
+        "total": int(total),
+        "limit": limit,
+    }

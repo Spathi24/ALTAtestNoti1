@@ -4,9 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}ALTA{% endblock %} - project_db</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  {# Pico.css and HTMX are vendored locally so the app runs offline.
+     Original sources for upgrade reference:
+       https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css
+       https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js
+     To bump: just replace the files in web/static/ #}
+  <link rel="stylesheet" href="{{ url_for('static', path='pico.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
-  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
 </head>
 <body>
   <header class="container">
@@ -33,9 +38,14 @@
   <footer class="container">
     <hr>
     <small>
-      project_db UI &middot;
-      git <code>{{ git_sha() }}</code> &middot;
-      db <code>{{ db_path() }}</code>
+      project_db
+      <code data-testid="app-version">v{{ app_version() }}</code>
+      &middot;
+      git <code data-testid="git-sha">{{ git_sha() }}</code>
+      &middot;
+      up <code data-testid="uptime">{{ uptime_str() }}</code>
+      &middot;
+      db <code data-testid="db-path">{{ db_path() }}</code>
     </small>
   </footer>
 </body>

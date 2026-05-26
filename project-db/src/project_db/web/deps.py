@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from functools import lru_cache
 from typing import Iterator
 
@@ -51,6 +52,38 @@ def db_path() -> str:
     """Display path for the footer.  Reads PROJECT_DB_URL after .env load."""
     url = os.environ.get("PROJECT_DB_URL", "(unset)")
     return url
+
+
+_SERVER_START_TS = time.monotonic()
+
+
+@lru_cache(maxsize=1)
+def app_version() -> str:
+    """Project version from package metadata, or 'dev' if not installed."""
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("project_db")
+    except Exception:  # noqa: BLE001
+        return "dev"
+
+
+def uptime_str() -> str:
+    """Human-readable server uptime for the footer.
+
+    Computed fresh on every call (not cached) -- the footer ticks
+    every page load.
+    """
+    secs = int(time.monotonic() - _SERVER_START_TS)
+    if secs < 60:
+        return f"{secs}s"
+    mins, secs = divmod(secs, 60)
+    if mins < 60:
+        return f"{mins}m {secs}s"
+    hours, mins = divmod(mins, 60)
+    if hours < 24:
+        return f"{hours}h {mins}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
 
 
 def build_monday_writeback(session):

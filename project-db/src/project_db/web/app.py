@@ -17,8 +17,15 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from project_db.web import ui_views
-from project_db.web.deps import db, db_path, git_sha
+from project_db.web.deps import (
+    app_version,
+    db,
+    db_path,
+    git_sha,
+    uptime_str,
+)
 from project_db.web.routes import ask as ask_routes
+from project_db.web.routes import db as db_routes
 from project_db.web.routes import doctor as doctor_routes
 from project_db.web.routes import projects as project_routes
 from project_db.web.routes import proposals as proposal_routes
@@ -42,6 +49,8 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.globals["git_sha"] = git_sha
     templates.env.globals["db_path"] = db_path
+    templates.env.globals["app_version"] = app_version
+    templates.env.globals["uptime_str"] = uptime_str
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -61,6 +70,7 @@ def create_app() -> FastAPI:
     doctor_routes.register(page_router, templates)
     ask_routes.register(page_router, templates)
     task_routes.register(page_router, templates)
+    db_routes.register(page_router, templates)
     app.include_router(page_router)
 
     return app

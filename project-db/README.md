@@ -5,26 +5,30 @@ A unified data layer that pulls live data from all of the company's SaaS tools
 you query across all of them — or have an LLM read your contracts and propose
 corrections to what Monday says is happening.
 
-**Current status (2026-05-22):**
+**Current status (2026-05-26):**
 - Phase 1 (Brain foundation): DocumentText sidecar + Proposal table +
   content extractors + Drive reconciliation. **Done.**
 - Phase 2 (Tier-1 deterministic reports): 5 canned reports wired into
   `ask` and verified against the live DB. **Done.**
-- Phase 2.5 (Foundation correctness): Drive folders now define project
-  identity; documents link by physical folder ancestry; substring matching is
-  gone; `doctor` and `rebuild` exist. **Done, with minor cleanup flags.**
-- Phase 3 (Tier-2 LLM proposals): timeline proposals, list/show, and
-  accept/reject write-back exist. Scope/anomaly prompts and broad proposal
-  quality validation are next.
-- Current live DB snapshot: 21 projects, 750 Drive documents, 554 project
-  documents linked, 153 Monday tasks, 83 tasks without dates, 0 active proposal
-  rows. Deal-derived Google/Amazon placeholders are recognized as CRM deals;
-  the remaining live `doctor` warning is 8 Drive files with no project/category.
+- Phase 2.5 (Foundation correctness): Drive folders define project
+  identity; deterministic linkage; `doctor` and `rebuild` exist. **Done.**
+- Phase 3 (Tier-2 LLM proposals): timeline + scope proposals, list/show,
+  accept/reject with Monday write-back. **Done.**
+- Phase 4 (Approval workflow): list / show / accept / reject / bulk;
+  one real Monday accept verified live. **Done.**
+- **Phase 6 / M5 (Local web UI): the full read+decision+action loop
+  in the browser -- dashboard, projects, documents, proposals
+  (filterable + reviewable with citations), `/ask` with assertive
+  Haiku fallback, inline task date editing, propose-from-UI with
+  hx-confirm token-cost dialogs, `/doctor`, `/db` raw inspector.
+  **Closed 2026-05-26.**
 
-**422-test suite.** Day-by-day work log in
-**[CHANGELOG.md](CHANGELOG.md)**. Developer handoff (architecture
-invariants, footguns, testing patterns) in
-**[docs/HANDOFF.md](docs/HANDOFF.md)**.
+**578-test suite.** Day-by-day work log in
+**[CHANGELOG.md](CHANGELOG.md)**.  Developer handoff (architecture
+invariants, footguns, testing patterns, M5 retrospective) in
+**[docs/HANDOFF.md](docs/HANDOFF.md)**.  Forward-looking plans
+(RAG, financial extraction, prompt-philosophy boundary) in
+**[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ---
 
@@ -183,6 +187,10 @@ project_db sync monday --delta      # smart-skip: query Board.activity_logs,
                                     # skip boards with no changes since cursor
 project_db sync GOOGLE_DRIVE        # pull Drive metadata (run gdrive-auth once first)
 project_db gdrive-auth              # one-time OAuth browser flow (Desktop creds)
+
+# --- Open the local web UI (M5) ---
+project_db serve                                 # http://127.0.0.1:8000
+project_db serve --port 9000                     # alternate port
 
 # --- Read contract text ---
 project_db extract-content --limit 5            # smoke test

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ d.table }} - DB{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2><code>{{ d.table }}</code>
+    <small>(showing {{ d.displayed }} of {{ d.total }})</small>
+  </h2>
+  <p><small><a href="/db">&larr; all tables</a></small></p>
+</hgroup>
+
+{% if d.rows %}
+<div style="overflow-x: auto;">
+<table>
+  <thead>
+    <tr>
+      {% for col in d.columns %}
+        <th><small><code>{{ col }}</code></small></th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in d.rows %}
+    <tr>
+      {% for col in d.columns %}
+      <td style="max-width: 25rem; overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap;">
+        <small>{% if r[col] is none %}<em>NULL</em>{% else %}{{ r[col] }}{% endif %}</small>
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+  <p><em>Table is empty.</em></p>
+{% endif %}
+{% endblock %}

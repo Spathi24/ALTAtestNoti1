@@ -188,7 +188,12 @@ class TestProjectDetail:
         assert "Final SOW.pdf" in body
         # Proposals panel shows the pending one
         assert "PENDING" in body
-        assert "timelines-v2" not in body  # prompt version on detail page, not project
+        # (Phase E note: the raw-JSON debug panel at the bottom of the
+        # project page now dumps the full data dict, which includes the
+        # proposal's prompt_version.  The visible panels above it still
+        # don't surface prompt_version -- it lives on the proposal
+        # detail page.  We removed the earlier `assert "timelines-v2"
+        # not in body` here because the raw-JSON panel would match.)
 
     def test_404_for_unknown_uuid(self, client, world):
         resp = client.get("/projects/00000000-0000-0000-0000-000000000000")
