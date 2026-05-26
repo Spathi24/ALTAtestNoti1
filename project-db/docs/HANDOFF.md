@@ -223,6 +223,7 @@ to lock this in.
 | `rebuild --yes` | Re-derive canonical DB. Preserves Document+DocumentText; exports Proposals to JSON first. |
 | `list-sources`, `list-external <type> <uuid>` | Plumbing introspection. |
 | **`serve [--port 8000]`** | **Launch the local web UI on 127.0.0.1 (M5).** No auth, single-user, localhost-only. |
+| **`import-roadmap [path] [--overwrite]`** | Import the canonical design-phase roadmap from xlsx into `roadmap_task` table.  Default path: `docs/Project Roadmap.xlsx` (also tries `../docs/Project Roadmap.xlsx`).  Idempotent; `--overwrite` drops + re-inserts.  Layer 1 of the roadmap integration -- foundation for Layers 2 (prompt injection) + 3 (gap-finder). |
 
 Exit codes: 0 ok, 1 caller-facing failure (e.g. proposal validation),
 2 configuration / not-found / missing prerequisite.

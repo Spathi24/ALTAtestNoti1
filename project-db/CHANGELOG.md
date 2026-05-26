@@ -9,6 +9,80 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-26 (post-M5) — Roadmap integration Layer 1: storage + import CLI
+
+**Theme:** First of three layers (per ROADMAP "Forward-looking AI
+plans") to inject the user's canonical design-phase roadmap into the
+AI proposal pipeline.  Layer 1 is the foundation -- a `RoadmapTask`
+table populated from `docs/Project Roadmap.xlsx` via a new CLI command.
+Layers 2 (prompt injection) and 3 (deterministic gap-finder) build on
+this.
+
+### What landed
+- **New canonical entity `RoadmapTask`** (`db/models/roadmap.py`).
+  Columns: `phase` (SD/DD/CD/CA enum), `ordinal` (int, 1-based within
+  phase), `task_name`, `sub_tasks_json`, plus the CanonicalMixin
+  fields.  Unique constraint on `(phase, ordinal)` so re-imports
+  are stable.
+- **`RoadmapPhase` enum** with explicit `ROADMAP_PHASE_ORDER` mapping
+  (SD<DD<CD<CA) -- the AI layer uses this in Layer 2 as the
+  "phase X cannot start before X-1 finishes" anchor.
+- **SQLite migration** in `ensure_sqlite_schema` so existing local
+  DB files pick up the new table automatically.
+- **`ai/roadmap.py` parser** -- pure function
+  `parse_roadmap_xlsx(path) -> list[dict]`.  Header-based column
+  lookup (so editorial column reordering doesn't break the import),
+  bounds-safe row access (openpyxl read-only mode returns shorter
+  tuples for trailing-empty rows; first import of the live file
+  caught this).  Skips editorial blank rows between phases.
+  Splits sub-task bullets cleanly.
+- **`import_roadmap_rows(session, parsed, overwrite=False)`** --
+  idempotent persistence.  Refuses on second run without
+  `--overwrite`; drops + re-inserts with `--overwrite`.
+- **`list_roadmap_tasks(session)`** -- JSON-serializable read helper,
+  sorted by phase order then ordinal.  Used by future Layer 2 / 3.
+- **New CLI `project_db import-roadmap [path] [--overwrite]`** --
+  defaults to `docs/Project Roadmap.xlsx`, also tries
+  `../docs/Project Roadmap.xlsx` so it works from either
+  `ALTAtest/` or `ALTAtest/project-db/`.
+
+### Verification
+- **+22 tests** (`tests/test_roadmap_layer1.py`), **601 / 601 total
+  passing**.
+- Tests cover: sub-task splitter (None / NaN / blank / dash / bullet
+  / mixed cases), parser happy path, blank-row separators, unknown
+  phase raises, missing required column raises, case-insensitive
+  phase strings, notes column, **real-file integration test** (parses
+  the actual `docs/Project Roadmap.xlsx` and asserts 44 tasks across
+  the 4 phases), idempotency (refuse vs overwrite), `list_roadmap_tasks`
+  sort order, CLI end-to-end + missing-file + re-import paths.
+- **Live import**: `project_db import-roadmap` produced
+  `OK -- imported 44 task(s): 15 SD / 13 DD / 11 CD / 5 CA` --
+  exactly matching the spreadsheet phase breakdown.  Re-import
+  without `--overwrite` correctly refused (`FAIL: roadmap_task
+  already has 44 rows`); re-import with `--overwrite` replaced
+  the 44 rows cleanly.
+- Live UI: `/db` lists `roadmap_task` with row count 44;
+  `/db/roadmap_task` renders all 44 task names with their sub-task
+  JSON arrays.
+
+### What's next (Layers 2 + 3 of the roadmap integration)
+- **Layer 3 (next session): `roadmap-gaps` deterministic gap-finder.**
+  CLI + UI route that compares a project's Monday tasks against the
+  canonical roadmap using exact + fuzzy + LLM-tie-break matching.
+  Zero tokens for the common case; LLM only for the 0.6-0.85 fuzzy
+  middle.
+- **Layer 2 (after Layer 3 ships):** inject the roadmap into
+  `_build_timeline_prompt` and `_build_scope_prompt` as a reference
+  section.  Both bots gain ordering / completeness anchors.
+
+### State at EOD
+- **601 tests** passing.
+- Roadmap is canonical data now -- editable via re-import, queryable
+  via `/db`, ready for Layers 2 + 3 to consume.
+
+---
+
 ## 2026-05-26 — Phase 6 / M5 part E: closeout
 
 **Theme:** Last UI slice -- the dev affordances + offline-readiness

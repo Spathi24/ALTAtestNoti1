@@ -70,6 +70,20 @@ CREATE TABLE proposal (
 )
 """
 
+SQLITE_ROADMAP_TASK_DDL = """
+CREATE TABLE roadmap_task (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    phase VARCHAR NOT NULL,
+    ordinal INTEGER NOT NULL,
+    task_name VARCHAR NOT NULL,
+    sub_tasks_json TEXT,
+    CONSTRAINT uq_roadmap_phase_ordinal UNIQUE (phase, ordinal)
+)
+"""
+
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
@@ -96,3 +110,4 @@ def ensure_sqlite_schema(engine) -> None:
             _add_missing_columns(conn, inspector, "document", SQLITE_DOCUMENT_COLUMNS)
         _create_table_if_missing(conn, tables, "document_text", SQLITE_DOCUMENT_TEXT_DDL)
         _create_table_if_missing(conn, tables, "proposal", SQLITE_PROPOSAL_DDL)
+        _create_table_if_missing(conn, tables, "roadmap_task", SQLITE_ROADMAP_TASK_DDL)

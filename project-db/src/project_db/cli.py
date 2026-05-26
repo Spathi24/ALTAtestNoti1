@@ -1109,6 +1109,66 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_roadmap(args: argparse.Namespace) -> int:
+    """Import the canonical design-phase roadmap from an xlsx.
+
+    The xlsx is the editorial source of truth (architect-side workflow:
+    SD -> DD -> CD -> CA).  This loads it into ``roadmap_task`` so the
+    AI layer can reference it for scope-gap detection and timeline
+    ordering.
+
+    Idempotent: re-run with --overwrite to pick up edits to the xlsx
+    (drops + re-inserts the entire roadmap; no schema migration needed).
+    """
+    import os
+
+    from project_db.ai.roadmap import import_roadmap_rows, parse_roadmap_xlsx
+
+    # Default to the bundled docs path so a no-arg invocation Just Works.
+    default_path = os.path.join("docs", "Project Roadmap.xlsx")
+    path = args.path or default_path
+    if not os.path.exists(path):
+        # Try the parent directory too -- the user often runs from
+        # project-db/ but the xlsx lives at ALTAtest/docs/.
+        alt = os.path.join("..", "docs", "Project Roadmap.xlsx")
+        if not args.path and os.path.exists(alt):
+            path = alt
+        else:
+            print(f"FAIL: roadmap xlsx not found: {path}", file=sys.stderr)
+            print(
+                "  Pass an explicit path:\n"
+                "    project_db import-roadmap path/to/Project Roadmap.xlsx",
+                file=sys.stderr,
+            )
+            return 2
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        parsed = parse_roadmap_xlsx(path)
+    except (ValueError, RuntimeError) as exc:
+        print(f"FAIL: could not parse {path}: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Parsed {len(parsed)} roadmap task(s) from {path}")
+    with session_scope() as s:
+        result = import_roadmap_rows(s, parsed, overwrite=args.overwrite)
+
+    if not result.get("ok"):
+        print(f"FAIL: {result.get('error')}", file=sys.stderr)
+        return 1
+
+    breakdown = " / ".join(
+        f"{n} {phase}" for phase, n in result["by_phase"].items() if n
+    )
+    print(f"OK -- imported {result['total']} task(s): {breakdown}")
+    if result["overwrote"]:
+        print(f"  (replaced {result['overwrote']} existing row(s))")
+    return 0
+
+
 def cmd_rebuild(args: argparse.Namespace) -> int:
     """Re-derive the canonical DB from the sources (Drive first, then Monday).
 
@@ -1474,6 +1534,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ec.add_argument("--limit", type=int, help="Stop after N documents (smoke test)")
     ec.set_defaults(func=cmd_extract_content)
+
+    impr = sub.add_parser(
+        "import-roadmap",
+        help="Import the canonical design-phase roadmap from an xlsx into "
+             "the roadmap_task table (Layer 1 of the roadmap integration).",
+    )
+    impr.add_argument(
+        "path", nargs="?", default=None,
+        help="Path to the roadmap xlsx (defaults to docs/Project Roadmap.xlsx)",
+    )
+    impr.add_argument(
+        "--overwrite", action="store_true",
+        help="Drop existing roadmap_task rows before importing (required "
+             "on re-import after edits)",
+    )
+    impr.set_defaults(func=cmd_import_roadmap)
 
     serve = sub.add_parser(
         "serve",

@@ -13,6 +13,11 @@ from project_db.db.models.crm import Deal, Lead, LeadStage
 from project_db.db.models.docs import Document, DocumentText
 from project_db.db.models.finance import Invoice, InvoiceStatus
 from project_db.db.models.proposals import Proposal, ProposalStatus
+from project_db.db.models.roadmap import (
+    ROADMAP_PHASE_ORDER,
+    RoadmapPhase,
+    RoadmapTask,
+)
 from project_db.db.models.work import (
     DailyLog,
     Project,
@@ -38,6 +43,9 @@ __all__ = [
     "Property",
     "Proposal",
     "ProposalStatus",
+    "RoadmapPhase",
+    "RoadmapTask",
+    "ROADMAP_PHASE_ORDER",
     "SourceSystem",
     "Task",
     "TaskStatus",
