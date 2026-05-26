@@ -9,6 +9,78 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-26 (final EOD) — Tightening: quoted excerpts in proposal reasoning
+
+**Theme:** The smallest possible prompt change with the largest
+visible quality impact.  Both proposal bots' `reasoning` field spec
+rewritten to demand direct evidence -- quoted excerpts for contract
+sources, named neighbour tasks for schedule sequences, phase-ordinal
+citations for roadmap entries.  Lazy reasoning ("the contract states
+this", "per the schedule") is explicitly REJECTED.
+
+### What changed
+- `_build_timeline_prompt`: new EVIDENCE-CITATION REQUIREMENT block
+  before the JSON schema.  Three evidence types named explicitly --
+  DOCUMENT (quoted excerpt required), SCHEDULE SEQUENCE (named
+  neighbours + dates), ROADMAP ENTRY (phase-ordinal+name).
+- `_build_scope_prompt`: same block, with CONTRACT (quoted excerpt
+  required) and ROADMAP (phase-ordinal+name) evidence types.
+- Both prompts: "A reasoning that says only ... is REJECTED" guard.
+- Prompt versions bumped: `timeline-v4-quoted`, `scope-v3-quoted`.
+
+### Verification
+- **+8 tests** (`tests/test_prompt_quoted_excerpts.py`).  Existing
+  Layer-2 prompt-version test broadened to accept new milestone
+  tags.  **625 / 625 total passing.**
+- Tests pin: EVIDENCE-CITATION block present in both prompts, all
+  evidence-source labels named, REJECTED guard present, anti-
+  hallucination posture from earlier milestones preserved
+  ("Never invent", "ANCHOR every proposed date", past-date guard).
+- **Live re-run of `propose scope` on 5768 St-Laurent**: produced
+  8 proposals (4 contract + 4 roadmap) with dramatically improved
+  reasoning quality.
+
+### Before / after on real output
+
+Before this push, a typical contract-sourced reasoning read:
+
+> "The contract mentions energy targets in section 4."
+
+After, the same call produces:
+
+> '"the LESSOR agrees to pay the amount of eight thousand dollars
+> ($8000)... upon the LESSEE's departure and the return of all keys"
+> (Majd 5768 English (2).pdf). No current task addresses this
+> substantial financial settlement obligation.'
+
+Every contract-sourced gap now carries the literal contract language
+in double quotes, with the document name.  Works on French sources
+too ('"le LOCATAIRE quittera les lieux loues au plus tard le 14 jour
+du mois de Decembre 2025"').  Roadmap-sourced gaps use the
+phase-ordinal citation format ('[CA-04] Punch List Coordination').
+
+### Why this matters
+- A PM reviewing a proposal can now validate the citation against the
+  actual document in one click via `/documents/{id}`.
+- Accept / reject decisions become evidence-based, not trust-based.
+- The model's hallucination floor is much lower because it must
+  produce verifiable text, not summarize.
+
+### State at EOD
+- **625 tests** passing.
+- Day-of-work commits since this morning: 7 (Layer 1 -> Layer 2
+  steps A through D -> tightening).  Today's net additions:
+  - 44 canonical roadmap tasks live in DB
+  - Actor classifications (20 contractor-relevant)
+  - Layer 2 prompt injection working on both proposal bots
+  - Source-labeled (contract vs roadmap) scope output
+  - Quoted-excerpt reasoning on every contract gap
+
+Pending: user evaluation review pass, then a final HANDOFF doc
+update before session close.
+
+---
+
 ## 2026-05-26 (post-M5) — Roadmap integration Layer 2: actor classification + prompt injection
 
 **Theme:** Second of two layers shipped (Layer 3 was deliberately

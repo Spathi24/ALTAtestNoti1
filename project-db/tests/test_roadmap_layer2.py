@@ -254,9 +254,20 @@ class TestTimelinePromptRoadmapConditional:
 
 
 class TestPromptVersions:
-    def test_versions_signal_roadmap_layer(self):
-        assert "roadmap" in TIMELINE_PROMPT_VERSION
-        assert "roadmap" in SCOPE_PROMPT_VERSION
+    def test_versions_bumped_past_v1(self):
+        """Prompt versions evolve: Layer 2 bumped to *-roadmap, then the
+        2026-05-26 tightening bumped again to *-quoted.  This test
+        guards that we DON'T regress to the original v1 / v2 strings.
+        """
+        for v in (TIMELINE_PROMPT_VERSION, SCOPE_PROMPT_VERSION):
+            # Must NOT be the original (pre-Layer-2) versions
+            assert v not in ("timeline-v2", "scope-v1")
+            # Must have a recognized suffix from a post-Layer-1 milestone
+            assert any(tag in v for tag in ("roadmap", "quoted")), (
+                f"prompt version {v!r} doesn't carry a known milestone "
+                f"tag -- update this assertion when a new milestone "
+                f"bumps the prompt."
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 
 # Bump when the prompt text or output schema changes -- lets us tell
 # which proposals came from which prompt generation.
-TIMELINE_PROMPT_VERSION = "timeline-v3-roadmap"
-SCOPE_PROMPT_VERSION = "scope-v2-roadmap"
+TIMELINE_PROMPT_VERSION = "timeline-v4-quoted"
+SCOPE_PROMPT_VERSION = "scope-v3-quoted"
 
 
 def _render_roadmap_for_prompt(session: Session) -> str:
@@ -351,7 +351,22 @@ def _build_timeline_prompt(
         "lease terms, and every record of completed work.  Skip any task "
         "that is already finished or that you cannot anchor."
         + roadmap_clause +
-        "  Reference each task by its integer index.  Return strict JSON:\n\n"
+        "  Reference each task by its integer index.\n\n"
+        "EVIDENCE-CITATION REQUIREMENT for the 'reasoning' field:\n"
+        "- When evidence comes from a DOCUMENT: include a direct "
+        "QUOTED EXCERPT in double quotes (max ~30 words) of the exact "
+        "sentence or clause that supports the proposed date.  Name the "
+        "document.  Then briefly explain why that excerpt anchors the "
+        "specific task you're dating.\n"
+        "- When evidence comes from the SCHEDULE SEQUENCE (dated "
+        "neighbour tasks): name the neighbour tasks by their title and "
+        "their dates, e.g. 'between Demolition (2026-06-01 to 06-10) "
+        "and Final Inspection (2026-08-12)'.\n"
+        "- When evidence comes from a ROADMAP ENTRY: cite by "
+        "phase-ordinal+name, e.g. '[CA-04] Punch List Coordination'.\n"
+        "- A reasoning that says only 'based on the contract' or 'per "
+        "the schedule' is REJECTED.  Specific evidence required.\n\n"
+        "Return strict JSON:\n\n"
         "{\n"
         '  "proposals": [\n'
         "    {\n"
@@ -359,9 +374,10 @@ def _build_timeline_prompt(
         '      "proposed_start": "YYYY-MM-DD",\n'
         '      "proposed_end": "YYYY-MM-DD",\n'
         '      "confidence": <float 0.0-1.0>,\n'
-        '      "reasoning": "<the specific evidence: which dated neighbour '
-        'tasks, which document and what schedule it states, and (if you '
-        'used one) which roadmap entry by phase-ordinal>",\n'
+        '      "reasoning": "<one paragraph: quoted excerpt (if doc) '
+        '+ named neighbour tasks with dates (if sequence) + roadmap '
+        'entry (if used).  Specific evidence only -- see requirement '
+        'above.>",\n'
         '      "source_document": "<exact document name, or empty string if '
         'the evidence is the schedule sequence / roadmap rather than a '
         'document>"\n'
@@ -698,7 +714,21 @@ def _build_scope_prompt(
         f"{context_block}\n\n"
         "---\n\n"
         + instruction_intro +
-        "  Return strict JSON:\n\n"
+        "\n\nEVIDENCE-CITATION REQUIREMENT for the 'reasoning' field:\n"
+        "- For a CONTRACT-sourced gap: include a direct QUOTED "
+        "EXCERPT in double quotes (max ~30 words) of the exact "
+        "sentence or clause from the source document that commits "
+        "to this scope.  Name the document.  Then one short sentence "
+        "explaining why no current Monday task covers it.\n"
+        + ('- For a ROADMAP-sourced gap: cite the roadmap entry by '
+           'phase-ordinal+name (e.g. "[CA-04] Punch List '
+           'Coordination") and one short sentence explaining why it '
+           'plausibly applies here.  No document quote needed (roadmap '
+           'tasks are the canonical template, not project-specific).\n'
+           if has_roadmap else "") +
+        '- A reasoning that says only "stated in the contract" or '
+        '"part of the scope" is REJECTED.  Specific evidence required.\n\n'
+        "Return strict JSON:\n\n"
         "{\n"
         '  "scope_gaps": [\n'
         "    {\n"
@@ -707,8 +737,9 @@ def _build_scope_prompt(
         '      "suggested_task_title": "<a Monday task title that would '
         'close the gap>",\n'
         '      "confidence": <float 0.0-1.0>,\n'
-        '      "reasoning": "<which document + clause OR which roadmap '
-        'entry by phase-ordinal+name, and why no current task covers it>",\n'
+        '      "reasoning": "<contract: quoted excerpt + document name '
+        '+ why missing.  roadmap: phase-ordinal+name + why applicable.  '
+        'See requirement above.>",\n'
         '      "source_document": "<exact document name, or empty string '
         'for a roadmap-sourced flag>",\n'
         + source_field +
