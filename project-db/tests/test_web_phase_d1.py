@@ -405,6 +405,64 @@ class TestTaskDateEdits:
             "during a real Monday write."
         )
 
+    def test_cancel_button_does_not_inherit_form_attrs(self, client, world):
+        """Regression test for the 2025-05-26 v2 bug: clicking Cancel
+        on the date-edit form didn't actually close the form.
+
+        Root cause: the form had `hx-disabled-elt="find button"` which
+        the Cancel button inherited via HTMX attribute inheritance.
+        Combined with HTMX's automatic form-data serialization on any
+        request from inside a `<form>`, Cancel's hx-get was firing
+        with query params AND a disable rule attached, and the swap
+        silently dropped in some browsers.
+
+        Fix:
+          - form has NO hx-disabled-elt (moved to Save's `hx-disabled-elt="this"`)
+          - Cancel has `hx-params="none"` so HTMX does NOT serialize
+            the form's date inputs onto its GET URL
+          - the /tasks/{id}/row endpoint returns a static <tr> without
+            any <form> tag inside (so it cleanly replaces the editing row)
+        """
+        tid = str(world["task"].canonical_id)
+        resp = client.get(f"/tasks/{tid}/dates-form")
+        body = resp.text
+
+        import re
+        # 1. The <form> tag must NOT carry hx-disabled-elt.
+        form_open = re.search(r'<form\s+([^>]+)>', body)
+        assert form_open
+        assert "hx-disabled-elt" not in form_open.group(1), (
+            "form must NOT carry hx-disabled-elt -- otherwise Cancel "
+            "inherits it and the swap silently fails."
+        )
+
+        # 2. The Cancel button must explicitly opt out of form-data
+        #    serialization via hx-params="none".
+        cancel_match = re.search(
+            r'(<button[^>]+hx-get="/tasks/[^"]+/row"[^>]*>)',
+            body, re.DOTALL,
+        )
+        assert cancel_match, "Cancel button should be present"
+        assert 'hx-params="none"' in cancel_match.group(1), (
+            'Cancel must carry hx-params="none" so HTMX does NOT '
+            "serialize the form's date inputs onto its GET URL."
+        )
+
+        # 3. The /row endpoint MUST return a clean <tr> without a <form>
+        #    inside (so swapping it in actually replaces / closes the
+        #    editing row).
+        row_resp = client.get(f"/tasks/{tid}/row")
+        assert row_resp.status_code == 200
+        row_body = row_resp.text
+        assert f'<tr id="task-row-{tid}"' in row_body, (
+            "row endpoint must return a <tr> with the matching id "
+            "for the swap to land on the right element."
+        )
+        assert "<form" not in row_body.lower(), (
+            "row endpoint MUST NOT include a <form> -- the whole point "
+            "of Cancel is to swap the form OUT for the static row."
+        )
+
     def test_row_endpoint_returns_static_row(self, client, world):
         tid = str(world["task"].canonical_id)
         resp = client.get(f"/tasks/{tid}/row")

@@ -9,15 +9,21 @@ Variables expected:
 #}
 <tr id="task-row-{{ task.canonical_id }}">
   <td colspan="8" style="background: #fff3cd;">
-    {# `hx-indicator` is INTENTIONALLY on the Save button only, NOT on
-       the form.  If it were on the form, the Cancel button's hx-get
-       would inherit it and show "Writing to Monday..." -- which is
-       wrong because Cancel just closes the inline form without any
-       Monday write.  See bug report 2025-05-26. #}
+    {# All hx-* attributes are on the Save and Cancel buttons SPECIFICALLY,
+       not on the <form>.  Two bugs taught us why:
+        1. (2025-05-26 v1) hx-indicator on the form -> Cancel's hx-get
+           inherits it and shows "Writing to Monday..." -- wrong.
+        2. (2025-05-26 v2) hx-disabled-elt on the form -> Cancel's
+           hx-get also inherited it, plus HTMX serialized the form's
+           date inputs onto Cancel's GET as query params, and the
+           combination caused the swap to silently not happen in
+           some browsers.  Moving inheritance to the button-level
+           fixed both.
+       Keep them per-button; resist the urge to "consolidate" by
+       lifting attrs back to the form. #}
     <form hx-post="/tasks/{{ task.canonical_id }}/set-dates"
           hx-target="#task-row-{{ task.canonical_id }}"
           hx-swap="outerHTML"
-          hx-disabled-elt="find button"
           style="margin: 0">
       <div style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
         <div style="flex: 1 1 auto; min-width: 250px;">
@@ -42,14 +48,23 @@ Variables expected:
         </label>
         <fieldset role="group" style="margin: 0">
           <button type="submit"
-                  hx-indicator="#task-spinner-{{ task.canonical_id }}">
+                  hx-indicator="#task-spinner-{{ task.canonical_id }}"
+                  hx-disabled-elt="this">
             Save -&gt; Monday
           </button>
+          {# Cancel: explicit hx-params="none" so HTMX does NOT serialize
+             the form's date inputs onto the GET URL.  Without this, the
+             GET hits /tasks/X/row?start_date=&end_date= -- the server
+             still returns 200 with the row HTML, but in some browsers
+             the URL-shaped request was racing with the form's hx-* and
+             the swap silently failed.  hx-params="none" makes Cancel a
+             pure no-data GET, independent of the surrounding form. #}
           <button type="button"
                   class="secondary outline"
                   hx-get="/tasks/{{ task.canonical_id }}/row"
                   hx-target="#task-row-{{ task.canonical_id }}"
-                  hx-swap="outerHTML">
+                  hx-swap="outerHTML"
+                  hx-params="none">
             Cancel
           </button>
           <span id="task-spinner-{{ task.canonical_id }}" class="htmx-indicator">
