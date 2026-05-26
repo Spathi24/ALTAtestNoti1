@@ -162,45 +162,103 @@ class AiAssistant:
     def answer_with_llm(self, question: str, provider: LLMProvider) -> AiResponse:
         """Answer a free-form question with an LLM over the whole-DB snapshot.
 
-        The escalation path when ``ask`` matches no canned report.  ``provider``
-        should be a small/fast model (Haiku tier, via ``get_fast_provider``) --
-        the work is reading and summarizing the canonical database, not the
-        analytical reasoning reserved for proposal generation.  The model sees
-        ONLY the structured snapshot and is told not to invent beyond it.
+        The escalation path when ``ask`` matches no canned report.
+        ``provider`` should be a small/fast model (Haiku tier, via
+        ``get_fast_provider``).
+
+        Prompt philosophy (2025-05-26 rewrite): be ASSERTIVE and
+        inferential.  The previous prompt was over-conservative -- it
+        explicitly told the model to "say so plainly" when the snapshot
+        didn't contain the exact answer, so the model gave up the moment
+        a question wasn't a direct SELECT.  The user wanted an analyst,
+        not a database mirror.
+
+        New behavior: best-supported answer first, label any inferences,
+        identify missing data only AFTER giving the strongest reasonable
+        answer.  The anti-hallucination rules (never invent names /
+        numbers / dates) stay in place -- that boundary is non-negotiable.
+
+        Scope note: this assertive style is the askbot's only.  The
+        timeline/scope proposal prompts (Sonnet) stay conservative
+        because they extract facts that get written to Monday;
+        "I refuse to invent a date" is the desired behavior there.
         """
         from project_db.ai.views import report_database_overview
 
         snapshot = report_database_overview(self.session)
         system = (
-            "You are ALTA, the operations assistant for a construction "
-            "company.  Answer the user's question using ONLY the JSON "
-            "database snapshot provided -- it is the company's complete "
-            "canonical operational record: projects, tasks, deals, leads, "
-            "clients, invoices, and a document-category breakdown.\n\n"
-            "Rules:\n"
-            "- Use only facts present in the snapshot.  Never invent "
-            "projects, tasks, numbers, or dates.\n"
-            "- If the snapshot does not contain the answer, say so plainly.\n"
-            "- The snapshot has no document/contract TEXT.  If the question "
-            "needs contract content, say so and point to "
-            "`project_db daily <project>`.\n"
-            "- Be concise and specific: cite concrete names and numbers.\n"
-            "- 'generated_on' is today's date; judge overdue / upcoming "
-            "relative to it."
+            "You are ALTA, a senior operations and project intelligence "
+            "assistant for a construction company.\n\n"
+
+            "Your job is not merely to answer literal database questions. "
+            "Your job is to help the user reason through projects, tasks, "
+            "deals, clients, invoices, documents, risks, and next actions "
+            "using the available company data.\n\n"
+
+            "Core behavior:\n"
+            "- Be assertive, practical, and analytical.\n"
+            "- Do not give up just because the question is imperfect, "
+            "broad, or indirect.\n"
+            "- Always produce the most useful answer supported by the "
+            "available data.\n"
+            "- If the exact answer is unavailable, infer the closest useful "
+            "answer from related facts and clearly label it as an inference.\n"
+            "- Separate hard facts from assumptions and recommendations.\n"
+            "- When data is missing, say what is missing only AFTER giving "
+            "the best supported answer possible.\n"
+            "- Prefer concrete names, project refs, dates, amounts, "
+            "statuses, counts, and next actions over vague explanations.\n"
+            "- If a user asks what to do, give a recommendation, not just "
+            "a summary.\n"
+            "- If multiple interpretations are possible, choose the most "
+            "likely one based on the question and answer under that "
+            "assumption.\n\n"
+
+            "Data rules (these are non-negotiable):\n"
+            "- Use only facts present in the provided JSON snapshot as "
+            "hard facts.\n"
+            "- Never invent project names, clients, invoices, tasks, "
+            "dates, document contents, contract terms, or dollar amounts.\n"
+            "- You may make cautious operational inferences from the "
+            "snapshot, but they must be MARKED as inferences (use phrases "
+            "like 'based on...', 'likely', 'this suggests').\n"
+            "- The snapshot contains project / task / deal / invoice / "
+            "document METADATA, but not full document or contract TEXT.\n"
+            "- If the question depends on full document text, answer from "
+            "metadata if possible, then state that exact clause-level "
+            "analysis requires the DocumentText / RAG layer.\n"
+            "- 'generated_on' is today's date; judge overdue, upcoming, "
+            "and stale items relative to it.\n\n"
+
+            "Response style:\n"
+            "- Be concise but not shallow.\n"
+            "- Do not apologize.\n"
+            "- Do not say you cannot answer unless there is genuinely no "
+            "relevant data in the snapshot.\n"
+            "- Never end at a dead end -- end with the best conclusion the "
+            "data supports."
         )
-        # Instruction at the TAIL: if the snapshot ever overflows the context
-        # window, a front-loaded instruction is the first thing truncated.
+        # Instruction at the TAIL: if the snapshot ever overflows the
+        # context window, a front-loaded instruction is the first thing
+        # truncated.
         user = (
             f"DATABASE SNAPSHOT (JSON):\n{json.dumps(snapshot, default=str)}\n\n"
             "---\n\n"
             f"QUESTION: {question}\n\n"
-            "Answer using only the snapshot above."
+            "Answer using the snapshot above.  First give the strongest "
+            "directly supported answer.  If the exact answer is not "
+            "present, infer the closest useful answer from adjacent "
+            "records and label the inference.  Do not stop at missing "
+            "information unless no relevant records exist."
         )
         try:
             resp = provider.complete(
                 messages=[LLMMessage(role="user", content=user)],
                 system=system,
-                max_tokens=1024,
+                # Bumped 1024 -> 2048 (2025-05-26): the new assertive
+                # style produces longer answers (recommendations +
+                # inferences + data citations) and was being truncated.
+                max_tokens=2048,
             )
         except LLMProviderError as exc:
             return AiResponse(
