@@ -34,6 +34,8 @@ from project_db.ai.financials import (
     _is_transient,
     _norm,
     _parse_amount,
+    _parse_doc_classifications,
+    _resolve_rollup,
     _select_financial_documents,
     extract_financials_for_project,
 )
@@ -521,6 +523,71 @@ class TestBatchingCoverage:
 # ---------------------------------------------------------------------------
 
 
+class TestRollupClassification:
+    def test_parse_doc_classifications(self):
+        raw = {"documents": [
+            {"doc_index": 0, "kind": "rollup"},
+            {"doc_index": 1, "kind": "primary"},
+            {"doc_index": 9, "kind": "rollup"},   # out of range -> dropped
+            {"doc_index": 2, "kind": "PRIMARY"},  # case-insensitive
+        ]}
+        m = _parse_doc_classifications(raw, n=3)
+        assert m == {0: True, 1: False, 2: False}
+
+    def test_missing_documents_defaults_empty(self):
+        assert _parse_doc_classifications({"records": []}, n=2) == {}
+        assert _parse_doc_classifications("nope", n=2) == {}
+
+    def test_resolve_rollup_guard(self):
+        # A transaction instrument is never a rollup, even if the model says so.
+        assert _resolve_rollup(True, "other") is True
+        assert _resolve_rollup(True, "quote") is False      # guard overrides
+        assert _resolve_rollup(True, "estimate") is False
+        assert _resolve_rollup(True, "invoice") is False
+        assert _resolve_rollup(False, "other") is False
+
+    def test_itemized_quote_not_marked_rollup(self, financial_fixture, session):
+        # Model wrongly tags an itemized client quote (doc 0) as rollup, but its
+        # doc_role is 'estimate' -> the guard forces it PRIMARY.
+        provider = MockLLMProvider(responses=[json.dumps({
+            "documents": [{"doc_index": 0, "kind": "rollup"}],
+            "records": [
+                {"doc_index": 0, "direction": "client_in", "doc_role": "estimate",
+                 "record_kind": "total", "amount": 250,
+                 "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
+            ],
+        })])
+        extract_financials_for_project(
+            session, provider, financial_fixture["project"].canonical_id,
+        )
+        rec = session.query(FinancialRecord).filter_by(amount=Decimal("250.00")).one()
+        assert rec.is_rollup is False   # transaction instrument, guard wins
+
+    def test_extraction_marks_rollup_per_document(self, financial_fixture, session):
+        # docA (index 0) flagged rollup, docB (index 1) primary.
+        provider = MockLLMProvider(responses=[json.dumps({
+            "documents": [
+                {"doc_index": 0, "kind": "rollup"},
+                {"doc_index": 1, "kind": "primary"},
+            ],
+            "records": [
+                {"doc_index": 0, "direction": "client_in", "record_kind": "total",
+                 "amount": 250,
+                 "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
+                {"doc_index": 1, "direction": "contractor_out",
+                 "record_kind": "line_item", "amount": 100,
+                 "quoted_excerpt": "Labour: $100.00"},
+            ],
+        })])
+        batch = extract_financials_for_project(
+            session, provider, financial_fixture["project"].canonical_id,
+        )
+        assert batch.created_count == 2
+        by_amt = {r.amount: r for r in session.query(FinancialRecord).all()}
+        assert by_amt[Decimal("250.00")].is_rollup is True
+        assert by_amt[Decimal("100.00")].is_rollup is False
+
+
 class TestReport:
     def _record(self, session, project, doc, **kw):
         r = FinancialRecord(project_id=project.canonical_id,
@@ -562,6 +629,25 @@ class TestReport:
     def test_unresolved_project(self, session):
         rep = report_project_financials(session, "no-such-project")
         assert "error" in rep
+
+    def test_rollup_excluded_from_totals_shown_as_crosscheck(
+        self, financial_fixture, session,
+    ):
+        p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
+        # doc_a: a PRIMARY supplier invoice, contractor_out 100.
+        self._record(session, p, doc_a, direction="contractor_out",
+                     record_kind="total", amount=Decimal("100"), is_rollup=False)
+        # doc_b: an internal ROLL-UP cost sheet restating it (999) -- must NOT
+        # be summed into the total, only cross-checked.
+        self._record(session, p, doc_b, direction="contractor_out",
+                     record_kind="total", amount=Decimal("999"), is_rollup=True)
+
+        rep = report_project_financials(session, str(p.canonical_id))
+        assert rep["totals"]["contractor_out"] == pytest.approx(100.0)  # not 1099
+        assert rep["primary_record_count"] == 1
+        assert rep["rollup_record_count"] == 1
+        assert rep["rollup_crosscheck"]["contractor_out"] == pytest.approx(999.0)
+        assert rep["rollup_crosscheck"]["document_count"] == 1
 
 
 # ---------------------------------------------------------------------------

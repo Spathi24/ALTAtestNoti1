@@ -135,6 +135,14 @@ class FinancialRecord(Base, CanonicalMixin):
     # expanded notation/words ("8k", "eight thousand"); surfaced for review and
     # so the future dashboard can badge unverified figures.  None = not checked.
     amount_verified = Column(Boolean, nullable=True)
+    # True when the SOURCE DOCUMENT is an internal roll-up / tracking sheet
+    # (a cost tracker, job-costing sheet, payment tracker) that restates amounts
+    # from other documents, rather than a primary transaction (one invoice /
+    # quote / contract).  Roll-up records are EXCLUDED from reconciliation
+    # totals (to avoid double-counting the invoices they summarize) and shown
+    # only as a cross-check.  Per-document property, denormalized onto each row.
+    # None / False = primary transaction document (counted in totals).
+    is_rollup = Column(Boolean, nullable=True)
 
     # Which extraction prompt produced this (mirrors Proposal.prompt_version).
     prompt_version = Column(String, nullable=True)

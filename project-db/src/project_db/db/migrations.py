@@ -111,6 +111,7 @@ CREATE TABLE financial_record (
     quoted_excerpt TEXT,
     confidence FLOAT,
     amount_verified BOOLEAN,
+    is_rollup BOOLEAN,
     prompt_version VARCHAR,
     source_meta_json TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
@@ -121,6 +122,7 @@ CREATE TABLE financial_record (
 # Columns added AFTER the initial financial_record DDL shipped.
 SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
     "amount_verified": "BOOLEAN",
+    "is_rollup": "BOOLEAN",
 }
 
 

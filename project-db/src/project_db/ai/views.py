@@ -592,41 +592,45 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         .filter(FinancialRecord.project_id == project.canonical_id)
         .all()
     )
-
-    # Group by (document_id, direction) for representative-amount collapsing.
-    groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
-    for r in records:
-        groups.setdefault((r.document_id, r.direction or "unknown"), []).append(r)
-
-    direction_totals: dict[str, Decimal] = {
-        "client_in": Decimal(0),
-        "contractor_out": Decimal(0),
-        "unknown": Decimal(0),
-    }
-    # Per-document rollup, for the breakdown panel / future tree view.
     doc_names = {
         d.canonical_id: d.name
         for d in session.query(Document)
         .filter(Document.project_id == project.canonical_id)
         .all()
     }
-    per_document: dict[Any, dict[str, Any]] = {}
-    for (doc_id, direction), recs in groups.items():
-        rep = _representative_amount(recs)
-        direction_totals[direction] = direction_totals.get(direction, Decimal(0)) + rep
-        entry = per_document.setdefault(
-            doc_id,
-            {
+
+    # Split: PRIMARY transaction docs drive the totals; ROLL-UP / tracking
+    # sheets are excluded (they restate the invoices, so summing both would
+    # double-count) and surfaced separately as a cross-check.  Decision: the
+    # individual invoices/quotes/contracts are authoritative.
+    primary = [r for r in records if not r.is_rollup]
+    rollup = [r for r in records if r.is_rollup]
+
+    def _rollup_by_dir(recs: list[FinancialRecord]) -> dict[str, Any]:
+        """Per-(document,direction) representative-amount aggregation."""
+        groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
+        for r in recs:
+            groups.setdefault((r.document_id, r.direction or "unknown"), []).append(r)
+        dir_totals: dict[str, Decimal] = {
+            "client_in": Decimal(0), "contractor_out": Decimal(0), "unknown": Decimal(0),
+        }
+        per_doc: dict[Any, dict[str, Any]] = {}
+        for (doc_id, direction), grp in groups.items():
+            rep = _representative_amount(grp)
+            dir_totals[direction] = dir_totals.get(direction, Decimal(0)) + rep
+            entry = per_doc.setdefault(doc_id, {
                 "document_id": _ser(doc_id),
                 "document_name": doc_names.get(doc_id, "(unknown document)"),
-                "client_in": Decimal(0),
-                "contractor_out": Decimal(0),
-                "unknown": Decimal(0),
-                "record_count": 0,
-            },
-        )
-        entry[direction] = entry.get(direction, Decimal(0)) + rep
-        entry["record_count"] += len(recs)
+                "client_in": Decimal(0), "contractor_out": Decimal(0),
+                "unknown": Decimal(0), "record_count": 0,
+            })
+            entry[direction] = entry.get(direction, Decimal(0)) + rep
+            entry["record_count"] += len(grp)
+        return {"dir_totals": dir_totals, "per_doc": per_doc}
+
+    agg = _rollup_by_dir(primary)
+    direction_totals = agg["dir_totals"]
+    per_document = agg["per_doc"]
 
     client_in = direction_totals.get("client_in", Decimal(0))
     contractor_out = direction_totals.get("contractor_out", Decimal(0))
@@ -648,11 +652,35 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         reverse=True,
     )
 
+    # Roll-up cross-check: what the internal summary sheets say, NOT added to
+    # the totals.  A big gap between this and the primary totals is a signal
+    # the invoices or the tracker are out of sync.
+    rollup_agg = _rollup_by_dir(rollup)
+    rollup_crosscheck = {
+        "document_count": len({r.document_id for r in rollup}),
+        "client_in": float(rollup_agg["dir_totals"].get("client_in", Decimal(0))),
+        "contractor_out": float(rollup_agg["dir_totals"].get("contractor_out", Decimal(0))),
+        "unknown": float(rollup_agg["dir_totals"].get("unknown", Decimal(0))),
+        "documents": [
+            {
+                "document_id": e["document_id"],
+                "document_name": e["document_name"],
+                "client_in": float(e.get("client_in", Decimal(0))),
+                "contractor_out": float(e.get("contractor_out", Decimal(0))),
+                "unknown": float(e.get("unknown", Decimal(0))),
+                "record_count": e["record_count"],
+            }
+            for e in rollup_agg["per_doc"].values()
+        ],
+    }
+
     unverified_count = sum(1 for r in records if r.amount_verified is False)
 
     return {
         "project": {"canonical_id": _ser(project.canonical_id), "name": project.name},
         "record_count": len(records),
+        "primary_record_count": len(primary),
+        "rollup_record_count": len(rollup),
         "unverified_count": unverified_count,
         "totals": {
             "client_in": float(client_in),
@@ -661,6 +689,7 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "margin": float(margin),
         },
         "per_document": per_document_rows,
+        "rollup_crosscheck": rollup_crosscheck,
         "records": [
             {
                 "canonical_id": _ser(r.canonical_id),
@@ -678,12 +707,14 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
                 "quoted_excerpt": r.quoted_excerpt,
                 "confidence": r.confidence,
                 "amount_verified": r.amount_verified,
+                "is_rollup": bool(r.is_rollup),
             }
             for r in records[:200]
         ],
         "note": (
-            "Amounts extracted by LLM from Drive documents; totals computed "
-            "deterministically. Run extract-financials to (re)populate."
+            "Totals sum PRIMARY transaction documents only; internal roll-up / "
+            "tracking sheets are excluded and shown under rollup_crosscheck to "
+            "avoid double-counting. Run extract-financials to (re)populate."
             if records else
             "No financial records yet. Run: project_db extract-financials "
             f"--project {project.canonical_id}"

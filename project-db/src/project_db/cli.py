@@ -459,12 +459,21 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
         # Reconciliation summary (reads what we just wrote, still uncommitted).
         report = report_project_financials(s, str(project.canonical_id))
         totals = report.get("totals", {})
-        print("\n--- Money-flow reconciliation ---")
-        print(f"  Records:          {report.get('record_count', 0)}")
+        print("\n--- Money-flow reconciliation (PRIMARY docs only) ---")
+        print(f"  Records:          {report.get('record_count', 0)} "
+              f"(primary {report.get('primary_record_count', 0)} / "
+              f"rollup {report.get('rollup_record_count', 0)})")
         print(f"  Client in (rev):  {totals.get('client_in', 0):,.2f}")
         print(f"  Contractor out:   {totals.get('contractor_out', 0):,.2f}")
         print(f"  Unknown side:     {totals.get('unknown', 0):,.2f}")
         print(f"  Margin (in-out):  {totals.get('margin', 0):,.2f}")
+        xc = report.get("rollup_crosscheck", {})
+        if xc.get("document_count"):
+            print(f"\n  Roll-up cross-check ({xc['document_count']} internal "
+                  f"sheet(s), NOT in totals):")
+            print(f"    client_in {xc.get('client_in', 0):,.2f} | "
+                  f"contractor_out {xc.get('contractor_out', 0):,.2f} | "
+                  f"unknown {xc.get('unknown', 0):,.2f}")
 
     return 0
 
