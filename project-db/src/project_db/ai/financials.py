@@ -138,20 +138,28 @@ def extract_financials_for_project(
     provider: LLMProvider,
     project_id: Any,
     *,
-    max_documents: int = 12,
+    # Overall cap on candidate documents.  High by default so go-live coverage
+    # is complete -- a project's financial docs are ALL read, not just the
+    # first N.  Lower it only for a quick smoke test.
+    max_documents: int = 200,
     per_doc_char_cap: int = 8000,
-    total_char_budget: int = 48_000,
-    # Bounded by the prompt's "prefer totals, don't enumerate every line of a
-    # big itemized list" rule.  Without that rule a materials spreadsheet alone
-    # produced >16k tokens of JSON and truncated even after complete_json's
-    # 1.5x retry bumps -- see the 2026-05-29 first-smoke lesson.
+    # Per-LLM-call batching.  Documents are processed in BATCHES so we cover
+    # every candidate without one giant call that truncates: a single call over
+    # ~15 docs blew the JSON output past even complete_json's bumped ceiling
+    # (the 2026-05-29 coverage gap -- 14 of 1455's 47 docs were silently
+    # dropped).  Each batch fills up to batch_char_budget of document text, at
+    # most batch_max_docs docs.
+    batch_char_budget: int = 14_000,
+    batch_max_docs: int = 5,
     max_output_tokens: int = 6000,
 ) -> FinancialExtractionBatch:
-    """Extract monetary records from a project's financial documents.
+    """Extract monetary records from ALL of a project's financial documents.
 
     A run is a fresh snapshot: prior ``FinancialRecord`` rows for this project
-    are deleted before new ones are written, so re-running re-reads the
-    current documents without accumulating duplicates.
+    are deleted ONCE before new ones are written, so re-running re-reads the
+    current documents without accumulating duplicates.  Documents are then
+    processed in batches across multiple LLM calls; a single batch failing is
+    recorded in ``errors`` but does not abort the others.
 
     Records are flushed to the session but NOT committed -- the caller owns
     the transaction.
@@ -161,11 +169,10 @@ def extract_financials_for_project(
     """
     from project_db.db.models import Project
 
+    project_uuid = _as_uuid(project_id)
     project = (
-        session.query(Project)
-        .filter_by(canonical_id=_as_uuid(project_id))
-        .one_or_none()
-        if _as_uuid(project_id) else None
+        session.query(Project).filter_by(canonical_id=project_uuid).one_or_none()
+        if project_uuid else None
     )
     project_name = project.name if project is not None else str(project_id)
     batch = FinancialExtractionBatch(
@@ -173,12 +180,16 @@ def extract_financials_for_project(
         project_name=project_name,
         prompt_version=FINANCIAL_PROMPT_VERSION,
     )
+    if project_uuid is None:
+        batch.errors.append(f"bad project id {project_id!r}")
+        batch.skipped_reason = "invalid project id"
+        return batch
 
     candidates = _select_financial_documents(
         session, project_id,
         max_documents=max_documents,
         per_doc_char_cap=per_doc_char_cap,
-        total_char_budget=total_char_budget,
+        total_char_budget=max_documents * per_doc_char_cap,
     )
     if not candidates:
         batch.skipped_reason = (
@@ -189,22 +200,128 @@ def extract_financials_for_project(
         return batch
 
     batch.documents_considered = len(candidates)
-    system, user = _build_financial_prompt(candidates, company_name=_company_name())
-    try:
-        raw = provider.complete_json(
-            messages=[LLMMessage(role="user", content=user)],
-            system=system,
-            max_tokens=max_output_tokens,
+
+    # Capture prior records but DO NOT delete yet.  We build the new set first
+    # and only swap on FULL success -- a failed run (e.g. a rate-limit blip
+    # midway) must never destroy the previously-good extraction.  (Learned
+    # 2026-05-29: an up-front delete wiped 189 good records when the batches
+    # then 429'd.)
+    prior = (
+        session.query(FinancialRecord)
+        .filter(FinancialRecord.project_id == project_uuid)
+        .all()
+    )
+
+    new_records: list[FinancialRecord] = []
+    any_batch_failed = False
+    for chunk in _chunk_candidates(candidates, batch_char_budget, batch_max_docs):
+        system, user = _build_financial_prompt(chunk, company_name=_company_name())
+        try:
+            raw = _complete_with_backoff(
+                provider, system, user, max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            names = ", ".join(
+                (c.document.name if c.document is not None else "?") for c in chunk
+            )
+            batch.errors.append(
+                f"LLM call failed for batch [{names[:120]}]: {exc}"
+            )
+            any_batch_failed = True
+            continue
+        items = _coerce_item_list(raw, key="records")
+        batch.llm_raw_item_count += len(items)
+        new_records.extend(
+            _build_records_for_batch(batch, items, chunk, project_uuid)
         )
-    except LLMProviderError as exc:
-        batch.errors.append(f"LLM call failed: {exc}")
-        batch.skipped_reason = "LLM call failed"
+
+    if any_batch_failed:
+        # All-or-nothing: keep prior records, write nothing.  Better a stale
+        # snapshot than a partial one silently replacing a complete one.
+        batch.records = []
+        batch.superseded_count = 0
+        batch.skipped_reason = (
+            "one or more document batches failed (often a transient API "
+            "rate limit) -- prior records were kept and NOTHING was changed. "
+            "Re-run to retry."
+        )
         return batch
 
-    items = _coerce_item_list(raw, key="records")
-    batch.llm_raw_item_count = len(items)
-    _persist_financial_records(session, batch, items, candidates, project_id)
+    # Full success -- swap: delete prior, commit the new set.
+    for old in prior:
+        session.delete(old)
+    batch.superseded_count = len(prior)
+    for rec in new_records:
+        session.add(rec)
+        batch.records.append(rec)
+    session.flush()
     return batch
+
+
+def _complete_with_backoff(
+    provider: LLMProvider, system: str, user: str, max_tokens: int,
+    *, retries: int = 2, base_delay: float = 8.0,
+) -> Any:
+    """complete_json with linear backoff on provider errors (transient 429s).
+
+    Batched extraction fires many calls in quick succession; a tier rate limit
+    can bounce a call that would succeed seconds later.  Retry a couple of
+    times before giving up so one blip doesn't fail the whole run.
+    """
+    import time
+
+    last: LLMProviderError | None = None
+    for attempt in range(retries + 1):
+        try:
+            return provider.complete_json(
+                messages=[LLMMessage(role="user", content=user)],
+                system=system,
+                max_tokens=max_tokens,
+            )
+        except LLMProviderError as exc:
+            last = exc
+            # Only retry plausibly-transient failures.  A 400 (bad request,
+            # out-of-credits, invalid key) will fail identically on retry --
+            # don't waste time/sleep on it.
+            if attempt < retries and _is_transient(str(exc)):
+                time.sleep(base_delay * (attempt + 1))
+            else:
+                break
+    raise last if last is not None else LLMProviderError("unknown failure")
+
+
+_TRANSIENT_MARKERS = (
+    "429", "rate limit", "rate_limit", "overloaded", "529", "503", "502",
+    "500", "timeout", "timed out", "connection",
+)
+
+
+def _is_transient(message: str) -> bool:
+    m = message.lower()
+    return any(marker in m for marker in _TRANSIENT_MARKERS)
+
+
+def _chunk_candidates(
+    candidates: list[_Candidate], char_budget: int, max_docs: int,
+) -> list[list[_Candidate]]:
+    """Greedily group candidates into batches bounded by char budget + count.
+
+    A single document larger than the budget still gets its own batch (never
+    dropped).  Order is preserved so the highest-scored docs go first.
+    """
+    batches: list[list[_Candidate]] = []
+    cur: list[_Candidate] = []
+    cur_chars = 0
+    for cand in candidates:
+        clen = len(cand.text)
+        if cur and (len(cur) >= max_docs or cur_chars + clen > char_budget):
+            batches.append(cur)
+            cur, cur_chars = [], 0
+        cur.append(cand)
+        cur_chars += clen
+    if cur:
+        batches.append(cur)
+    return batches
 
 
 # ---------------------------------------------------------------------------
@@ -423,33 +540,20 @@ def _build_financial_prompt(
 # ---------------------------------------------------------------------------
 
 
-def _persist_financial_records(
-    session: Session,
+def _build_records_for_batch(
     batch: FinancialExtractionBatch,
     items: list[Any],
     candidates: list[_Candidate],
-    project_id: Any,
-) -> None:
-    """Validate each LLM item and turn the good ones into FinancialRecord rows.
+    project_uuid: uuid.UUID,
+) -> list[FinancialRecord]:
+    """Validate each LLM item (for ONE batch) and return FinancialRecord rows.
 
-    Fresh-snapshot semantics: every prior FinancialRecord for this project is
-    deleted first, so a re-run reflects the current documents exactly.
+    Pure-ish: appends to ``batch.errors``/``batch.warnings`` but does NOT touch
+    the session -- the caller adds the returned rows only on a fully successful
+    run (all-or-nothing replace).  ``candidates`` is this batch's document list;
+    ``doc_index`` in each item is relative to it.
     """
-    project_uuid = _as_uuid(project_id)
-    if project_uuid is None:
-        batch.errors.append(f"bad project id {project_id!r}")
-        return
-
-    # Fresh snapshot -- drop the project's prior extracted records.
-    prior = (
-        session.query(FinancialRecord)
-        .filter(FinancialRecord.project_id == project_uuid)
-        .all()
-    )
-    for old in prior:
-        session.delete(old)
-    batch.superseded_count = len(prior)
-
+    out: list[FinancialRecord] = []
     # Normalized full text per doc index, for excerpt verification.
     norm_text_by_index = {i: _norm(c.full_text) for i, c in enumerate(candidates)}
 
@@ -483,6 +587,9 @@ def _persist_financial_records(
             batch, f"doc_index={idx} record_kind", allow_empty=True,
         )
 
+        cand = candidates[idx]
+        doc_name = cand.document.name if cand.document is not None else f"doc#{idx}"
+
         excerpt = str(raw_item.get("quoted_excerpt") or "").strip()
         # Anti-hallucination guard (warn, don't reject -- a human verifies).
         # The load-bearing check is whether the AMOUNT actually appears in the
@@ -494,18 +601,17 @@ def _persist_financial_records(
         # still stored as human-verifiable evidence; we just don't gate on it.
         if not excerpt:
             batch.warnings.append(
-                f"doc_index={idx}: amount {amount} has no quoted_excerpt -- "
+                f"{doc_name!r} (amount {amount}): no quoted_excerpt -- "
                 f"evidence is required, verify before trusting"
             )
         amount_verified = _amount_in_text(amount, norm_text_by_index.get(idx, ""))
         if not amount_verified:
             batch.warnings.append(
-                f"doc_index={idx}: amount {amount} does not appear in the "
+                f"{doc_name!r} (amount {amount}): does not appear in the "
                 f"document text -- possible hallucination or a value the model "
                 f"computed/expanded itself, verify before trusting"
             )
 
-        cand = candidates[idx]
         record = FinancialRecord(
             project_id=project_uuid,
             document_id=cand.document.canonical_id,
@@ -524,10 +630,9 @@ def _persist_financial_records(
             prompt_version=batch.prompt_version,
             source_meta_json=json.dumps(raw_item, ensure_ascii=False),
         )
-        session.add(record)
-        batch.records.append(record)
+        out.append(record)
 
-    session.flush()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -619,10 +724,26 @@ def _number_interpretations(token: str) -> set[Decimal]:
     return out
 
 
+def _despace_thousands(text: str) -> str:
+    """Join space-separated thousands groups: "1 080.00" -> "1080.00".
+
+    Quebec / SI invoices write thousands with a space (or non-breaking space,
+    already collapsed to a regular space by ``_norm``): "$1 080.00", "17 384,91".
+    Without this the tokenizer splits on the space and never forms the real
+    value.  Loops so chained groups ("1 234 567") fully collapse.
+    """
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r"(\d) (\d{3})(?=\D|$)", r"\1\2", text)
+    return text
+
+
 def _document_amounts(norm_text: str) -> set[Decimal]:
     """All numeric values in the text (every locale reading), rounded to 2 dp."""
+    text = _despace_thousands(norm_text)
     out: set[Decimal] = set()
-    for m in _DOC_NUMBER_RE.finditer(norm_text):
+    for m in _DOC_NUMBER_RE.finditer(text):
         out |= _number_interpretations(m.group(0))
     return out
 

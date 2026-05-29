@@ -26,8 +26,12 @@ import pytest
 from decimal import Decimal as _D
 
 from project_db.ai.financials import (
+    _Candidate,
     _amount_in_text,
+    _chunk_candidates,
     _coerce_item_list,
+    _complete_with_backoff,
+    _is_transient,
     _norm,
     _parse_amount,
     _select_financial_documents,
@@ -164,6 +168,13 @@ class TestAmountInText:
     def test_french_comma_not_confused_with_thousands(self):
         # "3,600" (English thousands) still matches 3600.
         assert _amount_in_text(_D("3600"), _norm("Total 3,600.00")) is True
+
+    def test_space_thousands_separator(self):
+        # Quebec/SI invoices write "$1 080.00" (space = thousands sep).
+        assert _amount_in_text(_D("1080"), _norm("LABOUR $1 080.00")) is True
+        assert _amount_in_text(_D("17384.91"), _norm("Total 17 384,91 $")) is True
+        # chained groups
+        assert _amount_in_text(_D("1234567"), _norm("Grand total 1 234 567")) is True
 
     def test_value_based_blocks_substring(self):
         # 600 must NOT match a doc whose only number is 3600 (different value).
@@ -361,6 +372,135 @@ class TestExtraction:
         batch = extract_financials_for_project(session, _mock([]), p.canonical_id)
         assert batch.created_count == 0
         assert batch.skipped_reason is not None
+
+
+# ---------------------------------------------------------------------------
+# Batching / full coverage  (the 2026-05-29 coverage-gap fix)
+# ---------------------------------------------------------------------------
+
+
+def _fake_cands(sizes: list[int]) -> list[_Candidate]:
+    return [_Candidate(document=None, text="x" * n, full_text="", truncated=False)
+            for n in sizes]
+
+
+class TestBackoffRetry:
+    def test_is_transient(self):
+        assert _is_transient("Error code: 429 rate limit") is True
+        assert _is_transient("overloaded_error 529") is True
+        # billing / bad request must NOT be treated as transient
+        assert _is_transient("Error code: 400 credit balance is too low") is False
+        assert _is_transient("invalid api key") is False
+
+    def test_no_retry_on_non_transient(self, monkeypatch):
+        from project_db.ai.providers.base import LLMProviderError
+
+        monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+        calls = {"n": 0}
+
+        class P:
+            def complete_json(self, **kw):
+                calls["n"] += 1
+                raise LLMProviderError("Error code: 400 credit balance too low")
+
+        with pytest.raises(LLMProviderError):
+            _complete_with_backoff(P(), "sys", "user", 1000)
+        assert calls["n"] == 1  # failed once, did not retry a 400
+
+    def test_retries_transient_then_succeeds(self, monkeypatch):
+        from project_db.ai.providers.base import LLMProviderError
+
+        monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+        calls = {"n": 0}
+
+        class P:
+            def complete_json(self, **kw):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise LLMProviderError("429 rate limit")
+                return {"records": []}
+
+        out = _complete_with_backoff(P(), "sys", "user", 1000)
+        assert out == {"records": []}
+        assert calls["n"] == 2
+
+
+class TestChunking:
+    def test_splits_by_count(self):
+        chunks = _chunk_candidates(_fake_cands([10] * 7), char_budget=10_000, max_docs=3)
+        assert [len(c) for c in chunks] == [3, 3, 1]
+
+    def test_splits_by_char_budget(self):
+        chunks = _chunk_candidates(_fake_cands([5000, 5000, 5000, 5000]),
+                                   char_budget=12_000, max_docs=10)
+        assert [len(c) for c in chunks] == [2, 2]
+
+    def test_oversized_doc_gets_its_own_batch_not_dropped(self):
+        chunks = _chunk_candidates(_fake_cands([20_000, 100]),
+                                   char_budget=12_000, max_docs=10)
+        assert [len(c) for c in chunks] == [1, 1]   # big doc kept, alone
+
+
+class TestBatchingCoverage:
+    def test_all_docs_processed_across_multiple_calls(self, session, client_factory):
+        c = client_factory(name="C")
+        p = Project(name="Big", code="B", status=ProjectStatus.ACTIVE,
+                    client_id=c.canonical_id)
+        session.add(p)
+        session.commit()
+        for i in range(7):
+            _add_doc(session, p, name=f"Invoice {i}.pdf",
+                     text=f"Invoice {i}. Total: ${i+1}00.00 due.")
+        provider = _mock([])   # empty records, but every batch is a call
+        batch = extract_financials_for_project(
+            session, provider, p.canonical_id, batch_max_docs=3,
+        )
+        # 7 docs / 3 per batch -> 3 LLM calls; all 7 considered.
+        assert batch.documents_considered == 7
+        assert len(provider.calls) == 3
+
+    def test_batch_failure_keeps_prior_and_writes_nothing(
+        self, session, client_factory, monkeypatch,
+    ):
+        """All-or-nothing: a batch failure must NOT destroy prior records or
+        leave a partial snapshot.  (Data-safety lesson, 2026-05-29.)"""
+        monkeypatch.setattr("time.sleep", lambda *a, **k: None)  # no real backoff wait
+        c = client_factory(name="C")
+        p = Project(name="Mix", code="M", status=ProjectStatus.ACTIVE,
+                    client_id=c.canonical_id)
+        session.add(p)
+        session.commit()
+        for i in range(4):
+            _add_doc(session, p, name=f"Quote {i}.pdf",
+                     text=f"Quote {i}. Total: ${i+1}50.00.")
+
+        # Seed a prior good record that must survive a failed re-run.
+        prior = FinancialRecord(
+            project_id=p.canonical_id, direction="contractor_out",
+            amount=Decimal("999.00"), amount_verified=True,
+        )
+        session.add(prior)
+        session.commit()
+
+        from project_db.ai.providers.base import LLMProviderError
+
+        def on_call(**kw):
+            raise LLMProviderError("boom")  # every attempt fails
+
+        provider = MockLLMProvider(on_call=on_call)
+        batch = extract_financials_for_project(
+            session, provider, p.canonical_id, batch_max_docs=2,
+        )
+        # Run is a no-op: error recorded, nothing written, prior kept.
+        assert any("LLM call failed for batch" in e for e in batch.errors)
+        assert batch.skipped_reason is not None
+        assert batch.created_count == 0
+        assert batch.superseded_count == 0
+        # The seeded prior record still exists.
+        survivors = session.query(FinancialRecord).filter_by(
+            project_id=p.canonical_id).all()
+        assert len(survivors) == 1
+        assert survivors[0].amount == Decimal("999.00")
 
 
 # ---------------------------------------------------------------------------

@@ -433,11 +433,13 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
 
         print(f"Provider: {provider.name}")
         print(f"Project:  {project.name}  ({project.canonical_id})")
-        print("Extracting financial records (this calls the LLM)...")
+        print("Extracting financial records (this calls the LLM, batched)...")
         try:
+            kwargs = {}
+            if args.max_docs:
+                kwargs["max_documents"] = int(args.max_docs)
             batch = extract_financials_for_project(
-                s, provider, project.canonical_id,
-                max_documents=int(args.max_docs) if args.max_docs else 12,
+                s, provider, project.canonical_id, **kwargs,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL: {exc}", file=sys.stderr)
@@ -445,6 +447,10 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
 
         print()
         print(batch.summary())
+        if batch.errors:
+            print(f"\n  {len(batch.errors)} error(s):")
+            for e in batch.errors[:20]:
+                print(f"    - {e}")
         if batch.warnings:
             print(f"\n  {len(batch.warnings)} item(s) flagged for review:")
             for w in batch.warnings[:20]:
@@ -1659,8 +1665,8 @@ def build_parser() -> argparse.ArgumentParser:
     ef.add_argument("project", help="Project canonical UUID or name fragment")
     ef.add_argument(
         "--max-docs", type=int, default=None,
-        help="Cap the number of financial documents sent to the LLM "
-             "(default 12)",
+        help="Cap the number of financial documents processed (default: all "
+             "candidates; documents are batched across multiple LLM calls)",
     )
     ef.set_defaults(func=cmd_extract_financials)
 
