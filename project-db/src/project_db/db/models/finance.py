@@ -18,6 +18,7 @@ from __future__ import annotations
 import enum
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Date,
     Enum as SAEnum,
@@ -129,6 +130,11 @@ class FinancialRecord(Base, CanonicalMixin):
     # amount.  A reviewer can Ctrl-F this against the extracted DocumentText.
     quoted_excerpt = Column(Text, nullable=True)
     confidence = Column(Float, nullable=True)
+    # True when the amount's value was found in the source document text (value-
+    # based, decimal-tolerant).  False = the model may have computed it, or
+    # expanded notation/words ("8k", "eight thousand"); surfaced for review and
+    # so the future dashboard can badge unverified figures.  None = not checked.
+    amount_verified = Column(Boolean, nullable=True)
 
     # Which extraction prompt produced this (mirrors Proposal.prompt_version).
     prompt_version = Column(String, nullable=True)

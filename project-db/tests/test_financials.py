@@ -23,7 +23,10 @@ from decimal import Decimal
 
 import pytest
 
+from decimal import Decimal as _D
+
 from project_db.ai.financials import (
+    _amount_in_text,
     _coerce_item_list,
     _norm,
     _parse_amount,
@@ -137,6 +140,46 @@ class TestNorm:
         assert _norm(None) == ""
 
 
+class TestAmountInText:
+    def test_thousands_separator_match(self):
+        assert _amount_in_text(_D("3600"), _norm("Total 3,600.00 $")) is True
+
+    def test_decimal_as_written(self):
+        assert _amount_in_text(_D("287.44"), _norm("invoice total 287.44")) is True
+
+    def test_trailing_zero_tolerance(self):
+        # 12.5 must match a doc that writes "12.50" (same value).
+        assert _amount_in_text(_D("12.5"), _norm("GST 5.00% 12.50")) is True
+
+    def test_rounding_tolerance(self):
+        # Model rounds 549241.8481 -> 549241.85; still the same money.
+        assert _amount_in_text(_D("549241.85"),
+                               _norm("Total after tax 549241.8481")) is True
+
+    def test_french_decimal_comma(self):
+        # Quebec invoices write "923,44 $"; the model outputs 923.44.
+        assert _amount_in_text(_D("923.44"), _norm("Sous-total 923,44 $")) is True
+        assert _amount_in_text(_D("40.16"), _norm("TPS 40,16 $")) is True
+
+    def test_french_comma_not_confused_with_thousands(self):
+        # "3,600" (English thousands) still matches 3600.
+        assert _amount_in_text(_D("3600"), _norm("Total 3,600.00")) is True
+
+    def test_value_based_blocks_substring(self):
+        # 600 must NOT match a doc whose only number is 3600 (different value).
+        assert _amount_in_text(_D("600"), _norm("line item 3600.00 only")) is False
+
+    def test_notation_not_expanded(self):
+        # "8k" is not the literal value 8000 -> not verified (flagged for review).
+        assert _amount_in_text(_D("8000"), _norm("Majd Nov 29th: PAID 8k")) is False
+
+    def test_standalone_match(self):
+        assert _amount_in_text(_D("600"), _norm("qty 15 cost 600 total")) is True
+
+    def test_none(self):
+        assert _amount_in_text(None, "anything") is False
+
+
 # ---------------------------------------------------------------------------
 # Candidate selection
 # ---------------------------------------------------------------------------
@@ -215,22 +258,47 @@ class TestExtraction:
         assert by_dir["client_in"].amount == Decimal("250.00")
         assert by_dir["client_in"].doc_date == date(2026, 3, 25)
         assert by_dir["contractor_out"].amount == Decimal("100.00")
+        # both amounts appear in their source docs -> verified True
+        assert all(r.amount_verified is True for r in rows)
         # prompt_version + raw kept
         assert all(r.prompt_version for r in rows)
         assert all(r.source_meta_json for r in rows)
 
-    def test_excerpt_not_in_source_warns_but_keeps(self, financial_fixture, session):
+    def test_amount_not_in_source_warns_but_keeps(self, financial_fixture, session):
+        # 999 does not appear in docA's text -> flagged as possible
+        # hallucination / computed value, but still created.
         provider = _mock([
             {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-             "amount": 250,
-             "quoted_excerpt": "Grand total nine hundred dollars",  # not in text
+             "amount": 999, "quoted_excerpt": "Total: $999.00",
              "confidence": 0.5},
         ])
         batch = extract_financials_for_project(
             session, provider, financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 1          # still created
-        assert any("not found verbatim" in w for w in batch.warnings)
+        assert any("does not appear in the document" in w for w in batch.warnings)
+        row = session.query(FinancialRecord).one()
+        assert row.amount_verified is False
+        rep = report_project_financials(
+            session, str(financial_fixture["project"].canonical_id)
+        )
+        assert rep["unverified_count"] == 1
+
+    def test_reflowed_excerpt_amount_present_no_warning(self, financial_fixture, session):
+        # A non-verbatim excerpt is fine as long as the AMOUNT is in the doc
+        # (docA text contains "$250.00").  This is the false-positive the old
+        # verbatim-excerpt check produced; the amount-presence guard clears it.
+        provider = _mock([
+            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
+             "amount": 250,
+             "quoted_excerpt": "kitchen renovation ... grand total 250",
+             "confidence": 0.9},
+        ])
+        batch = extract_financials_for_project(
+            session, provider, financial_fixture["project"].canonical_id,
+        )
+        assert batch.created_count == 1
+        assert not batch.warnings
 
     def test_missing_excerpt_warns(self, financial_fixture, session):
         provider = _mock([

@@ -648,9 +648,12 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         reverse=True,
     )
 
+    unverified_count = sum(1 for r in records if r.amount_verified is False)
+
     return {
         "project": {"canonical_id": _ser(project.canonical_id), "name": project.name},
         "record_count": len(records),
+        "unverified_count": unverified_count,
         "totals": {
             "client_in": float(client_in),
             "contractor_out": float(contractor_out),
@@ -674,6 +677,7 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
                 "doc_date": _ser(r.doc_date),
                 "quoted_excerpt": r.quoted_excerpt,
                 "confidence": r.confidence,
+                "amount_verified": r.amount_verified,
             }
             for r in records[:200]
         ],

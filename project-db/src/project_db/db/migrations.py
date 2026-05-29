@@ -110,12 +110,18 @@ CREATE TABLE financial_record (
     doc_date DATE,
     quoted_excerpt TEXT,
     confidence FLOAT,
+    amount_verified BOOLEAN,
     prompt_version VARCHAR,
     source_meta_json TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
     FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
 )
 """
+
+# Columns added AFTER the initial financial_record DDL shipped.
+SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
+    "amount_verified": "BOOLEAN",
+}
 
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
@@ -147,6 +153,11 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(
             conn, tables, "financial_record", SQLITE_FINANCIAL_RECORD_DDL
         )
+        if "financial_record" in tables:
+            _add_missing_columns(
+                conn, inspector, "financial_record",
+                SQLITE_FINANCIAL_RECORD_COLUMNS,
+            )
         # Post-DDL columns on roadmap_task (for DB files created before
         # the actor column landed).
         if "roadmap_task" in tables:

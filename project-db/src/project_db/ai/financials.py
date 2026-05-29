@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -58,7 +59,18 @@ from project_db.db.models.docs import DocumentText
 logger = logging.getLogger(__name__)
 
 # Bump when the prompt text or output schema changes.
-FINANCIAL_PROMPT_VERSION = "financials-v1"
+FINANCIAL_PROMPT_VERSION = "financials-v2-direction"
+
+# Who "we" are -- the signal the model needs to tell client-facing revenue
+# (a quote/estimate/invoice WE issue) from contractor cost (a bill issued TO
+# us).  Without this, a detailed cost-itemized estimate on our own letterhead
+# was misread as contractor_out, inverting the whole money picture.  Config,
+# not schema: override with COMPANY_NAME in .env if the entity changes.
+DEFAULT_COMPANY_NAME = "Alta Construction Group"
+
+
+def _company_name() -> str:
+    return (os.environ.get("COMPANY_NAME") or DEFAULT_COMPANY_NAME).strip()
 
 # Bilingual (EN/FR) keyword priors used to pick which of a project's many
 # documents are worth sending to the model.  This is ONLY a cheap pre-filter
@@ -177,7 +189,7 @@ def extract_financials_for_project(
         return batch
 
     batch.documents_considered = len(candidates)
-    system, user = _build_financial_prompt(candidates)
+    system, user = _build_financial_prompt(candidates, company_name=_company_name())
     try:
         raw = provider.complete_json(
             messages=[LLMMessage(role="user", content=user)],
@@ -287,7 +299,9 @@ def _select_financial_documents(
 # ---------------------------------------------------------------------------
 
 
-def _build_financial_prompt(candidates: list[_Candidate]) -> tuple[str, str]:
+def _build_financial_prompt(
+    candidates: list[_Candidate], *, company_name: str = DEFAULT_COMPANY_NAME,
+) -> tuple[str, str]:
     """Construct (system, user) for financial extraction.
 
     Documents are enumerated with integer indices; the model references those
@@ -298,12 +312,19 @@ def _build_financial_prompt(candidates: list[_Candidate]) -> tuple[str, str]:
         "estate company.  You read financial documents and extract every "
         "monetary amount EXACTLY as written.  Documents may be in English or "
         "French.\n\n"
-        "There are TWO sides to the money on a project:\n"
-        "- MONEY IN (direction='client_in'): amounts WE invoice or quote to "
-        "the client/tenant -- our revenue.\n"
-        "- MONEY OUT (direction='contractor_out'): amounts a contractor, "
-        "subcontractor, or supplier quotes or invoices TO US -- our cost.\n"
-        "- If you genuinely cannot tell which side an amount is on, use "
+        f"OUR COMPANY is \"{company_name}\".  Deciding the DIRECTION of money "
+        "hinges on who ISSUED a document and who it is ADDRESSED to:\n"
+        "- MONEY IN (direction='client_in'): the document is issued BY us and "
+        "addressed to a CLIENT/tenant -- our revenue.  Tells: our name on the "
+        "letterhead/issuer, or a 'Client', 'Client ID', 'Bill To', or "
+        "'Soumis a' field naming someone else.  An ESTIMATE or QUOTE we "
+        "prepared for a client is client_in EVEN THOUGH it itemizes our "
+        "material/labour COSTS -- it is what we are charging the client.\n"
+        "- MONEY OUT (direction='contractor_out'): the document is issued BY "
+        "an external contractor, subcontractor, or supplier and billed TO us.  "
+        "Tells: someone else's name/letterhead as issuer, and OUR company in "
+        "the 'Bill To'/'Sold To'/'Deliver To' field.\n"
+        "- If the issuer and recipient are genuinely unclear, use "
         "direction='unknown'.  Do NOT guess.\n\n"
         "Hard rules:\n"
         "- Extract ONLY amounts that actually appear in the document text.  "
@@ -356,9 +377,11 @@ def _build_financial_prompt(candidates: list[_Candidate]) -> tuple[str, str]:
         f"{context_block}\n\n"
         "---\n\n"
         "INSTRUCTION: Extract every monetary amount stated in the documents "
-        "above.  For each amount, decide whether it is MONEY IN from the "
-        "client ('client_in') or MONEY OUT to a contractor/supplier "
-        "('contractor_out'), or 'unknown' if you cannot tell.  Copy the exact "
+        "above.  For each amount, decide direction by WHO issued the document "
+        "and who it is addressed to (see the rules above): MONEY IN from the "
+        "client ('client_in') when WE issued it to a client, MONEY OUT "
+        "('contractor_out') when an external party billed it to us, or "
+        "'unknown' if the issuer/recipient is unclear.  Copy the exact "
         "text containing the amount into 'quoted_excerpt'.  Reference each "
         "document by its integer index.  Do not do any arithmetic -- report "
         "only amounts the documents state.  Prefer totals, subtotals, "
@@ -461,19 +484,25 @@ def _persist_financial_records(
         )
 
         excerpt = str(raw_item.get("quoted_excerpt") or "").strip()
-        # Anti-hallucination: the excerpt should appear in the source text.
-        # Warn (don't reject) -- OCR/whitespace differences are common, and a
-        # human can verify.  Empty excerpt is its own warning (A6).
+        # Anti-hallucination guard (warn, don't reject -- a human verifies).
+        # The load-bearing check is whether the AMOUNT actually appears in the
+        # source text: that catches both invented numbers and amounts the
+        # model computed itself (e.g. qty x price), which it is told not to do.
+        # An earlier verbatim-EXCERPT check was dropped -- PDF text reflow made
+        # the model join non-contiguous fragments, flagging correct amounts
+        # (3,600 in a real soumission) as false positives.  The excerpt is
+        # still stored as human-verifiable evidence; we just don't gate on it.
         if not excerpt:
             batch.warnings.append(
                 f"doc_index={idx}: amount {amount} has no quoted_excerpt -- "
                 f"evidence is required, verify before trusting"
             )
-        elif _norm(excerpt) and _norm(excerpt) not in norm_text_by_index.get(idx, ""):
+        amount_verified = _amount_in_text(amount, norm_text_by_index.get(idx, ""))
+        if not amount_verified:
             batch.warnings.append(
-                f"doc_index={idx}: quoted_excerpt is not found verbatim in the "
-                f"document text -- possible hallucination, verify before "
-                f"trusting (amount {amount})"
+                f"doc_index={idx}: amount {amount} does not appear in the "
+                f"document text -- possible hallucination or a value the model "
+                f"computed/expanded itself, verify before trusting"
             )
 
         cand = candidates[idx]
@@ -491,6 +520,7 @@ def _persist_financial_records(
             doc_date=_parse_date(raw_item.get("doc_date")),
             quoted_excerpt=excerpt or None,
             confidence=_clamp_confidence(raw_item.get("confidence")),
+            amount_verified=amount_verified,
             prompt_version=batch.prompt_version,
             source_meta_json=json.dumps(raw_item, ensure_ascii=False),
         )
@@ -545,10 +575,74 @@ def _coerce_vocab(
 
 
 def _norm(text: str | None) -> str:
-    """Lowercase + collapse whitespace, for forgiving excerpt containment."""
+    """Lowercase + collapse whitespace, for forgiving text containment."""
     if not text:
         return ""
     return re.sub(r"\s+", " ", text).strip().lower()
+
+
+# Maximal digit/separator runs in the text.  Each run is then interpreted
+# under BOTH English (comma=thousands, dot=decimal) and French/Quebec
+# (comma=decimal) conventions -- this dataset is bilingual and invoices write
+# "923,44 $" where English writes "923.44".  We add every plausible reading to
+# the value set, because this is a presence check: a real amount must match at
+# least one reading.
+_DOC_NUMBER_RE = re.compile(r"\d[\d.,]*\d|\d")
+
+
+def _number_interpretations(token: str) -> set[Decimal]:
+    """Plausible Decimal values for one number-ish token (2-dp), both locales."""
+    tok = token.strip(".,")
+    if not tok:
+        return set()
+    has_c, has_d = "," in tok, "." in tok
+    cands: list[str] = []
+    if has_c and has_d:
+        # Both present: the rightmost separator is the decimal point.
+        if tok.rfind(",") > tok.rfind("."):
+            cands.append(tok.replace(".", "").replace(",", "."))  # European 1.234,56
+        else:
+            cands.append(tok.replace(",", ""))                    # English 1,234.56
+    elif has_c:
+        cands.append(tok.replace(",", ""))                        # comma = thousands
+        # A single comma with 1-2 trailing digits is a French decimal (923,44).
+        if tok.count(",") == 1 and 1 <= len(tok.rsplit(",", 1)[1]) <= 2:
+            cands.append(tok.replace(",", "."))
+    else:
+        cands.append(tok)
+    out: set[Decimal] = set()
+    for cc in cands:
+        try:
+            out.add(_round2(Decimal(cc)))
+        except (InvalidOperation, ValueError):
+            continue
+    return out
+
+
+def _document_amounts(norm_text: str) -> set[Decimal]:
+    """All numeric values in the text (every locale reading), rounded to 2 dp."""
+    out: set[Decimal] = set()
+    for m in _DOC_NUMBER_RE.finditer(norm_text):
+        out |= _number_interpretations(m.group(0))
+    return out
+
+
+def _round2(d: Decimal) -> Decimal:
+    return d.quantize(Decimal("0.01"))
+
+
+def _amount_in_text(amount: Decimal | None, norm_text: str) -> bool:
+    """True if the amount's VALUE appears in the document text (2-dp tolerance).
+
+    Value-based, not string-based: the source may write the same money many
+    ways (12.50 / 12.5, 3,600.00 / 3600, 549241.8481 rounding to 549241.85).
+    Comparing rounded Decimal values clears those false positives while still
+    flagging amounts that are genuinely absent -- a sum the model computed
+    itself, or notation/words it expanded ("8k", "eight thousand").
+    """
+    if amount is None:
+        return False
+    return _round2(amount) in _document_amounts(norm_text)
 
 
 def _clean_str(value: Any) -> str | None:
