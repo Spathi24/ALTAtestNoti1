@@ -49,51 +49,19 @@ logger = logging.getLogger(__name__)
 
 # Bump when the prompt text or output schema changes -- lets us tell
 # which proposals came from which prompt generation.
-TIMELINE_PROMPT_VERSION = "timeline-v4-quoted"
-SCOPE_PROMPT_VERSION = "scope-v3-quoted"
-
-
-def _render_roadmap_for_prompt(session: Session) -> str:
-    """Build a compact text block of contractor-relevant roadmap tasks.
-
-    Returns an empty string when no roadmap rows have an ``actor``
-    assigned -- the caller treats that as "skip the roadmap section"
-    so a fresh install without ``classify-roadmap`` produces the same
-    pre-Layer-2 prompts.
-
-    Filter rationale: our Monday boards are contractor-side, so ARCHITECT
-    tasks are noise on a contractor proposal.  Inject CONTRACTOR + BOTH
-    only.  See M5 prompt-philosophy boundary in HANDOFF / ROADMAP.
-    """
-    from project_db.ai.roadmap import list_roadmap_tasks
-    from project_db.db.models import RoadmapActor
-
-    relevant = list_roadmap_tasks(
-        session,
-        actors=[RoadmapActor.CONTRACTOR, RoadmapActor.BOTH],
-    )
-    if not relevant:
-        return ""
-
-    lines = [
-        "=== CANONICAL CONTRACTOR-RELEVANT ROADMAP ===",
-        "(Reference template -- 4 design phases SD -> DD -> CD -> CA.",
-        "Filtered to tasks the contractor is primarily or jointly",
-        "responsible for; pure architect tasks are excluded.  Use this",
-        "as a check list of standard tasks AND as the canonical phase",
-        "ORDER -- tasks in earlier phases happen before later phases.)",
-        "",
-    ]
-    current_phase = None
-    for t in relevant:
-        if t["phase"] != current_phase:
-            current_phase = t["phase"]
-            lines.append(f"\n-- {current_phase} phase --")
-        actor = t.get("actor") or "?"
-        lines.append(
-            f'  [{t["phase"]}-{t["ordinal"]:02d}] ({actor}) {t["task_name"]}'
-        )
-    return "\n".join(lines)
+#
+# Roadmap injection (Layer 2) was REMOVED 2026-05-29.  It injected the
+# canonical design-phase roadmap (an ARCHITECT SD->DD->CD->CA workflow) into
+# these contractor-execution prompts so the bots would also flag
+# "roadmap-sourced" template gaps.  In practice that produced generic,
+# template-derived flags the PM had to second-guess (the scope UI even
+# carried a "does this apply here?" caveat) -- review burden without a lift
+# in trust.  The RoadmapTask table + import/classify CLIs are kept (harmless,
+# queryable); only the prompt injection is gone.  Proposals are now grounded
+# purely in the project's own contracts and schedule, with quoted-excerpt
+# evidence.  See EVALUATION.md section 3.
+TIMELINE_PROMPT_VERSION = "timeline-v5-quoted"
+SCOPE_PROMPT_VERSION = "scope-v4-quoted"
 
 
 @dataclass
@@ -205,8 +173,7 @@ def generate_timeline_proposals(
         return batch
 
     today = date.today()
-    roadmap_block = _render_roadmap_for_prompt(session)
-    system, user = _build_timeline_prompt(ctx, dateless, dated, today, roadmap_block)
+    system, user = _build_timeline_prompt(ctx, dateless, dated, today)
 
     try:
         raw = provider.complete_json(
@@ -231,7 +198,6 @@ def _build_timeline_prompt(
     dateless: list[dict[str, Any]],
     dated: list[dict[str, Any]],
     today: date,
-    roadmap_block: str = "",
 ) -> tuple[str, str]:
     """Construct (system, user) for forward-looking timeline proposals.
 
@@ -301,13 +267,6 @@ def _build_timeline_prompt(
         sub = " [subitem]" if t.get("is_subitem") else ""
         lines.append(f"[{i}] {t.get('title', '(untitled)')}{sub}")
 
-    # Roadmap block -- the canonical design-phase ordering.  Layer 2
-    # injection.  Empty when no roadmap tasks have an actor (i.e., a
-    # fresh install without `classify-roadmap` run) -- in that case
-    # the prompt behaves exactly as pre-Layer-2.
-    if roadmap_block:
-        lines.append("\n" + roadmap_block)
-
     # Document bodies -- secondary evidence.  Each is introduced with its
     # Drive folder path and type so the model can tell a contract from an
     # invoice or a lease.  A truncated body is labelled as such.
@@ -330,16 +289,6 @@ def _build_timeline_prompt(
 
     context_block = "\n".join(lines)
 
-    roadmap_clause = (
-        " You MAY ALSO use the CANONICAL CONTRACTOR-RELEVANT ROADMAP as "
-        "an ordering anchor: if a dateless task maps to a roadmap entry, "
-        "that entry's phase (SD->DD->CD->CA) is an additional constraint "
-        "on when it can happen.  Phase ordering is NOT a substitute for "
-        "evidence; cite the matched roadmap entry and the schedule "
-        "sequence together in `reasoning`."
-        if roadmap_block else ""
-    )
-
     user = (
         f"{context_block}\n\n"
         "---\n\n"
@@ -350,7 +299,6 @@ def _build_timeline_prompt(
         "schedule in a document.  Ignore invoice dates, work-report dates, "
         "lease terms, and every record of completed work.  Skip any task "
         "that is already finished or that you cannot anchor."
-        + roadmap_clause +
         "  Reference each task by its integer index.\n\n"
         "EVIDENCE-CITATION REQUIREMENT for the 'reasoning' field:\n"
         "- When evidence comes from a DOCUMENT: include a direct "
@@ -362,8 +310,6 @@ def _build_timeline_prompt(
         "neighbour tasks): name the neighbour tasks by their title and "
         "their dates, e.g. 'between Demolition (2026-06-01 to 06-10) "
         "and Final Inspection (2026-08-12)'.\n"
-        "- When evidence comes from a ROADMAP ENTRY: cite by "
-        "phase-ordinal+name, e.g. '[CA-04] Punch List Coordination'.\n"
         "- A reasoning that says only 'based on the contract' or 'per "
         "the schedule' is REJECTED.  Specific evidence required.\n\n"
         "Return strict JSON:\n\n"
@@ -375,12 +321,10 @@ def _build_timeline_prompt(
         '      "proposed_end": "YYYY-MM-DD",\n'
         '      "confidence": <float 0.0-1.0>,\n'
         '      "reasoning": "<one paragraph: quoted excerpt (if doc) '
-        '+ named neighbour tasks with dates (if sequence) + roadmap '
-        'entry (if used).  Specific evidence only -- see requirement '
-        'above.>",\n'
+        '+ named neighbour tasks with dates (if sequence).  Specific '
+        'evidence only -- see requirement above.>",\n'
         '      "source_document": "<exact document name, or empty string if '
-        'the evidence is the schedule sequence / roadmap rather than a '
-        'document>"\n'
+        'the evidence is the schedule sequence rather than a document>"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
@@ -567,8 +511,7 @@ def generate_scope_proposals(
         )
         return batch
 
-    roadmap_block = _render_roadmap_for_prompt(session)
-    system, user = _build_scope_prompt(ctx, roadmap_block)
+    system, user = _build_scope_prompt(ctx)
     try:
         raw = provider.complete_json(
             messages=[LLMMessage(role="user", content=user)],
@@ -586,41 +529,18 @@ def generate_scope_proposals(
     return batch
 
 
-def _build_scope_prompt(
-    ctx: ProjectContext,
-    roadmap_block: str = "",
-) -> tuple[str, str]:
+def _build_scope_prompt(ctx: ProjectContext) -> tuple[str, str]:
     """Construct (system, user) for scope-reconciliation proposals.
 
-    The model is shown the project's documents AND a canonical
-    contractor-relevant roadmap, and asked to flag two kinds of gaps:
-      - CONTRACT-sourced: scope items the documents commit to that no
-        Monday task covers (the pre-Layer-2 behavior).
-      - ROADMAP-sourced: standard contractor-side roadmap tasks that
-        plausibly apply to this project but aren't on the Monday board
-        (Layer 2; only when roadmap_block is non-empty).
+    The model is shown the project's contract / scope-of-work documents and
+    its current Monday task list, and flags scope items the documents commit
+    to that have NO corresponding task.  Gaps are grounded in THIS project's
+    documents -- the canonical-roadmap injection was removed 2026-05-29 (it
+    produced template-derived flags the PM had to second-guess; see the
+    TIMELINE_PROMPT_VERSION note and EVALUATION.md section 3).
 
-    The model labels every gap with its source so the PM can review
-    them differently -- contract gaps are project-specific; roadmap
-    gaps are template-derived and may not apply to every project.
-
-    Instruction sits at the TAIL (same truncation lesson as the
-    timeline prompt).
+    Instruction sits at the TAIL (truncation lesson from the timeline prompt).
     """
-    has_roadmap = bool(roadmap_block)
-    roadmap_rule = (
-        "\n- You MAY ALSO flag a roadmap-sourced gap when a "
-        "CANONICAL ROADMAP entry (CONTRACTOR or BOTH actor) plausibly "
-        "applies to this project but is NOT on the Monday board.  "
-        "Label such gaps with source='roadmap' and cite the matched "
-        "roadmap entry (phase-ordinal + name) in 'reasoning'.  A "
-        "roadmap entry only 'plausibly applies' when the project's "
-        "documents OR current tasks suggest the project is at or has "
-        "passed that roadmap phase -- do NOT flag SD-phase roadmap "
-        "items on a project whose tasks are all CA-phase execution "
-        "work."
-        if has_roadmap else ""
-    )
     system = (
         "You are a construction project analyst.  You compare a project's "
         "contract and scope-of-work documents against its current Monday "
@@ -634,11 +554,9 @@ def _build_scope_prompt(
         "- A flag is a genuine GAP: real work the documents require that the "
         "task list is missing.\n"
         "- Every flag must cite the specific document and clause/section in "
-        "'reasoning' (for contract-sourced flags) OR the matched roadmap "
-        "entry (for roadmap-sourced flags).\n"
+        "'reasoning'.\n"
         "- Returning few flags, or none, is correct when the task list "
         "already covers the documented scope.\n"
-        + roadmap_rule +
         "\n- Output STRICT JSON only.  No prose, no markdown fences."
     )
 
@@ -673,82 +591,38 @@ def _build_scope_prompt(
             )
         lines.append(d["text"])
 
-    # Roadmap block -- Layer 2 injection (contractor-relevant tasks
-    # only).  When empty, the scope prompt behaves exactly as
-    # pre-Layer-2 (contract-sourced flags only).
-    if roadmap_block:
-        lines.append("\n" + roadmap_block)
-
     context_block = "\n".join(lines)
-
-    instruction_intro = (
-        "INSTRUCTION: Compare the scope of work in the documents above "
-        "against the CURRENT MONDAY TASKS.  Identify scope items the "
-        "documents commit to that NO current task covers."
-    )
-    if has_roadmap:
-        instruction_intro += (
-            "  ADDITIONALLY: consult the CANONICAL CONTRACTOR-RELEVANT "
-            "ROADMAP and flag standard roadmap tasks that plausibly "
-            "apply to this project (based on the current task list's "
-            "phase + the documents) but are NOT on the Monday board.  "
-            "Do NOT flag SD/DD roadmap entries on a project whose "
-            "Monday tasks are clearly all CA-phase execution work."
-        )
-    instruction_intro += (
-        "  Skip anything a task already covers.  Flag only real gaps."
-    )
-
-    source_field = (
-        '      "source": "contract" | "roadmap",\n'
-        if has_roadmap else ""
-    )
-    source_note = (
-        " '\"contract\"' when a document commits to this scope; "
-        "'\"roadmap\"' when it's a standard roadmap task plausibly "
-        "applicable but missing."
-        if has_roadmap else ""
-    )
 
     user = (
         f"{context_block}\n\n"
         "---\n\n"
-        + instruction_intro +
+        "INSTRUCTION: Compare the scope of work in the documents above "
+        "against the CURRENT MONDAY TASKS.  Identify scope items the "
+        "documents commit to that NO current task covers.  Skip anything a "
+        "task already covers.  Flag only real gaps."
         "\n\nEVIDENCE-CITATION REQUIREMENT for the 'reasoning' field:\n"
-        "- For a CONTRACT-sourced gap: include a direct QUOTED "
-        "EXCERPT in double quotes (max ~30 words) of the exact "
-        "sentence or clause from the source document that commits "
-        "to this scope.  Name the document.  Then one short sentence "
+        "- Include a direct QUOTED EXCERPT in double quotes (max ~30 words) "
+        "of the exact sentence or clause from the source document that "
+        "commits to this scope.  Name the document.  Then one short sentence "
         "explaining why no current Monday task covers it.\n"
-        + ('- For a ROADMAP-sourced gap: cite the roadmap entry by '
-           'phase-ordinal+name (e.g. "[CA-04] Punch List '
-           'Coordination") and one short sentence explaining why it '
-           'plausibly applies here.  No document quote needed (roadmap '
-           'tasks are the canonical template, not project-specific).\n'
-           if has_roadmap else "") +
         '- A reasoning that says only "stated in the contract" or '
         '"part of the scope" is REJECTED.  Specific evidence required.\n\n'
         "Return strict JSON:\n\n"
         "{\n"
         '  "scope_gaps": [\n'
         "    {\n"
-        '      "scope_item": "<the documented or canonical scope item, '
-        'concise>",\n'
+        '      "scope_item": "<the documented scope item, concise>",\n'
         '      "suggested_task_title": "<a Monday task title that would '
         'close the gap>",\n'
         '      "confidence": <float 0.0-1.0>,\n'
-        '      "reasoning": "<contract: quoted excerpt + document name '
-        '+ why missing.  roadmap: phase-ordinal+name + why applicable.  '
+        '      "reasoning": "<quoted excerpt + document name + why missing.  '
         'See requirement above.>",\n'
-        '      "source_document": "<exact document name, or empty string '
-        'for a roadmap-sourced flag>",\n'
-        + source_field +
+        '      "source_document": "<exact document name>"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
-        + (f"The 'source' field is required.{source_note}\n\n" if has_roadmap else "") +
-        'If the task list already covers the documented scope AND '
-        'no roadmap entries apply, return {"scope_gaps": []}.'
+        'If the task list already covers the documented scope, '
+        'return {"scope_gaps": []}.'
     )
     return system, user
 

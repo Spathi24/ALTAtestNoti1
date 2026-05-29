@@ -70,27 +70,17 @@ class TestVersions:
 
 
 class TestScopePromptDemandsQuotedExcerpt:
-    def test_no_roadmap_contract_only_path(self):
-        sys_p, user_p = _build_scope_prompt(_ctx(), roadmap_block="")
+    def test_contract_evidence_rule(self):
+        sys_p, user_p = _build_scope_prompt(_ctx())
         # The EVIDENCE-CITATION block must be present
         assert "EVIDENCE-CITATION REQUIREMENT" in user_p
         # Must demand a QUOTED EXCERPT for contract evidence
         assert "QUOTED EXCERPT" in user_p
         # Must reject lazy reasoning
         assert "REJECTED" in user_p
-        # Without roadmap, the prompt should NOT mention roadmap-evidence rules
+        # Roadmap injection was removed -- no roadmap-evidence rules remain
         assert "ROADMAP-sourced gap" not in user_p
-
-    def test_with_roadmap_both_evidence_rules_present(self):
-        block = (
-            "=== CANONICAL CONTRACTOR-RELEVANT ROADMAP ===\n"
-            "-- CA phase --\n  [CA-01] (BOTH) Punch List"
-        )
-        sys_p, user_p = _build_scope_prompt(_ctx(), roadmap_block=block)
-        # Both evidence rules must be present
-        assert "QUOTED EXCERPT" in user_p  # contract rule
-        assert "ROADMAP-sourced gap" in user_p  # roadmap rule
-        assert "phase-ordinal+name" in user_p  # roadmap citation style
+        assert "roadmap" not in user_p.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -105,35 +95,18 @@ class TestTimelinePromptDemandsSpecificEvidence:
             dateless=[{"title": "T", "is_subitem": False}],
             dated=[],
             today=date(2026, 6, 1),
-            roadmap_block="",
         )
         assert "EVIDENCE-CITATION REQUIREMENT" in user_p
         assert "QUOTED EXCERPT" in user_p
-        # The three evidence sources are explicitly named
+        # The two evidence sources are explicitly named
         assert "DOCUMENT" in user_p
         assert "SCHEDULE SEQUENCE" in user_p
         # Lazy reasoning rejected
         assert "REJECTED" in user_p
         # The schedule-sequence example phrasing exists
         assert "neighbour" in user_p.lower()
-
-    def test_roadmap_evidence_added_when_block_provided(self):
-        block = (
-            "=== CANONICAL CONTRACTOR-RELEVANT ROADMAP ===\n"
-            "-- CA phase --\n  [CA-01] (BOTH) Punch List"
-        )
-        sys_p, user_p = _build_timeline_prompt(
-            _ctx(),
-            dateless=[{"title": "T", "is_subitem": False}],
-            dated=[],
-            today=date(2026, 6, 1),
-            roadmap_block=block,
-        )
-        # All three citation styles documented
-        assert "QUOTED EXCERPT" in user_p
-        assert "SCHEDULE SEQUENCE" in user_p
-        assert "ROADMAP ENTRY" in user_p
-        assert "phase-ordinal+name" in user_p
+        # Roadmap injection was removed -- no roadmap citation style remains
+        assert "ROADMAP ENTRY" not in user_p
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +120,7 @@ class TestConservativePosturePreserved:
     be in the system prompt."""
 
     def test_scope_system_still_forbids_inventing(self):
-        sys_p, _ = _build_scope_prompt(_ctx(), roadmap_block="")
+        sys_p, _ = _build_scope_prompt(_ctx())
         assert "Never invent" in sys_p
         assert "Returning few flags, or none, is correct" in sys_p
 

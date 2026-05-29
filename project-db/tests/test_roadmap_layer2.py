@@ -31,7 +31,6 @@ from project_db.ai.proposals import (
     TIMELINE_PROMPT_VERSION,
     _build_scope_prompt,
     _build_timeline_prompt,
-    _render_roadmap_for_prompt,
     generate_scope_proposals,
 )
 from project_db.ai.context import ProjectContext
@@ -133,37 +132,14 @@ class TestListRoadmapTasksFilter:
 # ---------------------------------------------------------------------------
 
 
-class TestRenderRoadmapForPrompt:
-    def test_empty_when_no_actors_assigned(self, session):
-        """Pre-classify state: roadmap_task rows exist but no actor on
-        any.  Helper returns '' so the prompt behaves as pre-Layer-2."""
-        rt = RoadmapTask(
-            phase=RoadmapPhase.SD, ordinal=1, task_name="x", actor=None,
-        )
-        session.add(rt)
-        session.commit()
-        assert _render_roadmap_for_prompt(session) == ""
-
-    def test_filters_to_contractor_and_both(self, session, roadmap):
-        block = _render_roadmap_for_prompt(session)
-        assert block  # non-empty
-        # Contractor-relevant tasks are in the block
-        assert "Project Kickoff" in block
-        assert "Punch List" in block
-        # ARCHITECT-only tasks are filtered out
-        assert "Site Analysis" not in block
-        # Header is present
-        assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" in block
-
-    def test_groups_by_phase(self, session, roadmap):
-        block = _render_roadmap_for_prompt(session)
-        # Phase headers appear
-        assert "-- SD phase --" in block
-        assert "-- CA phase --" in block
-
-
 # ---------------------------------------------------------------------------
-# Prompt builders -- roadmap conditional behavior
+# Prompt builders -- roadmap injection REMOVED (2026-05-29)
+#
+# Layer-2 roadmap injection was stripped: it pushed an architect design-phase
+# template into contractor-execution prompts, producing flags the PM had to
+# second-guess.  list_roadmap_tasks + the RoadmapTask table stay (Layer 1);
+# the proposal prompts no longer consult them.  These tests pin that the
+# injection does NOT come back.
 # ---------------------------------------------------------------------------
 
 
@@ -185,36 +161,18 @@ def _trivial_ctx() -> ProjectContext:
     )
 
 
-class TestScopePromptRoadmapConditional:
-    def test_without_roadmap_no_source_field(self):
+class TestScopePromptHasNoRoadmap:
+    def test_no_roadmap_section_or_source_field(self):
         ctx = _trivial_ctx()
-        sys_p, user_p = _build_scope_prompt(ctx, roadmap_block="")
-        # No roadmap section
+        sys_p, user_p = _build_scope_prompt(ctx)
         assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" not in user_p
-        # No source field in the JSON schema
         assert '"source"' not in user_p
-        # No roadmap rule in system prompt
+        assert "roadmap" not in user_p.lower()
         assert "MAY ALSO flag a roadmap-sourced gap" not in sys_p
 
-    def test_with_roadmap_includes_section_and_source_field(self):
-        ctx = _trivial_ctx()
-        block = (
-            "=== CANONICAL CONTRACTOR-RELEVANT ROADMAP ===\n"
-            "-- CA phase --\n  [CA-01] (BOTH) Punch List"
-        )
-        sys_p, user_p = _build_scope_prompt(ctx, roadmap_block=block)
-        # Roadmap section reaches the prompt
-        assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" in user_p
-        assert "Punch List" in user_p
-        # Source field required in output JSON
-        assert '"source"' in user_p
-        assert '"contract"' in user_p and '"roadmap"' in user_p
-        # System rule is present
-        assert "MAY ALSO flag a roadmap-sourced gap" in sys_p
 
-
-class TestTimelinePromptRoadmapConditional:
-    def test_without_roadmap_no_phase_clause(self):
+class TestTimelinePromptHasNoRoadmap:
+    def test_no_roadmap_section_or_ordering_clause(self):
         from datetime import date
 
         ctx = _trivial_ctx()
@@ -223,29 +181,10 @@ class TestTimelinePromptRoadmapConditional:
             dateless=[{"title": "T", "is_subitem": False}],
             dated=[],
             today=date(2026, 6, 1),
-            roadmap_block="",
         )
         assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" not in user_p
         assert "ordering anchor" not in user_p.lower()
-
-    def test_with_roadmap_includes_section_and_ordering_clause(self):
-        from datetime import date
-
-        ctx = _trivial_ctx()
-        block = (
-            "=== CANONICAL CONTRACTOR-RELEVANT ROADMAP ===\n"
-            "-- CA phase --\n  [CA-01] (BOTH) Punch List"
-        )
-        sys_p, user_p = _build_timeline_prompt(
-            ctx,
-            dateless=[{"title": "T", "is_subitem": False}],
-            dated=[],
-            today=date(2026, 6, 1),
-            roadmap_block=block,
-        )
-        assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" in user_p
-        # Instruction asks model to use it as an ordering anchor
-        assert "ordering anchor" in user_p.lower()
+        assert "roadmap" not in user_p.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -312,58 +251,37 @@ def scope_world(session, org: Organization, roadmap):
     return {"project": project, "doc": doc}
 
 
-class TestGenerateScopeWithRoadmap:
-    def test_persists_source_labels(self, session, scope_world):
-        """Mock the LLM to return one contract gap + one roadmap gap.
-        Verify the source label lands on the Proposal row."""
-        provider = MockLLMProvider(responses=[json.dumps({
-            "scope_gaps": [
-                {
-                    "scope_item": "Install kitchen cabinets",
-                    "suggested_task_title": "Install kitchen cabinets",
-                    "confidence": 0.9,
-                    "reasoning": "SOW.pdf states 'install kitchen'.",
-                    "source_document": "SOW.pdf",
-                    "source": "contract",
-                },
-                {
-                    "scope_item": "Punch list coordination",
-                    "suggested_task_title": "Coordinate punch list",
-                    "confidence": 0.8,
-                    "reasoning": "Roadmap entry CA-01 'Punch List' applies; "
-                                 "no task covers it.",
-                    "source_document": "",
-                    "source": "roadmap",
-                },
-            ]
-        })])
+class TestGenerateScopeNoRoadmapInjection:
+    def test_roadmap_not_injected_into_prompt(self, session, scope_world):
+        """Even with classified roadmap tasks in the DB, the scope prompt
+        must NOT carry the roadmap section (injection removed 2026-05-29)."""
+        provider = MockLLMProvider(responses=[json.dumps({"scope_gaps": []})])
+        generate_scope_proposals(
+            session, provider, scope_world["project"].canonical_id,
+        )
+        assert provider.calls
+        last_user = provider.calls[-1]["messages"][-1].content
+        assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" not in last_user
+        assert "Punch List" not in last_user  # roadmap content absent
 
+    def test_source_label_still_persists_if_model_supplies_it(self, session, scope_world):
+        """Backward compat: _persist_scope_items still records a `source`
+        label the model happens to return, defaulting to 'contract'."""
+        provider = MockLLMProvider(responses=[json.dumps({
+            "scope_gaps": [{
+                "scope_item": "Install kitchen cabinets",
+                "suggested_task_title": "Install kitchen cabinets",
+                "confidence": 0.9,
+                "reasoning": "SOW.pdf states 'install kitchen'.",
+                "source_document": "SOW.pdf",
+            }]
+        })])
         batch = generate_scope_proposals(
             session, provider, scope_world["project"].canonical_id,
         )
-        assert batch.created_count == 2
-
-        # Confirm the prompt the mock saw INCLUDED the roadmap section
-        assert provider.calls
-        # The user message is the last (only) message; the roadmap
-        # block should be embedded somewhere in it.
-        last_user = provider.calls[-1]["messages"][-1].content
-        assert "CANONICAL CONTRACTOR-RELEVANT ROADMAP" in last_user
-        # The actor filter worked: Site Analysis (ARCHITECT) is NOT in
-        # the prompt; Punch List (CONTRACTOR) is.
-        assert "Site Analysis" not in last_user
-        assert "Punch List" in last_user
-
-        # Check the persisted proposals
-        proposals = session.query(Proposal).filter_by(
-            entity_type="Project", field_name="scope_gap",
-        ).all()
-        assert len(proposals) == 2
-        sources = []
-        for p in proposals:
-            pv = json.loads(p.proposed_value)
-            sources.append(pv["source"])
-        assert sorted(sources) == ["contract", "roadmap"]
+        assert batch.created_count == 1
+        p = session.query(Proposal).filter_by(field_name="scope_gap").one()
+        assert json.loads(p.proposed_value)["source"] == "contract"
 
     def test_backward_compat_when_model_omits_source(self, session, scope_world):
         """A model that doesn't return `source` (pre-Layer-2 behavior)
