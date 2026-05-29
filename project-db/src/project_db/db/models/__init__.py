@@ -11,7 +11,14 @@ from project_db.db.models.canonical import (
 from project_db.db.models.core import Client, Property, User, Vendor
 from project_db.db.models.crm import Deal, Lead, LeadStage
 from project_db.db.models.docs import Document, DocumentText
-from project_db.db.models.finance import Invoice, InvoiceStatus
+from project_db.db.models.finance import (
+    FINANCIAL_DIRECTIONS,
+    FINANCIAL_DOC_ROLES,
+    FINANCIAL_RECORD_KINDS,
+    FinancialRecord,
+    Invoice,
+    InvoiceStatus,
+)
 from project_db.db.models.proposals import Proposal, ProposalStatus
 from project_db.db.models.roadmap import (
     ROADMAP_PHASE_ORDER,
@@ -34,6 +41,10 @@ __all__ = [
     "Document",
     "DocumentText",
     "ExternalId",
+    "FINANCIAL_DIRECTIONS",
+    "FINANCIAL_DOC_ROLES",
+    "FINANCIAL_RECORD_KINDS",
+    "FinancialRecord",
     "Invoice",
     "InvoiceStatus",
     "Lead",

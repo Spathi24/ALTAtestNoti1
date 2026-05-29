@@ -91,6 +91,32 @@ SQLITE_ROADMAP_TASK_COLUMNS: dict[str, str] = {
     "actor": "VARCHAR",
 }
 
+SQLITE_FINANCIAL_RECORD_DDL = """
+CREATE TABLE financial_record (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    document_id TEXT,
+    direction VARCHAR NOT NULL DEFAULT 'unknown',
+    doc_role VARCHAR,
+    record_kind VARCHAR,
+    counterparty VARCHAR,
+    description TEXT,
+    phase VARCHAR,
+    amount NUMERIC(14, 2),
+    currency VARCHAR,
+    doc_date DATE,
+    quoted_excerpt TEXT,
+    confidence FLOAT,
+    prompt_version VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+)
+"""
+
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
@@ -118,6 +144,9 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(conn, tables, "document_text", SQLITE_DOCUMENT_TEXT_DDL)
         _create_table_if_missing(conn, tables, "proposal", SQLITE_PROPOSAL_DDL)
         _create_table_if_missing(conn, tables, "roadmap_task", SQLITE_ROADMAP_TASK_DDL)
+        _create_table_if_missing(
+            conn, tables, "financial_record", SQLITE_FINANCIAL_RECORD_DDL
+        )
         # Post-DDL columns on roadmap_task (for DB files created before
         # the actor column landed).
         if "roadmap_task" in tables:

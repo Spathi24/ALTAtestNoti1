@@ -30,6 +30,7 @@ from project_db.db.models import (
     Deal,
     Document,
     ExternalId,
+    FinancialRecord,
     Invoice,
     InvoiceStatus,
     Lead,
@@ -536,6 +537,156 @@ def report_budget_vs_contract(
     }
 
 
+def _representative_amount(records: list[FinancialRecord]) -> Decimal:
+    """Collapse a (document, direction) group to one non-double-counted amount.
+
+    A single financial document often lists line items AND a grand total;
+    naively summing every row would count the money twice.  Rule, in order:
+      1. If the group has any 'total' record, use the largest total (a doc may
+         carry subtotals + a grand total; the grand total is the largest).
+      2. Else sum the 'line_item' records.
+      3. Else sum whatever remains (deposit/other), excluding 'tax' so we do
+         not stack tax on top of a base amount we couldn't classify.
+
+    Returns a Decimal so the caller controls float coercion at the edge.
+    """
+    totals = [r.amount for r in records if r.record_kind == "total" and r.amount is not None]
+    if totals:
+        return max(totals)
+    line_items = [
+        r.amount for r in records
+        if r.record_kind == "line_item" and r.amount is not None
+    ]
+    if line_items:
+        return sum(line_items, Decimal(0))
+    rest = [
+        r.amount for r in records
+        if r.record_kind != "tax" and r.amount is not None
+    ]
+    return sum(rest, Decimal(0))
+
+
+def report_project_financials(session: Session, project_ref: str) -> dict[str, Any]:
+    """Two-sided money-flow reconciliation for one project, from FinancialRecord.
+
+    Computes -- in plain Python, never via the LLM -- the project's:
+      - ``client_in_total``: money we invoice/quote the client (revenue)
+      - ``contractor_out_total``: money contractors/suppliers bill us (cost)
+      - ``margin``: client_in - contractor_out (the upcharge spread)
+      - ``unknown_total``: amounts the extractor could not assign a side
+
+    Each (document, direction) group is collapsed via ``_representative_amount``
+    so a line item and its document total are not both counted.  Returns the
+    per-document breakdown and a capped flat record list for drill-down.
+
+    Returns ``{"error": "..."}`` when the project_ref doesn't resolve.  When
+    the project has no extracted financial records, returns zeros with a
+    ``note`` pointing at ``extract-financials`` rather than an error.
+    """
+    project = _resolve_project(session, project_ref)
+    if project is None:
+        return {"error": f"No project matched ref={project_ref!r}"}
+
+    records = (
+        session.query(FinancialRecord)
+        .filter(FinancialRecord.project_id == project.canonical_id)
+        .all()
+    )
+
+    # Group by (document_id, direction) for representative-amount collapsing.
+    groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
+    for r in records:
+        groups.setdefault((r.document_id, r.direction or "unknown"), []).append(r)
+
+    direction_totals: dict[str, Decimal] = {
+        "client_in": Decimal(0),
+        "contractor_out": Decimal(0),
+        "unknown": Decimal(0),
+    }
+    # Per-document rollup, for the breakdown panel / future tree view.
+    doc_names = {
+        d.canonical_id: d.name
+        for d in session.query(Document)
+        .filter(Document.project_id == project.canonical_id)
+        .all()
+    }
+    per_document: dict[Any, dict[str, Any]] = {}
+    for (doc_id, direction), recs in groups.items():
+        rep = _representative_amount(recs)
+        direction_totals[direction] = direction_totals.get(direction, Decimal(0)) + rep
+        entry = per_document.setdefault(
+            doc_id,
+            {
+                "document_id": _ser(doc_id),
+                "document_name": doc_names.get(doc_id, "(unknown document)"),
+                "client_in": Decimal(0),
+                "contractor_out": Decimal(0),
+                "unknown": Decimal(0),
+                "record_count": 0,
+            },
+        )
+        entry[direction] = entry.get(direction, Decimal(0)) + rep
+        entry["record_count"] += len(recs)
+
+    client_in = direction_totals.get("client_in", Decimal(0))
+    contractor_out = direction_totals.get("contractor_out", Decimal(0))
+    unknown_total = direction_totals.get("unknown", Decimal(0))
+    margin = client_in - contractor_out
+
+    per_document_rows = []
+    for entry in per_document.values():
+        per_document_rows.append({
+            "document_id": entry["document_id"],
+            "document_name": entry["document_name"],
+            "client_in": float(entry.get("client_in", Decimal(0))),
+            "contractor_out": float(entry.get("contractor_out", Decimal(0))),
+            "unknown": float(entry.get("unknown", Decimal(0))),
+            "record_count": entry["record_count"],
+        })
+    per_document_rows.sort(
+        key=lambda r: r["client_in"] + r["contractor_out"] + r["unknown"],
+        reverse=True,
+    )
+
+    return {
+        "project": {"canonical_id": _ser(project.canonical_id), "name": project.name},
+        "record_count": len(records),
+        "totals": {
+            "client_in": float(client_in),
+            "contractor_out": float(contractor_out),
+            "unknown": float(unknown_total),
+            "margin": float(margin),
+        },
+        "per_document": per_document_rows,
+        "records": [
+            {
+                "canonical_id": _ser(r.canonical_id),
+                "document_id": _ser(r.document_id),
+                "document_name": doc_names.get(r.document_id),
+                "direction": r.direction,
+                "doc_role": r.doc_role,
+                "record_kind": r.record_kind,
+                "counterparty": r.counterparty,
+                "description": r.description,
+                "phase": r.phase,
+                "amount": _ser(r.amount),
+                "currency": r.currency,
+                "doc_date": _ser(r.doc_date),
+                "quoted_excerpt": r.quoted_excerpt,
+                "confidence": r.confidence,
+            }
+            for r in records[:200]
+        ],
+        "note": (
+            "Amounts extracted by LLM from Drive documents; totals computed "
+            "deterministically. Run extract-financials to (re)populate."
+            if records else
+            "No financial records yet. Run: project_db extract-financials "
+            f"--project {project.canonical_id}"
+        ),
+    }
+
+
 def report_database_overview(
     session: Session, *, max_tasks: int = 600
 ) -> dict[str, Any]:
@@ -850,4 +1001,5 @@ REPORT_REGISTRY: dict[str, Any] = {
     "tasks_without_dates": report_tasks_without_dates,
     "missing_documents": report_missing_documents,
     "budget_vs_contract": report_budget_vs_contract,
+    "project_financials": report_project_financials,
 }

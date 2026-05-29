@@ -1,15 +1,53 @@
-"""Finance entities. v0.1 is intentionally minimal — Invoice only.
+"""Finance entities.
 
-The full model adds PurchaseOrder, Payment, Expense, Quote, Contract.
+`Invoice` is the structured, QuickBooks-shaped record (still unused in dev
+until QB credentials exist).
+
+`FinancialRecord` is the Drive-document-derived money layer: every monetary
+amount the LLM extracts from a quote / estimate / invoice / receipt / change
+order, with the verbatim excerpt that proves it.  Per the owner (2026-05-29),
+Google Drive — not QuickBooks — is the canonical and most complete financial
+source, so this is where the money picture actually comes from.  It is
+deliberately SCHEMA-LIGHT: classification fields are plain strings validated
+against a known vocabulary (unknown values warn, never crash) so the model
+survives the file-convention drift the owner flagged, and the raw LLM item is
+kept in `source_meta_json`.
 """
 from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Column, Date, Enum as SAEnum, ForeignKey, Numeric, String
+from sqlalchemy import (
+    Column,
+    Date,
+    Enum as SAEnum,
+    Float,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
+
+
+# --- FinancialRecord vocabularies -------------------------------------------
+# Plain string sets, NOT DB enums: the owner asked us not to hardcode a rigid
+# model to today's conventions.  The extractor validates against these and
+# falls back to the catch-all value with a warning on anything unexpected,
+# so a new document shape never crashes a run.
+
+# Which side of the two-sided ledger a record belongs to.  The upcharge is the
+# spread between client_in and contractor_out -- that margin is the business.
+FINANCIAL_DIRECTIONS = {"client_in", "contractor_out", "unknown"}
+# What kind of financial document the amount came from.
+FINANCIAL_DOC_ROLES = {
+    "quote", "estimate", "invoice", "receipt", "change_order", "other",
+}
+# What the individual amount represents within its document.  Used by the
+# reconciliation report to avoid double-counting a line item AND its total.
+FINANCIAL_RECORD_KINDS = {"total", "line_item", "tax", "deposit", "other"}
 
 
 class InvoiceStatus(str, enum.Enum):
@@ -40,3 +78,59 @@ class Invoice(Base, CanonicalMixin):
         ForeignKey("client.canonical_id"),
         nullable=False,
     )
+
+
+class FinancialRecord(Base, CanonicalMixin):
+    """One monetary amount extracted from one Drive financial document.
+
+    The LLM extracts; this row stores the fact plus its evidence.  No
+    arithmetic happens here -- the reconciliation report computes
+    client-in / contractor-out / margin from these rows in plain SQL/Python.
+
+    Classification columns (`direction`, `doc_role`, `record_kind`) are
+    free-form strings constrained at write time to the FINANCIAL_* sets
+    above; an unrecognised value is coerced to the catch-all and warned,
+    never rejected -- the schema must outlive today's document conventions.
+    """
+
+    # Provenance -- which project + which source document this came from.
+    # project_id is nullable because a financial document may not (yet) be
+    # linked to a project; document_id is the evidence anchor.
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=True,
+    )
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # The two-sided ledger.  client_in = money we invoice the client;
+    # contractor_out = money contractors/suppliers quote/invoice us;
+    # unknown = the model could not determine direction (kept, not guessed).
+    direction = Column(String, nullable=False, default="unknown")
+    # quote / estimate / invoice / receipt / change_order / other.
+    doc_role = Column(String, nullable=True)
+    # total / line_item / tax / deposit / other -- lets the reconciliation
+    # report prefer a document's total over re-summing its line items.
+    record_kind = Column(String, nullable=True)
+
+    counterparty = Column(String, nullable=True)   # client or contractor name
+    description = Column(Text, nullable=True)        # what the amount is for
+    phase = Column(String, nullable=True)            # phase label, if phased
+
+    amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(String, nullable=True)         # e.g. CAD, USD
+    doc_date = Column(Date, nullable=True)           # date on the document
+
+    # Verbatim evidence -- the exact text from the document containing the
+    # amount.  A reviewer can Ctrl-F this against the extracted DocumentText.
+    quoted_excerpt = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=True)
+
+    # Which extraction prompt produced this (mirrors Proposal.prompt_version).
+    prompt_version = Column(String, nullable=True)
+    # Raw LLM item -- keep everything; promote to columns only what we query.
+    source_meta_json = Column(Text, nullable=True)

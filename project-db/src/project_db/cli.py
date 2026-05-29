@@ -395,6 +395,74 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract_financials(args: argparse.Namespace) -> int:
+    """Extract monetary records from a project's Drive financial documents.
+
+    Reads the project's quotes / estimates / invoices / receipts (already
+    text-extracted via `extract-content`), asks the deep LLM to pull every
+    stated amount with a verbatim excerpt, and writes FinancialRecord rows.
+    Then prints the two-sided money-flow reconciliation (client-in vs
+    contractor-out vs margin), computed deterministically -- not by the LLM.
+
+    Fresh snapshot: a re-run replaces the project's prior financial records.
+    Nothing is written to any external system; this only enriches the
+    canonical DB.
+    """
+    from project_db.ai import (
+        LLMProviderError,
+        extract_financials_for_project,
+        get_default_provider,
+    )
+    from project_db.ai.views import _resolve_project, report_project_financials
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        provider = get_default_provider()
+    except LLMProviderError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        print(f"Provider: {provider.name}")
+        print(f"Project:  {project.name}  ({project.canonical_id})")
+        print("Extracting financial records (this calls the LLM)...")
+        try:
+            batch = extract_financials_for_project(
+                s, provider, project.canonical_id,
+                max_documents=int(args.max_docs) if args.max_docs else 12,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(batch.summary())
+        if batch.warnings:
+            print(f"\n  {len(batch.warnings)} item(s) flagged for review:")
+            for w in batch.warnings[:20]:
+                print(f"    - {w}")
+
+        # Reconciliation summary (reads what we just wrote, still uncommitted).
+        report = report_project_financials(s, str(project.canonical_id))
+        totals = report.get("totals", {})
+        print("\n--- Money-flow reconciliation ---")
+        print(f"  Records:          {report.get('record_count', 0)}")
+        print(f"  Client in (rev):  {totals.get('client_in', 0):,.2f}")
+        print(f"  Contractor out:   {totals.get('contractor_out', 0):,.2f}")
+        print(f"  Unknown side:     {totals.get('unknown', 0):,.2f}")
+        print(f"  Margin (in-out):  {totals.get('margin', 0):,.2f}")
+
+    return 0
+
+
 def cmd_llm_test(args: argparse.Namespace) -> int:
     """Smoke-test the LLM stack end-to-end against a real project.
 
@@ -1580,6 +1648,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ec.add_argument("--limit", type=int, help="Stop after N documents (smoke test)")
     ec.set_defaults(func=cmd_extract_content)
+
+    ef = sub.add_parser(
+        "extract-financials",
+        help="Extract monetary records (quotes/invoices/receipts) from a "
+             "project's Drive documents into FinancialRecord, then print the "
+             "two-sided money-flow reconciliation.  Calls the LLM; "
+             "fresh-snapshot per run.",
+    )
+    ef.add_argument("project", help="Project canonical UUID or name fragment")
+    ef.add_argument(
+        "--max-docs", type=int, default=None,
+        help="Cap the number of financial documents sent to the LLM "
+             "(default 12)",
+    )
+    ef.set_defaults(func=cmd_extract_financials)
 
     impr = sub.add_parser(
         "import-roadmap",
