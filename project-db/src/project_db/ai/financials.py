@@ -739,12 +739,30 @@ def _despace_thousands(text: str) -> str:
     return text
 
 
+# Casual "k"/"m" magnitude suffixes, common in tenant-payment trackers
+# ("8k", "10.5k", "11k", "1.2m").  The model expands these to 8000 etc.; the
+# verifier recognises them so a correct expansion isn't flagged as invented.
+_SUFFIX_RE = re.compile(r"(?<![a-z0-9.,])(\d[\d.,]*)\s?([km])(?![a-z])")
+_SUFFIX_MULT = {"k": Decimal(1000), "m": Decimal(1_000_000)}
+
+
 def _document_amounts(norm_text: str) -> set[Decimal]:
-    """All numeric values in the text (every locale reading), rounded to 2 dp."""
-    text = _despace_thousands(norm_text)
+    """All numeric values in the text (every locale reading), rounded to 2 dp.
+
+    Numbers are read from BOTH the raw text and a space-thousands-collapsed
+    variant, and the readings are unioned.  "1 080.00" (space thousands) is
+    only recoverable from the collapsed variant; "1 500,00" (quantity 1, price
+    500,00) is only recoverable from the raw variant -- the two patterns are
+    syntactically identical, so we keep both readings rather than guess.
+    Magnitude suffixes ("8k", "10.5k") are expanded too.
+    """
     out: set[Decimal] = set()
-    for m in _DOC_NUMBER_RE.finditer(text):
-        out |= _number_interpretations(m.group(0))
+    for variant in (norm_text, _despace_thousands(norm_text)):
+        for m in _DOC_NUMBER_RE.finditer(variant):
+            out |= _number_interpretations(m.group(0))
+    for m in _SUFFIX_RE.finditer(norm_text):
+        for base in _number_interpretations(m.group(1)):
+            out.add(_round2(base * _SUFFIX_MULT[m.group(2)]))
     return out
 
 
@@ -763,7 +781,10 @@ def _amount_in_text(amount: Decimal | None, norm_text: str) -> bool:
     """
     if amount is None:
         return False
-    return _round2(amount) in _document_amounts(norm_text)
+    amts = _document_amounts(norm_text)
+    # Match on magnitude: a credit/deposit shown as "-250.00" stores as -250
+    # but the document number parser captures the unsigned 250.00.
+    return _round2(amount) in amts or _round2(abs(amount)) in amts
 
 
 def _clean_str(value: Any) -> str | None:

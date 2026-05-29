@@ -176,13 +176,26 @@ class TestAmountInText:
         # chained groups
         assert _amount_in_text(_D("1234567"), _norm("Grand total 1 234 567")) is True
 
+    def test_qty_price_not_lost_to_despace(self):
+        # "1   500,00" is qty 1 + price 500,00 -- the un-despaced reading must
+        # still recover 500.00 (despace alone would merge it to 1500).
+        assert _amount_in_text(_D("500"), _norm("CONTENEUR 1 500,00 5")) is True
+
+    def test_negative_amount_matches_magnitude(self):
+        assert _amount_in_text(_D("-250"), _norm("Credit on install -250.00 $")) is True
+        assert _amount_in_text(_D("-2001.42"),
+                               _norm("Deposit on hand 1 -2,001.42")) is True
+
+    def test_k_notation_expansion(self):
+        # Tenant trackers write "8k" / "10.5k"; the model expands to 8000 etc.
+        assert _amount_in_text(_D("8000"), _norm("Majd Nov 29th: PAID 8k")) is True
+        assert _amount_in_text(_D("10500"), _norm("Henry Feb 1st: 10.5k + moving")) is True
+        # not confused inside a word
+        assert _amount_in_text(_D("8000"), _norm("worker okay")) is False
+
     def test_value_based_blocks_substring(self):
         # 600 must NOT match a doc whose only number is 3600 (different value).
         assert _amount_in_text(_D("600"), _norm("line item 3600.00 only")) is False
-
-    def test_notation_not_expanded(self):
-        # "8k" is not the literal value 8000 -> not verified (flagged for review).
-        assert _amount_in_text(_D("8000"), _norm("Majd Nov 29th: PAID 8k")) is False
 
     def test_standalone_match(self):
         assert _amount_in_text(_D("600"), _norm("qty 15 cost 600 total")) is True
