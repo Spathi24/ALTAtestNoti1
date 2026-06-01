@@ -19,24 +19,21 @@
 {% endif %}
 
 <!-- ===================== CONFIRMED TOTAL (human-controlled) ===================== -->
-<article>
-  <h3>Confirmed total <small>(quotes you actually went with)</small></h3>
-  <table>
-    <tbody>
-      <tr><td>Client in (revenue)</td>
-          <td style="text-align:right">{{ "{:,.2f}".format(d.confirmed_totals.client_in) }}</td></tr>
-      <tr><td>Contractor out (cost)</td>
-          <td style="text-align:right">{{ "{:,.2f}".format(d.confirmed_totals.contractor_out) }}</td></tr>
-      <tr><td><strong>Confirmed margin (in &minus; out)</strong></td>
-          <td style="text-align:right"><strong>{{ "{:,.2f}".format(d.confirmed_totals.margin) }}</strong></td></tr>
-    </tbody>
-  </table>
-  <p><small>{{ d.confirmation.confirmed_docs }} of {{ d.confirmation.total_primary_docs }}
-     primary documents counted ({{ d.confirmation.explicit_decisions }} set by hand;
-     the rest by default: invoices in, quotes out). Toggle documents in the table
-     below &mdash; this total updates live. The "all-in" totals further down include
-     every document for reference.</small></p>
-</article>
+<div class="kpi">
+  <h3>Confirmed margin <small>(only documents you went with)</small></h3>
+  <div class="kpi-number {{ 'pos' if d.confirmed_totals.margin >= 0 else 'neg' }}">
+    {{ "${:,.0f}".format(d.confirmed_totals.margin) }}
+  </div>
+  <p style="margin:0.4rem 0 0">
+    <small>
+      revenue <strong>{{ "${:,.0f}".format(d.confirmed_totals.client_in) }}</strong>
+      &minus; cost <strong>{{ "${:,.0f}".format(d.confirmed_totals.contractor_out) }}</strong>
+      &middot; {{ d.confirmation.confirmed_docs }} of {{ d.confirmation.total_primary_docs }}
+      documents counted (invoices in / quotes out by default).
+      Toggle below &mdash; this updates live.
+    </small>
+  </p>
+</div>
 
 <!-- ===================== MONEY-TYPE BUCKETS (all-in) ===================== -->
 <section>

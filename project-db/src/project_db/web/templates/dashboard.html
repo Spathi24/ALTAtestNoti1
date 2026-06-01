@@ -3,13 +3,19 @@
 
 {% block content %}
 <hgroup>
-  <h2>Dashboard</h2>
-  <p>Snapshot of the canonical DB. Numbers here come straight from
-     <code>ui_views.dashboard_summary()</code>.</p>
+  <h2>Overview</h2>
+  <p>One place for projects, documents, tasks, money, and AI suggestions —
+     pulled live from Monday.com and Google Drive.</p>
 </hgroup>
 
+<div class="quick-links">
+  <a href="/projects" role="button">Browse projects &rarr;</a>
+  <a href="/proposals" role="button" class="secondary">Review proposals</a>
+  <a href="/ask" role="button" class="secondary outline">Ask a question</a>
+</div>
+
 <section>
-  <h3>Counts</h3>
+  <h3>At a glance</h3>
   <div class="grid dash-counts">
     <article class="dash-card">
       <header><strong>Projects</strong></header>
@@ -106,19 +112,9 @@
         {% endfor %}
       </tbody>
     </table>
-    <p><a href="/proposals">View all proposals -&gt;</a></p>
+    <p><a href="/proposals">View all proposals &rarr;</a></p>
   {% else %}
-    <p><em>No pending proposals.</em></p>
+    <p><em>No pending proposals — nothing awaiting review.</em></p>
   {% endif %}
-</section>
-
-<section>
-  <h3>Notes</h3>
-  <ul>
-    <li>This is Phase A. Project / Proposal / Doctor pages are coming.
-        Nav links above will start returning 404 until those phases land.</li>
-    <li>Pending-proposal "Review" links won't resolve until Phase C.</li>
-    <li>Pages are read-only here. Mutation (accept / reject) is Phase D.</li>
-  </ul>
 </section>
 {% endblock %}
