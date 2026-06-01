@@ -627,6 +627,28 @@ class TestMoneyType:
         assert bmt["contract_revenue"] == pytest.approx(250.0)
         assert bmt["supplier_cost"] == pytest.approx(100.0)
         assert rep["money_summary"]["construction_margin"] == pytest.approx(150.0)
+        # mostly-classified -> high confidence
+        assert rep["money_summary"]["low_confidence"] is False
+        assert rep["money_summary"]["confidence_note"] is None
+
+    def test_low_confidence_when_mostly_other(self, financial_fixture, session):
+        # An unmodeled project (e.g. a development deal): most money is
+        # direction=unknown -> 'other' bucket -> flagged low-confidence.
+        p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
+        session.add_all([
+            FinancialRecord(project_id=p.canonical_id, document_id=doc_a.canonical_id,
+                            direction="unknown", record_kind="total",
+                            amount=Decimal("1000000"), is_rollup=False),
+            FinancialRecord(project_id=p.canonical_id, document_id=doc_b.canonical_id,
+                            direction="contractor_out", record_kind="total",
+                            amount=Decimal("100"), is_rollup=False),
+        ])
+        session.commit()
+        rep = report_project_financials(session, str(p.canonical_id))
+        ms = rep["money_summary"]
+        assert ms["low_confidence"] is True
+        assert ms["classified_ratio"] < 0.5
+        assert "LOW CONFIDENCE" in ms["confidence_note"]
 
 
 class TestReport:

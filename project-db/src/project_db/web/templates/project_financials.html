@@ -18,6 +18,16 @@
 tracking sheets are excluded (shown below as a cross-check) to avoid
 double-counting the invoices they restate.</em></small></p>
 
+{% if d.money_summary and d.money_summary.confidence_note %}
+<article style="border-left:4px solid var(--pico-del-color,#c0392b);">
+  <strong>&#9888; {{ d.money_summary.confidence_note }}</strong>
+  {% if d.money_summary.classified_ratio is not none %}
+  <p><small>Only {{ "{:.0f}".format(d.money_summary.classified_ratio * 100) }}%
+     of this project's money classified into revenue/cost buckets.</small></p>
+  {% endif %}
+</article>
+{% endif %}
+
 <!-- ===================== MONEY-TYPE BUCKETS ===================== -->
 <section>
   <h3>By money type <small>(primary docs)</small></h3>

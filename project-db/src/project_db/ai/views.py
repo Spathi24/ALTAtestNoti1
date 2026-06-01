@@ -701,6 +701,23 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     contract_rev = by_money_type.get("contract_revenue", 0.0)
     supplier_cost = by_money_type.get("supplier_cost", 0.0)
     buyout_cost = by_money_type.get("buyout_cost", 0.0)
+    other_amt = by_money_type.get("other", 0.0)
+
+    # Coverage / confidence: how much of the project's money landed in an
+    # INTERPRETABLE bucket vs 'other' (direction unknown / a project type the
+    # model doesn't handle).  A low ratio means the reconciliation -- and the
+    # margin -- should not be trusted at face value.  Surfaced loudly so an
+    # unmodeled project (e.g. the 6554 real-estate development deal: asking
+    # price, loan, lease income) does NOT masquerade as a confident margin.
+    interpretable = sum(
+        v for k, v in by_money_type.items() if k != "other"
+    )
+    total_primary_money = interpretable + other_amt
+    classified_ratio = (
+        interpretable / total_primary_money if total_primary_money else None
+    )
+    low_confidence = classified_ratio is not None and classified_ratio < 0.5
+
     money_summary = {
         # Renovation profitability -- the figure that nets cleanly.
         "construction_margin": contract_rev - supplier_cost,
@@ -714,6 +731,16 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "cost. The agreed budget was not found in the documents; supply it "
             "to compute buyout margin."
             if buyout_cost else None
+        ),
+        "classified_ratio": classified_ratio,
+        "low_confidence": low_confidence,
+        "confidence_note": (
+            "LOW CONFIDENCE: most of this project's money could not be "
+            "classified as revenue or cost. This is usually a project type the "
+            "model does not yet handle (e.g. a real-estate development / "
+            "investment deal -- asking price, financing, lease income). Treat "
+            "the margin with caution; see the 'other' bucket."
+            if low_confidence else None
         ),
     }
 

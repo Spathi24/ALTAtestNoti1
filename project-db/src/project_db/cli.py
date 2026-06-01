@@ -481,6 +481,12 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
             for k, v in bmt.items():
                 print(f"    {k:18} {v:,.2f}")
             ms = report.get("money_summary", {})
+            cr = ms.get("classified_ratio")
+            if cr is not None:
+                print(f"  Classified: {cr*100:.0f}% of money in revenue/cost "
+                      f"buckets")
+            if ms.get("confidence_note"):
+                print(f"  {ms['confidence_note']}")
             print(f"  Construction margin (revenue - supplier cost): "
                   f"{ms.get('construction_margin', 0):,.2f}")
             if ms.get("buyout_note"):
