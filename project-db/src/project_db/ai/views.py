@@ -607,6 +607,35 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     primary = [r for r in records if not r.is_rollup]
     rollup = [r for r in records if r.is_rollup]
 
+    # --- Confirmed-vs-quoted -------------------------------------------------
+    # They dump every quote into a project, including ones they didn't go with.
+    # Explicit human decisions live in document_financial_status (separate table
+    # -> survives re-extraction).  Absent => smart default: a doc with an
+    # invoice/receipt role is confirmed (work happened); pure quotes/estimates
+    # are not.  Confirmed totals are computed ALONGSIDE the all-in totals so the
+    # panel shows both and can live-toggle.
+    from project_db.ai.financials import default_confirmed
+    from project_db.db.models import DocumentFinancialStatus
+
+    primary_doc_ids = {r.document_id for r in primary}
+    doc_roles_by_id: dict[Any, set[str]] = {}
+    for r in primary:
+        doc_roles_by_id.setdefault(r.document_id, set()).add(r.doc_role or "other")
+    explicit_status = {
+        s.document_id: bool(s.confirmed)
+        for s in session.query(DocumentFinancialStatus)
+        .filter(DocumentFinancialStatus.document_id.in_(primary_doc_ids))
+        .all()
+    } if primary_doc_ids else {}
+
+    def _doc_confirmed(doc_id: Any) -> bool:
+        if doc_id in explicit_status:
+            return explicit_status[doc_id]
+        return default_confirmed(doc_roles_by_id.get(doc_id, set()))
+
+    confirmed_doc_ids = {d for d in primary_doc_ids if _doc_confirmed(d)}
+    confirmed_primary = [r for r in primary if r.document_id in confirmed_doc_ids]
+
     def _rollup_by_dir(recs: list[FinancialRecord]) -> dict[str, Any]:
         """Per-(document,direction) representative-amount aggregation."""
         groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
@@ -638,8 +667,19 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     unknown_total = direction_totals.get("unknown", Decimal(0))
     margin = client_in - contractor_out
 
+    # Confirmed-only direction totals (same logic, confirmed primary docs only).
+    c_agg = _rollup_by_dir(confirmed_primary)["dir_totals"]
+    c_client_in = c_agg.get("client_in", Decimal(0))
+    c_contractor_out = c_agg.get("contractor_out", Decimal(0))
+    confirmed_totals = {
+        "client_in": float(c_client_in),
+        "contractor_out": float(c_contractor_out),
+        "unknown": float(c_agg.get("unknown", Decimal(0))),
+        "margin": float(c_client_in - c_contractor_out),
+    }
+
     per_document_rows = []
-    for entry in per_document.values():
+    for doc_id, entry in per_document.items():
         per_document_rows.append({
             "document_id": entry["document_id"],
             "document_name": entry["document_name"],
@@ -647,6 +687,8 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "contractor_out": float(entry.get("contractor_out", Decimal(0))),
             "unknown": float(entry.get("unknown", Decimal(0))),
             "record_count": entry["record_count"],
+            "confirmed": doc_id in confirmed_doc_ids,
+            "confirmed_source": "explicit" if doc_id in explicit_status else "default",
         })
     per_document_rows.sort(
         key=lambda r: r["client_in"] + r["contractor_out"] + r["unknown"],
@@ -688,20 +730,26 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             doc_names.get(r.document_id), doc_folders.get(r.document_id),
         )
 
-    mt_groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
-    for r in primary:
-        mt_groups.setdefault((r.document_id, _mt(r)), []).append(r)
-    by_money_type_dec: dict[str, Decimal] = {}
-    for (doc_id, mtype), grp in mt_groups.items():
-        by_money_type_dec[mtype] = (
-            by_money_type_dec.get(mtype, Decimal(0)) + _representative_amount(grp)
-        )
-    by_money_type = {k: float(v) for k, v in sorted(by_money_type_dec.items())}
+    def _money_by_type(recs: list[FinancialRecord]) -> dict[str, float]:
+        groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
+        for r in recs:
+            groups.setdefault((r.document_id, _mt(r)), []).append(r)
+        dec: dict[str, Decimal] = {}
+        for (_doc, mtype), grp in groups.items():
+            dec[mtype] = dec.get(mtype, Decimal(0)) + _representative_amount(grp)
+        return {k: float(v) for k, v in sorted(dec.items())}
+
+    by_money_type = _money_by_type(primary)
+    confirmed_by_money_type = _money_by_type(confirmed_primary)
 
     contract_rev = by_money_type.get("contract_revenue", 0.0)
     supplier_cost = by_money_type.get("supplier_cost", 0.0)
     buyout_cost = by_money_type.get("buyout_cost", 0.0)
     other_amt = by_money_type.get("other", 0.0)
+    confirmed_construction_margin = (
+        confirmed_by_money_type.get("contract_revenue", 0.0)
+        - confirmed_by_money_type.get("supplier_cost", 0.0)
+    )
 
     # Coverage / confidence: how much of the project's money landed in an
     # INTERPRETABLE bucket vs 'other' (direction unknown / a project type the
@@ -760,6 +808,16 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         },
         "by_money_type": by_money_type,
         "money_summary": money_summary,
+        # Confirmed-vs-quoted: the human-controlled view.  Totals over confirmed
+        # primary docs only; the all-in totals above stay for reference.
+        "confirmed_totals": confirmed_totals,
+        "confirmed_by_money_type": confirmed_by_money_type,
+        "confirmed_construction_margin": confirmed_construction_margin,
+        "confirmation": {
+            "confirmed_docs": len(confirmed_doc_ids),
+            "total_primary_docs": len(primary_doc_ids),
+            "explicit_decisions": len(explicit_status),
+        },
         "per_document": per_document_rows,
         "rollup_crosscheck": rollup_crosscheck,
         "records": [
@@ -781,6 +839,7 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
                 "amount_verified": r.amount_verified,
                 "is_rollup": bool(r.is_rollup),
                 "money_type": _mt(r),
+                "confirmed": r.document_id in confirmed_doc_ids,
             }
             for r in records[:200]
         ],

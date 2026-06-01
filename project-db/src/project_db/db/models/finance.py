@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import enum
 
+from datetime import datetime
+
 from sqlalchemy import (
     Boolean,
     Column,
     Date,
+    DateTime,
     Enum as SAEnum,
     Float,
     ForeignKey,
@@ -148,3 +151,28 @@ class FinancialRecord(Base, CanonicalMixin):
     prompt_version = Column(String, nullable=True)
     # Raw LLM item -- keep everything; promote to columns only what we query.
     source_meta_json = Column(Text, nullable=True)
+
+
+class DocumentFinancialStatus(Base):
+    """A human's decision: does this document's money COUNT toward the
+    confirmed total, or is it a quote they didn't go with?
+
+    CRITICAL design point: this lives in its OWN table keyed by document, NOT
+    on FinancialRecord -- because every ``extract-financials`` run deletes and
+    rebuilds the FinancialRecord rows (fresh snapshot), which would otherwise
+    WIPE the human's confirmations.  Keyed by document id, it survives
+    re-extraction.
+
+    Only documents a human has EXPLICITLY toggled get a row here.  Absence of a
+    row means "use the smart default" (invoices/receipts confirmed; quotes /
+    estimates unconfirmed) -- computed in ``report_project_financials``.
+    """
+
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    confirmed = Column(Boolean, nullable=False)
+    decided_by = Column(String, nullable=True)
+    decided_at = Column(DateTime, nullable=False, default=datetime.utcnow)

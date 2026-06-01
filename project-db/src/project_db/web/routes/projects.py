@@ -1,7 +1,9 @@
 """Project list + detail + document detail routes.  Read-only."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import uuid as _uuid
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -42,6 +44,48 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             raise HTTPException(status_code=404, detail="Project not found")
         return templates.TemplateResponse(
             request, "project_financials.html", {"d": data}
+        )
+
+    @router.post("/documents/{document_id}/financial-status",
+                 response_class=HTMLResponse)
+    def set_financial_status(
+        document_id: str,
+        request: Request,
+        confirmed: str = Form("true"),
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Toggle a document's confirmed/quoted status; re-render the panel body.
+
+        The only mutation on the financial surface.  It writes nothing external
+        -- just our internal confirmation flag -- and is idempotent (setting
+        confirmed=X yields X regardless of prior state), so no stale-state guard
+        is needed.  Returns the financials body fragment for an HTMX swap so the
+        Confirmed total recalculates live.
+        """
+        from project_db.ai.financials import set_document_financial_status
+        from project_db.db.models import Document
+
+        # Resolve the document FIRST -- a status row has a FK to document, so
+        # writing it for a non-existent id would raise instead of 404.
+        try:
+            did = _uuid.UUID(document_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="bad document id")
+        doc = session.query(Document).filter_by(canonical_id=did).one_or_none()
+        if doc is None or doc.project_id is None:
+            raise HTTPException(status_code=404, detail="document/project not found")
+
+        val = confirmed.strip().lower() in ("true", "1", "yes", "on")
+        res = set_document_financial_status(
+            session, document_id, val, decided_by="ui",
+        )
+        if not res.get("ok"):
+            raise HTTPException(status_code=400, detail=res.get("error", "bad request"))
+        data = ui_views.project_financials(session, str(doc.project_id))
+        if data is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        return templates.TemplateResponse(
+            request, "_partials/financials_body.html", {"d": data}
         )
 
     @router.get("/documents/{document_id}", response_class=HTMLResponse)

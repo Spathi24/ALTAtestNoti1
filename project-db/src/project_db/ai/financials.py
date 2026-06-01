@@ -107,6 +107,55 @@ _BUYOUT_RE = re.compile(
 _LEASE_RE = re.compile(r"\blease\b|\bbail\b|loyer|rental", re.I)
 
 
+# --- Confirmed-vs-quoted -----------------------------------------------------
+# They dump every quote into a project, including ones they didn't go with.
+# A document is CONFIRMED-by-default when it carries an invoice/receipt role
+# (work happened / they were billed); pure quotes/estimates default UNCONFIRMED
+# until a human says "we went with this".  Owner decision 2026-06.
+_CONFIRMED_DEFAULT_ROLES = {"invoice", "receipt"}
+
+
+def default_confirmed(doc_roles: set[str]) -> bool:
+    """Smart default confirmation for a document, from its records' doc_roles."""
+    return bool(doc_roles & _CONFIRMED_DEFAULT_ROLES)
+
+
+def set_document_financial_status(
+    session: Session,
+    document_id: Any,
+    confirmed: bool,
+    *,
+    decided_by: str | None = None,
+) -> dict[str, Any]:
+    """Upsert a human confirmed/unconfirmed decision for one document.
+
+    Lives in ``document_financial_status`` -- separate from FinancialRecord so
+    it survives re-extraction.  Returns ``{"ok": bool, ...}``; flushes but does
+    not commit (caller owns the transaction).
+    """
+    from project_db.db.models import DocumentFinancialStatus
+
+    did = _as_uuid(document_id)
+    if did is None:
+        return {"ok": False, "error": f"not a valid UUID: {document_id!r}"}
+    row = (
+        session.query(DocumentFinancialStatus)
+        .filter_by(document_id=did)
+        .one_or_none()
+    )
+    if row is None:
+        row = DocumentFinancialStatus(
+            document_id=did, confirmed=bool(confirmed), decided_by=decided_by,
+        )
+        session.add(row)
+    else:
+        row.confirmed = bool(confirmed)
+        row.decided_by = decided_by
+        row.decided_at = datetime.utcnow()
+    session.flush()
+    return {"ok": True, "document_id": str(did), "confirmed": bool(confirmed)}
+
+
 def classify_money_type(
     direction: str | None,
     record_kind: str | None,

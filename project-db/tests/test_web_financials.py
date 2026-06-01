@@ -75,7 +75,7 @@ def fin_project(session, org: Organization):
         FinancialRecord(project_id=p.canonical_id, document_id=d1.canonical_id,
                         direction="client_in", record_kind="total",
                         amount=Decimal("250"), is_rollup=False,
-                        amount_verified=True),
+                        doc_role="quote", amount_verified=True),
         # internal cost sheet -> rollup, excluded from totals
         FinancialRecord(project_id=p.canonical_id, document_id=d2.canonical_id,
                         direction="contractor_out", record_kind="total",
@@ -107,7 +107,35 @@ class TestFinancialsPanel:
         assert f"/projects/{fin_project.canonical_id}/financials" in r.text
 
     def test_panel_is_read_only(self, client, fin_project):
-        # No mutation verb on the financials surface.
+        # No mutation verb on the financials VIEW surface (the toggle lives on
+        # the document, not the project financials page).
         url = f"/projects/{fin_project.canonical_id}/financials"
         assert client.post(url).status_code in (404, 405)
         assert client.delete(url).status_code in (404, 405)
+
+    def test_confirmed_toggle_updates_total(self, client, fin_project, session):
+        from project_db.db.models import Document
+        geller = session.query(Document).filter_by(name="Geller Quote.xlsx").one()
+        gid = str(geller.canonical_id)
+
+        # By default a QUOTE is excluded: 0 of 1 primary docs counted.
+        r0 = client.get(f"/projects/{fin_project.canonical_id}/financials")
+        assert r0.status_code == 200
+        assert "Confirmed total" in r0.text
+        assert "0 of 1" in r0.text
+
+        # Toggle it ON -> the route returns the body fragment, now 1 of 1.
+        r1 = client.post(f"/documents/{gid}/financial-status",
+                         data={"confirmed": "true"})
+        assert r1.status_code == 200
+        assert 'id="fin-body"' in r1.text     # body fragment for HTMX swap
+        assert "1 of 1" in r1.text
+
+        # Persisted: a fresh GET still shows it counted.
+        r2 = client.get(f"/projects/{fin_project.canonical_id}/financials")
+        assert "1 of 1" in r2.text
+
+    def test_toggle_bad_document_404(self, client, fin_project):
+        r = client.post("/documents/00000000-0000-0000-0000-000000000000/financial-status",
+                        data={"confirmed": "true"})
+        assert r.status_code == 404

@@ -37,7 +37,9 @@ from project_db.ai.financials import (
     _parse_amount,
     _select_financial_documents,
     classify_money_type,
+    default_confirmed,
     extract_financials_for_project,
+    set_document_financial_status,
 )
 from project_db.ai.providers import MockLLMProvider
 from project_db.ai.views import report_project_financials
@@ -649,6 +651,72 @@ class TestMoneyType:
         assert ms["low_confidence"] is True
         assert ms["classified_ratio"] < 0.5
         assert "LOW CONFIDENCE" in ms["confidence_note"]
+
+
+class TestConfirmed:
+    def test_default_confirmed_logic(self):
+        assert default_confirmed({"invoice"}) is True
+        assert default_confirmed({"receipt"}) is True
+        assert default_confirmed({"quote", "invoice"}) is True   # any invoice -> in
+        assert default_confirmed({"quote"}) is False
+        assert default_confirmed({"estimate"}) is False
+        assert default_confirmed(set()) is False
+
+    def test_set_status_upsert(self, financial_fixture, session):
+        from project_db.db.models import DocumentFinancialStatus
+        doc = financial_fixture["doc_a"]
+        r = set_document_financial_status(session, doc.canonical_id, True, decided_by="me")
+        assert r["ok"] is True
+        row = session.query(DocumentFinancialStatus).one()
+        assert row.confirmed is True
+        # update flips it
+        set_document_financial_status(session, doc.canonical_id, False)
+        assert session.query(DocumentFinancialStatus).one().confirmed is False
+
+    def _rec(self, session, project, doc, **kw):
+        r = FinancialRecord(project_id=project.canonical_id,
+                            document_id=doc.canonical_id, is_rollup=False, **kw)
+        session.add(r)
+        session.commit()
+        return r
+
+    def test_confirmed_totals_use_smart_default(self, financial_fixture, session):
+        p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
+        # doc_a = a QUOTE (default unconfirmed); doc_b = an INVOICE (default confirmed)
+        self._rec(session, p, doc_a, direction="client_in", doc_role="quote",
+                  record_kind="total", amount=Decimal("500"))
+        self._rec(session, p, doc_b, direction="contractor_out", doc_role="invoice",
+                  record_kind="total", amount=Decimal("200"))
+
+        rep = report_project_financials(session, str(p.canonical_id))
+        # all-in counts both
+        assert rep["totals"]["client_in"] == pytest.approx(500.0)
+        assert rep["totals"]["contractor_out"] == pytest.approx(200.0)
+        # confirmed: the quote is excluded by default, the invoice is in
+        assert rep["confirmed_totals"]["client_in"] == pytest.approx(0.0)
+        assert rep["confirmed_totals"]["contractor_out"] == pytest.approx(200.0)
+        assert rep["confirmation"]["confirmed_docs"] == 1
+        assert rep["confirmation"]["total_primary_docs"] == 2
+
+    def test_explicit_confirmation_overrides_default(self, financial_fixture, session):
+        p, doc_a = financial_fixture["project"], financial_fixture["doc_a"]
+        self._rec(session, p, doc_a, direction="client_in", doc_role="quote",
+                  record_kind="total", amount=Decimal("500"))
+        # default: quote excluded -> 0
+        assert report_project_financials(session, str(p.canonical_id))[
+            "confirmed_totals"]["client_in"] == pytest.approx(0.0)
+        # explicitly confirm the quote -> now counted
+        set_document_financial_status(session, doc_a.canonical_id, True)
+        session.commit()
+        rep = report_project_financials(session, str(p.canonical_id))
+        assert rep["confirmed_totals"]["client_in"] == pytest.approx(500.0)
+        # and it survives a re-extraction wipe of FinancialRecord (status is in
+        # its own table) -- simulate by deleting records then re-adding
+        session.query(FinancialRecord).delete()
+        self._rec(session, p, doc_a, direction="client_in", doc_role="quote",
+                  record_kind="total", amount=Decimal("500"))
+        rep2 = report_project_financials(session, str(p.canonical_id))
+        assert rep2["confirmed_totals"]["client_in"] == pytest.approx(500.0)
 
 
 class TestReport:

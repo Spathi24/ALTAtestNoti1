@@ -125,6 +125,16 @@ SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
     "is_rollup": "BOOLEAN",
 }
 
+SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL = """
+CREATE TABLE document_financial_status (
+    document_id TEXT PRIMARY KEY,
+    confirmed BOOLEAN NOT NULL,
+    decided_by VARCHAR,
+    decided_at DATETIME NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+)
+"""
+
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
@@ -160,6 +170,10 @@ def ensure_sqlite_schema(engine) -> None:
                 conn, inspector, "financial_record",
                 SQLITE_FINANCIAL_RECORD_COLUMNS,
             )
+        _create_table_if_missing(
+            conn, tables, "document_financial_status",
+            SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL,
+        )
         # Post-DDL columns on roadmap_task (for DB files created before
         # the actor column landed).
         if "roadmap_task" in tables:
