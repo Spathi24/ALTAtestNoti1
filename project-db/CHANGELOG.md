@@ -9,6 +9,84 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-05-29 → 06-01 — The financial reconciliation layer (the "draw")
+
+**Theme:** Build the thing that makes ALTA more than a sync tool — read the
+MONEY out of the Drive documents and reconcile it per project. The biggest
+capability jump since Drive sync. See `docs/HANDOFF.md` §2 for the architecture
+and §4 for the worked-through problems; `docs/EVALUATION.md` for the strategic
+framing that prompted it.
+
+### What shipped
+
+- **Extraction (`extract-financials`, `ai/financials.py`).** Reads a project's
+  quotes / invoices / estimates / receipts (from `DocumentText`) and pulls every
+  monetary amount with the verbatim `quoted_excerpt` that proves it, into a new
+  `FinancialRecord` table. Batched across multiple LLM calls (full coverage, no
+  truncation), all-or-nothing (a failed run never destroys prior records),
+  conservative prompt (never invent an amount), `$0` noise skipped.
+- **Two-sided ledger + reconciliation (`report_project_financials`).** The one
+  chokepoint that computes money IN (client) vs OUT (contractor), margin, a
+  per-document breakdown, and a flat record list. CLI prints it; the web
+  Financials panel (`/projects/{id}/financials`) renders it.
+- **Roll-up de-duplication (deterministic).** Internal cost/payment/tracking
+  sheets are excluded from totals (shown as a cross-check) so they don't
+  double-count the invoices they restate. Name-based rule, after an LLM
+  classification proved unreliable (it once dropped a $549k client estimate,
+  swinging the margin ~$200k).
+- **Money-type buckets** (contract_revenue / supplier_cost / buyout_cost /
+  lease_rental / deposit / tax / other) so different kinds of money aren't
+  blindly netted.
+- **Low-confidence guard.** When most of a project's money can't be classified
+  (e.g. 6554 is a real-estate development deal — financing/acquisition/lease,
+  not modeled), the reconciliation is flagged low-confidence instead of showing
+  a misleading margin.
+- **Confirmed-vs-quoted toggle.** They dump every quote into a project folder,
+  including ones they didn't use. A human toggle (separate
+  `document_financial_status` table that survives re-extraction) marks which
+  documents count; the panel shows a live-recalculating "confirmed" total. Smart
+  default: invoices in, quotes out.
+
+### Locale / robustness (the hard part)
+
+The value-verification guard was hardened over several real projects to handle
+how Quebec/bilingual docs write numbers: English thousands (`1,234.56`), French
+decimal commas (`923,44`), space thousands (`$1 080.00`), `k`-notation (`8k`),
+negative signs, rounding, and the qty-vs-thousands ambiguity (`1 500,00`).
+Direction classification needed a company-identity injection (`COMPANY_NAME`) to
+stop reading our own client estimates as contractor costs.
+
+### Validity verified across the whole portfolio
+
+Extracted and audited 1455 (renovation, clean, 100% confidence), 5768
+(tenant-buyout agency), 6554 (development — flagged), 6305, and the small
+projects. Across all of them the system extracted real money, returned 0 for
+genuinely non-financial docs (plans/reports — no hallucination), flagged garbled
+or computed amounts, and flagged low-confidence where appropriate. No
+confidently-wrong output anywhere.
+
+### Also in this stretch
+
+- **Removed the roadmap prompt injection** from the proposal bots (template
+  noise; flagged as slop in EVALUATION §3). Table + CLIs kept.
+- **New strategic docs:** `EVALUATION.md` (honest assessment + ALWAYS/NEVER
+  rules) and `FEATURES.md` (plain-language feature overview).
+- **UI polish** for readability + a PM demo: removed stale "Phase A" dashboard
+  notes, "Overview" landing, brand tagline, the Confirmed-margin KPI card,
+  Financials links on the project list.
+
+### State at EOD (2026-06-01)
+
+- **685 tests** passing.
+- Financial layer complete for renovation + buyout projects; development-type
+  and `unknown`-direction refinements are next steps (both need API budget —
+  HANDOFF §5/§6).
+- Owner is credit-constrained: develop on mocks, recompute financial logic over
+  stored records for free, reserve API for direction work + new-project
+  validation.
+
+---
+
 ## 2026-05-26 (final EOD) — Tightening: quoted excerpts in proposal reasoning
 
 **Theme:** The smallest possible prompt change with the largest

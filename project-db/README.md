@@ -22,18 +22,30 @@ corrections to what Monday says is happening.
   Haiku fallback, inline task date editing, propose-from-UI with
   hx-confirm token-cost dialogs, `/doctor`, `/db` raw inspector.
   **Closed 2026-05-26.**
-- **Post-M5 (2026-05-26):** Roadmap integration -- 44 canonical
-  design-phase tasks live in `roadmap_task`, actor-classified,
-  filter-injected into both proposal prompts.  **Quoted-excerpt
-  reasoning** on every contract-sourced gap (verifiable against
-  the source document).
+- **Financial reconciliation layer (2026-05-29 → 06-01): the current
+  headline.** `extract-financials` reads quotes / invoices / estimates
+  out of a project's Drive documents into a `FinancialRecord` table —
+  every amount carrying the verbatim text that proves it, handling
+  English + French (Quebec) number formats. It computes a two-sided
+  money picture (revenue vs. cost, margin), de-duplicates internal
+  roll-up sheets, sorts amounts into money-type buckets, **flags
+  low-confidence reconciliations** for project types it can't model,
+  and supports a human **confirmed-vs-quoted toggle** (so quotes the
+  company didn't go with don't inflate the totals). Viewable in the
+  browser at `/projects/{id}/financials`. Extracted across the full
+  portfolio.
+- **Roadmap prompt injection REMOVED (2026-05-29).** The `roadmap_task`
+  table + import/classify CLIs are kept, but injecting the architect
+  design-phase roadmap into the contractor proposal prompts produced
+  template noise and was stripped (see `docs/EVALUATION.md` §3).
 
-**625-test suite.** Day-by-day work log in
-**[CHANGELOG.md](CHANGELOG.md)**.  Developer handoff (architecture
-invariants, footguns, testing patterns, M5 retrospective, roadmap
-integration, prompt-philosophy boundary) in
-**[docs/HANDOFF.md](docs/HANDOFF.md)**.  Forward-looking plans
-(RAG, financial extraction) in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
+**685-test suite.** For "what does it do?" read
+**[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
+for the honest current-state assessment + standing rules read
+**[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff
+(invariants, the financial layer, worked-through problems, footguns) read
+**[docs/HANDOFF.md](docs/HANDOFF.md)**; day-by-day log in
+**[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
 
@@ -202,6 +214,12 @@ project_db extract-content --limit 5            # smoke test
 project_db extract-content                      # default: every doc missing text
 project_db extract-content --project <UUID>     # restrict to one project
 project_db extract-content --overwrite          # re-extract everything
+
+# --- Read the MONEY out of documents (financial reconciliation) ---
+project_db extract-financials "923 Rockland"    # extract quotes/invoices -> FinancialRecord,
+                                                # then print the money-flow reconciliation
+project_db extract-financials "923 Rockland" --max-docs 6   # cap docs (cheaper smoke run)
+project_db serve                                # then open /projects/{id}/financials in browser
 
 # --- Ask (canned reports + LLM fallback) ---
 project_db ask "what active projects do we have?"
