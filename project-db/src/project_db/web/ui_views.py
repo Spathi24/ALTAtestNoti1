@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from project_db.ai.proposals import get_proposal_detail, list_proposals
+from project_db.ai.views import report_project_financials
 from project_db.db.models import (
     Client,
     Deal,
@@ -31,6 +32,19 @@ from project_db.db.models import (
 from project_db.db.models.docs import DocumentText
 from project_db.db.models.proposals import ProposalStatus
 from project_db.db.models.work import ProjectStatus
+
+
+def project_financials(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Financial reconciliation for one project (read-only).
+
+    Thin pass-through to the canonical ``report_project_financials`` so the CLI
+    and the web panel render the exact same numbers.  Returns None when the
+    project doesn't resolve (route renders a 404).
+    """
+    rep = report_project_financials(session, project_id)
+    if isinstance(rep, dict) and rep.get("error"):
+        return None
+    return rep
 
 
 def dashboard_summary(session: Session) -> dict[str, Any]:
