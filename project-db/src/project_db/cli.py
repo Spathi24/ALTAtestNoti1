@@ -475,6 +475,17 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
                   f"contractor_out {xc.get('contractor_out', 0):,.2f} | "
                   f"unknown {xc.get('unknown', 0):,.2f}")
 
+        bmt = report.get("by_money_type", {})
+        if bmt:
+            print("\n  By money type (primary docs):")
+            for k, v in bmt.items():
+                print(f"    {k:18} {v:,.2f}")
+            ms = report.get("money_summary", {})
+            print(f"  Construction margin (revenue - supplier cost): "
+                  f"{ms.get('construction_margin', 0):,.2f}")
+            if ms.get("buyout_note"):
+                print(f"  NOTE: {ms['buyout_note']}")
+
     return 0
 
 

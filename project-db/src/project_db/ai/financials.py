@@ -80,6 +80,63 @@ _ROLLUP_NAME_RE = re.compile(
 def _name_is_rollup(name: str | None) -> bool:
     return bool(name and _ROLLUP_NAME_RE.search(name))
 
+
+# --- Money-type classification (deterministic, no LLM) ----------------------
+# Separates incompatible kinds of money so the report doesn't blindly net them.
+# Buyout vs lease vs supplier-cost vs contract-revenue matter because a project
+# can mix them (esp. real-estate / tenant-buyout projects).  Derived at report
+# time from already-extracted fields, so the dashboard reuses one function and
+# there is no column to migrate/backfill.
+FINANCIAL_MONEY_TYPES = {
+    "contract_revenue",   # our quote/contract to the client (renovation revenue)
+    "supplier_cost",      # a contractor/supplier billing us
+    "buyout_cost",        # actual payment to a tenant to vacate (agency or own)
+    "lease_rental",       # lease / rent figures
+    "deposit",            # deposit / down-payment
+    "tax",                # GST/QST/TPS/TVQ
+    "other",              # direction unknown / uncategorized
+}
+
+# Tenant-buyout / settlement signals (EN + FR).  Includes 'tenant'/'locataire'
+# because on an agency buyout project a tenant-named settlement doc is a buyout.
+_BUYOUT_RE = re.compile(
+    r"quittance|buy-?out|settlement|termination|transaction et quittance|"
+    r"\btenant\b|locataire",
+    re.I,
+)
+_LEASE_RE = re.compile(r"\blease\b|\bbail\b|loyer|rental", re.I)
+
+
+def classify_money_type(
+    direction: str | None,
+    record_kind: str | None,
+    doc_name: str | None,
+    folder_path: str | None,
+) -> str:
+    """Deterministically bucket one record's kind of money.
+
+    Heuristic, name/folder-driven (no LLM).  Tax and deposit win first (they are
+    record-kind facts); then buyout/lease by document signal; then direction
+    decides revenue vs cost; else 'other'.  Buyout classification on docs named
+    only by tenant is imperfect -- a known limitation, surfaced for review.
+    """
+    rk = (record_kind or "").lower()
+    if rk == "tax":
+        return "tax"
+    if rk == "deposit":
+        return "deposit"
+    text = f"{doc_name or ''} {folder_path or ''}"
+    if _BUYOUT_RE.search(text):
+        return "buyout_cost"
+    if _LEASE_RE.search(text):
+        return "lease_rental"
+    d = (direction or "").lower()
+    if d == "client_in":
+        return "contract_revenue"
+    if d == "contractor_out":
+        return "supplier_cost"
+    return "other"
+
 # Who "we" are -- the signal the model needs to tell client-facing revenue
 # (a quote/estimate/invoice WE issue) from contractor cost (a bill issued TO
 # us).  Without this, a detailed cost-itemized estimate on our own letterhead

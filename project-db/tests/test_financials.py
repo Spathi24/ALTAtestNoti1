@@ -36,6 +36,7 @@ from project_db.ai.financials import (
     _norm,
     _parse_amount,
     _select_financial_documents,
+    classify_money_type,
     extract_financials_for_project,
 )
 from project_db.ai.providers import MockLLMProvider
@@ -584,6 +585,48 @@ class TestRollupClassification:
         assert batch.created_count == 1
         assert session.query(FinancialRecord).count() == 1
         assert session.query(FinancialRecord).one().amount == Decimal("100.00")
+
+
+class TestMoneyType:
+    def test_tax_and_deposit_win_first(self):
+        assert classify_money_type("client_in", "tax", "Quote.pdf", None) == "tax"
+        assert classify_money_type("contractor_out", "deposit", "Inv.pdf", None) == "deposit"
+
+    def test_buyout_signals(self):
+        assert classify_money_type("contractor_out", "total",
+                                   "Francais quittance.docx", None) == "buyout_cost"
+        assert classify_money_type("unknown", "total",
+                                   "TERMINATION FRENCH.docx", None) == "buyout_cost"
+        # tenant-named doc in a Tenant folder
+        assert classify_money_type("contractor_out", "other",
+                                   "Majd.docx", "Active/5768/Tenant") == "buyout_cost"
+
+    def test_lease(self):
+        assert classify_money_type("client_in", "total",
+                                   "5768-24, Lease 2022.pdf", None) == "lease_rental"
+
+    def test_direction_fallback(self):
+        assert classify_money_type("client_in", "total", "Geller Quote.xlsx", None) \
+            == "contract_revenue"
+        assert classify_money_type("contractor_out", "line_item", "32102.pdf", None) \
+            == "supplier_cost"
+        assert classify_money_type("unknown", "other", "Mystery.pdf", None) == "other"
+
+    def test_report_buckets_and_construction_margin(self, financial_fixture, session):
+        p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
+        # doc_a: client revenue 250; doc_b: supplier cost 100.
+        r = FinancialRecord(project_id=p.canonical_id, document_id=doc_a.canonical_id,
+                            direction="client_in", record_kind="total",
+                            amount=Decimal("250"), is_rollup=False)
+        r2 = FinancialRecord(project_id=p.canonical_id, document_id=doc_b.canonical_id,
+                             direction="contractor_out", record_kind="line_item",
+                             amount=Decimal("100"), is_rollup=False)
+        session.add_all([r, r2]); session.commit()
+        rep = report_project_financials(session, str(p.canonical_id))
+        bmt = rep["by_money_type"]
+        assert bmt["contract_revenue"] == pytest.approx(250.0)
+        assert bmt["supplier_cost"] == pytest.approx(100.0)
+        assert rep["money_summary"]["construction_margin"] == pytest.approx(150.0)
 
 
 class TestReport:

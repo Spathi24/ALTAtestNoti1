@@ -592,12 +592,13 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         .filter(FinancialRecord.project_id == project.canonical_id)
         .all()
     )
-    doc_names = {
-        d.canonical_id: d.name
-        for d in session.query(Document)
+    _docs = (
+        session.query(Document)
         .filter(Document.project_id == project.canonical_id)
         .all()
-    }
+    )
+    doc_names = {d.canonical_id: d.name for d in _docs}
+    doc_folders = {d.canonical_id: d.folder_path for d in _docs}
 
     # Split: PRIMARY transaction docs drive the totals; ROLL-UP / tracking
     # sheets are excluded (they restate the invoices, so summing both would
@@ -674,6 +675,48 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         ],
     }
 
+    # Money-type breakdown (deterministic) over PRIMARY records.  Separates
+    # incompatible kinds of money -- contract revenue, supplier cost, tenant
+    # buyout cost, lease/rental, deposit, tax -- so the report doesn't net a
+    # buyout against a renovation.  Grouped by (doc, money_type) with the same
+    # representative-amount dedup as the direction totals.
+    from project_db.ai.financials import classify_money_type
+
+    def _mt(r: FinancialRecord) -> str:
+        return classify_money_type(
+            r.direction, r.record_kind,
+            doc_names.get(r.document_id), doc_folders.get(r.document_id),
+        )
+
+    mt_groups: dict[tuple[Any, str], list[FinancialRecord]] = {}
+    for r in primary:
+        mt_groups.setdefault((r.document_id, _mt(r)), []).append(r)
+    by_money_type_dec: dict[str, Decimal] = {}
+    for (doc_id, mtype), grp in mt_groups.items():
+        by_money_type_dec[mtype] = (
+            by_money_type_dec.get(mtype, Decimal(0)) + _representative_amount(grp)
+        )
+    by_money_type = {k: float(v) for k, v in sorted(by_money_type_dec.items())}
+
+    contract_rev = by_money_type.get("contract_revenue", 0.0)
+    supplier_cost = by_money_type.get("supplier_cost", 0.0)
+    buyout_cost = by_money_type.get("buyout_cost", 0.0)
+    money_summary = {
+        # Renovation profitability -- the figure that nets cleanly.
+        "construction_margin": contract_rev - supplier_cost,
+        "buyout_cost_to_date": buyout_cost,
+        # Buyout margin needs the client-agreed price (agency model); per the
+        # owner that figure is typically NOT in the documents, so we do NOT
+        # invent it -- it must be supplied to compute buyout margin.
+        "buyout_margin": None,
+        "buyout_note": (
+            "Agency buyout: margin = client-agreed budget minus actual buyout "
+            "cost. The agreed budget was not found in the documents; supply it "
+            "to compute buyout margin."
+            if buyout_cost else None
+        ),
+    }
+
     unverified_count = sum(1 for r in records if r.amount_verified is False)
 
     return {
@@ -688,6 +731,8 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "unknown": float(unknown_total),
             "margin": float(margin),
         },
+        "by_money_type": by_money_type,
+        "money_summary": money_summary,
         "per_document": per_document_rows,
         "rollup_crosscheck": rollup_crosscheck,
         "records": [
@@ -708,6 +753,7 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
                 "confidence": r.confidence,
                 "amount_verified": r.amount_verified,
                 "is_rollup": bool(r.is_rollup),
+                "money_type": _mt(r),
             }
             for r in records[:200]
         ],
