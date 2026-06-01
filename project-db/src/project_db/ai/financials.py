@@ -59,7 +59,26 @@ from project_db.db.models.docs import DocumentText
 logger = logging.getLogger(__name__)
 
 # Bump when the prompt text or output schema changes.
-FINANCIAL_PROMPT_VERSION = "financials-v3-rollup"
+FINANCIAL_PROMPT_VERSION = "financials-v4"
+
+# Roll-up / internal-tracking documents are detected DETERMINISTICALLY by name,
+# not by asking the LLM.  The Friday v3 approach (LLM classifies primary vs
+# rollup) proved unreliable on ambiguous docs -- it mislabeled a $549k client
+# estimate ("Quoting File.xlsx") as a rollup and dropped it from the totals.
+# A name rule is predictable, auditable, cheaper (no classification tokens),
+# and fails SAFE: a tracker we don't recognise stays PRIMARY (a visible
+# cross-check gap), never silently excluding real money.  Conservative on
+# purpose -- only names that clearly denote an internal aggregation match.
+_ROLLUP_NAME_RE = re.compile(
+    r"\bcosts\b|costing|cost tracker|\btracker\b|payment log|\blisting\b|"
+    r"breakdown|etat de compte|état de compte|statement of account|"
+    r"contractors ?\+ ?material|contractors and material",
+    re.I,
+)
+
+
+def _name_is_rollup(name: str | None) -> bool:
+    return bool(name and _ROLLUP_NAME_RE.search(name))
 
 # Who "we" are -- the signal the model needs to tell client-facing revenue
 # (a quote/estimate/invoice WE issue) from contractor cost (a bill issued TO
@@ -230,12 +249,9 @@ def extract_financials_for_project(
             any_batch_failed = True
             continue
         items = _coerce_item_list(raw, key="records")
-        rollup_by_index = _parse_doc_classifications(raw, len(chunk))
         batch.llm_raw_item_count += len(items)
         new_records.extend(
-            _build_records_for_batch(
-                batch, items, chunk, project_uuid, rollup_by_index,
-            )
+            _build_records_for_batch(batch, items, chunk, project_uuid)
         )
 
     if any_batch_failed:
@@ -467,17 +483,7 @@ def _build_financial_prompt(
         "~20 records per document.\n"
         "- Returning few records, or none, is correct when the document has "
         "no clear monetary amounts.\n"
-        "- ALSO classify each DOCUMENT as 'primary' or 'rollup'.  A PRIMARY "
-        "document IS a transaction instrument between us and ONE counterparty: "
-        "an invoice, quote, estimate, contract, or receipt.  Having many line "
-        "items, or being a spreadsheet, does NOT make it a rollup -- an "
-        "itemized client quote is still PRIMARY.  A ROLLUP is an INTERNAL "
-        "tracking artifact that RESTATES amounts which appear as separate "
-        "invoices/quotes elsewhere: a cost tracker, a job-costing sheet, a "
-        "payment tracker, a statement of account (etat de compte), a "
-        "'contractors + materials' master list spanning many trades/parties.  "
-        "If the document is itself a bill or quote to/from a specific party, "
-        "it is PRIMARY.  When unsure, use 'primary'.\n"
+        "- Skip pure $0.00 / placeholder amounts (e.g. a blank template line).\n"
         "- Output STRICT JSON only.  No prose, no markdown fences."
     )
 
@@ -517,14 +523,9 @@ def _build_financial_prompt(
         "document by its integer index.  Do not do any arithmetic -- report "
         "only amounts the documents state.  Prefer totals, subtotals, "
         "deposits and tax over enumerating every minor line; emit at most "
-        "~20 records per document.  Also classify each document as 'primary' "
-        "(a single transaction) or 'rollup' (an internal summary that restates "
-        "other documents).\n\n"
+        "~20 records per document.\n\n"
         "Return strict JSON:\n\n"
         "{\n"
-        '  "documents": [\n'
-        '    { "doc_index": <int>, "kind": "primary" | "rollup" }\n'
-        "  ],\n"
         '  "records": [\n'
         "    {\n"
         '      "doc_index": <int>,\n'
@@ -559,46 +560,11 @@ def _build_financial_prompt(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_rollup(model_rollup: bool, doc_role: str | None) -> bool:
-    """Deterministic guard over the model's roll-up classification.
-
-    A transaction INSTRUMENT -- a quote / estimate / invoice / receipt /
-    change_order -- is NEVER a roll-up, even when it is an itemized spreadsheet
-    with many lines.  The model tends to mislabel itemized quotes (e.g. a
-    client quote in .xlsx) as "summaries"; that would wrongly pull real
-    revenue/cost out of the totals.  Only ``doc_role == 'other'`` documents
-    (cost trackers, payment logs, statements of account) may roll up.
-    """
-    return bool(model_rollup) and (doc_role == "other")
-
-
-def _parse_doc_classifications(raw: Any, n: int) -> dict[int, bool]:
-    """Map doc_index -> is_rollup from the LLM's ``documents`` array.
-
-    Missing / malformed -> empty map (records default to primary).  Only
-    indices in range [0, n) are kept.
-    """
-    out: dict[int, bool] = {}
-    if not isinstance(raw, dict):
-        return out
-    docs = raw.get("documents")
-    if not isinstance(docs, list):
-        return out
-    for d in docs:
-        if not isinstance(d, dict):
-            continue
-        idx = d.get("doc_index")
-        if isinstance(idx, int) and 0 <= idx < n:
-            out[idx] = str(d.get("kind") or "").strip().lower() == "rollup"
-    return out
-
-
 def _build_records_for_batch(
     batch: FinancialExtractionBatch,
     items: list[Any],
     candidates: list[_Candidate],
     project_uuid: uuid.UUID,
-    rollup_by_index: dict[int, bool] | None = None,
 ) -> list[FinancialRecord]:
     """Validate each LLM item (for ONE batch) and return FinancialRecord rows.
 
@@ -608,7 +574,6 @@ def _build_records_for_batch(
     ``doc_index`` in each item is relative to it.
     """
     out: list[FinancialRecord] = []
-    rollup_by_index = rollup_by_index or {}
     # Normalized full text per doc index, for excerpt verification.
     norm_text_by_index = {i: _norm(c.full_text) for i, c in enumerate(candidates)}
 
@@ -627,6 +592,10 @@ def _build_records_for_batch(
             batch.errors.append(
                 f"doc_index={idx}: unparseable amount {raw_item.get('amount')!r}"
             )
+            continue
+        # Skip $0 / placeholder amounts (blank template lines) -- they carry no
+        # money signal and pollute the record list (e.g. quittance templates).
+        if amount == 0:
             continue
 
         direction = _coerce_vocab(
@@ -682,7 +651,7 @@ def _build_records_for_batch(
             quoted_excerpt=excerpt or None,
             confidence=_clamp_confidence(raw_item.get("confidence")),
             amount_verified=amount_verified,
-            is_rollup=_resolve_rollup(rollup_by_index.get(idx, False), doc_role),
+            is_rollup=_name_is_rollup(doc_name),
             prompt_version=batch.prompt_version,
             source_meta_json=json.dumps(raw_item, ensure_ascii=False),
         )

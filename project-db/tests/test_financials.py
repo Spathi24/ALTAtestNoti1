@@ -32,10 +32,9 @@ from project_db.ai.financials import (
     _coerce_item_list,
     _complete_with_backoff,
     _is_transient,
+    _name_is_rollup,
     _norm,
     _parse_amount,
-    _parse_doc_classifications,
-    _resolve_rollup,
     _select_financial_documents,
     extract_financials_for_project,
 )
@@ -524,68 +523,67 @@ class TestBatchingCoverage:
 
 
 class TestRollupClassification:
-    def test_parse_doc_classifications(self):
-        raw = {"documents": [
-            {"doc_index": 0, "kind": "rollup"},
-            {"doc_index": 1, "kind": "primary"},
-            {"doc_index": 9, "kind": "rollup"},   # out of range -> dropped
-            {"doc_index": 2, "kind": "PRIMARY"},  # case-insensitive
-        ]}
-        m = _parse_doc_classifications(raw, n=3)
-        assert m == {0: True, 1: False, 2: False}
+    """Roll-up detection is DETERMINISTIC by document name (not the LLM).
+    Conservative: only clear tracker names match; everything else is primary."""
 
-    def test_missing_documents_defaults_empty(self):
-        assert _parse_doc_classifications({"records": []}, n=2) == {}
-        assert _parse_doc_classifications("nope", n=2) == {}
+    def test_name_is_rollup_matches_trackers(self):
+        for name in ("Costs.xlsx", "JOB COSTING.xlsx", "Payment Tracker.xlsx",
+                     "5768 Tenants listing.xlsx", "Lurentien Invoice Breakdown.xlsx",
+                     "Alta - Etat de compte.pdf", "Alta - État de compte.pdf",
+                     "Contractors + Material.xlsx"):
+            assert _name_is_rollup(name) is True, name
 
-    def test_resolve_rollup_guard(self):
-        # A transaction instrument is never a rollup, even if the model says so.
-        assert _resolve_rollup(True, "other") is True
-        assert _resolve_rollup(True, "quote") is False      # guard overrides
-        assert _resolve_rollup(True, "estimate") is False
-        assert _resolve_rollup(True, "invoice") is False
-        assert _resolve_rollup(False, "other") is False
+    def test_name_is_rollup_leaves_transactions_primary(self):
+        for name in ("Geller House Quote.xlsx", "Quoting File.xlsx",
+                     "Richard Penthouse Quote.pdf", "Invoice 148127.pdf",
+                     "32102.pdf", "Sales_Invoice_6862.pdf", None):
+            assert _name_is_rollup(name) is False, name
 
-    def test_itemized_quote_not_marked_rollup(self, financial_fixture, session):
-        # Model wrongly tags an itemized client quote (doc 0) as rollup, but its
-        # doc_role is 'estimate' -> the guard forces it PRIMARY.
-        provider = MockLLMProvider(responses=[json.dumps({
-            "documents": [{"doc_index": 0, "kind": "rollup"}],
-            "records": [
-                {"doc_index": 0, "direction": "client_in", "doc_role": "estimate",
-                 "record_kind": "total", "amount": 250,
-                 "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
-            ],
-        })])
+    def test_itemized_quote_named_doc_is_primary(self, financial_fixture, session):
+        # docA is "Quote Estimate Invoice.pdf" -- a transaction name -> PRIMARY,
+        # regardless of what the model might have guessed (this is the 5768
+        # Quoting-File regression the deterministic rule prevents).
+        provider = _mock([
+            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
+             "amount": 250,
+             "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
+        ])
         extract_financials_for_project(
             session, provider, financial_fixture["project"].canonical_id,
         )
         rec = session.query(FinancialRecord).filter_by(amount=Decimal("250.00")).one()
-        assert rec.is_rollup is False   # transaction instrument, guard wins
+        assert rec.is_rollup is False
 
-    def test_extraction_marks_rollup_per_document(self, financial_fixture, session):
-        # docA (index 0) flagged rollup, docB (index 1) primary.
-        provider = MockLLMProvider(responses=[json.dumps({
-            "documents": [
-                {"doc_index": 0, "kind": "rollup"},
-                {"doc_index": 1, "kind": "primary"},
-            ],
-            "records": [
-                {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-                 "amount": 250,
-                 "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
-                {"doc_index": 1, "direction": "contractor_out",
-                 "record_kind": "line_item", "amount": 100,
-                 "quoted_excerpt": "Labour: $100.00"},
-            ],
-        })])
+    def test_tracker_named_doc_is_rollup(self, session, client_factory):
+        c = client_factory(name="C")
+        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE,
+                    client_id=c.canonical_id)
+        session.add(p)
+        session.commit()
+        _add_doc(session, p, name="Cost Tracker.xlsx",
+                 text="Internal cost tracker. Total tracked: $5,000.00")
+        provider = _mock([
+            {"doc_index": 0, "direction": "contractor_out", "record_kind": "total",
+             "amount": 5000, "quoted_excerpt": "Total tracked: $5,000.00"},
+        ])
+        extract_financials_for_project(session, provider, p.canonical_id)
+        rec = session.query(FinancialRecord).one()
+        assert rec.is_rollup is True
+
+    def test_zero_amount_records_skipped(self, financial_fixture, session):
+        provider = _mock([
+            {"doc_index": 0, "direction": "client_in", "record_kind": "other",
+             "amount": 0, "quoted_excerpt": "2 ans de garantie 0.00"},   # skipped
+            {"doc_index": 1, "direction": "contractor_out",
+             "record_kind": "line_item", "amount": 100,
+             "quoted_excerpt": "Labour: $100.00"},                       # kept
+        ])
         batch = extract_financials_for_project(
             session, provider, financial_fixture["project"].canonical_id,
         )
-        assert batch.created_count == 2
-        by_amt = {r.amount: r for r in session.query(FinancialRecord).all()}
-        assert by_amt[Decimal("250.00")].is_rollup is True
-        assert by_amt[Decimal("100.00")].is_rollup is False
+        assert batch.created_count == 1
+        assert session.query(FinancialRecord).count() == 1
+        assert session.query(FinancialRecord).one().amount == Decimal("100.00")
 
 
 class TestReport:
