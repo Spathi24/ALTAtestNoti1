@@ -38,8 +38,16 @@ corrections to what Monday says is happening.
   table + import/classify CLIs are kept, but injecting the architect
   design-phase roadmap into the contractor proposal prompts produced
   template noise and was stripped (see `docs/EVALUATION.md` §3).
+- **Attention briefing (2026-06-03): the new landing.** The web `/`
+  now leads with a ranked, deterministic briefing of the cross-system
+  truths that need attention — money risk (low-confidence margins,
+  confirmed costs exceeding revenue, unconfirmed-quote piles), scope
+  gaps, overdue tasks, missing contracts — each linking to its evidence.
+  No LLM, no API spend (it recomputes over already-stored data). Also a
+  `project_db briefing` CLI. This is the EVALUATION.md §3/§5 shift from
+  *showing activity ALTA generated* to *revealing truths it discovered*.
 
-**685-test suite.** For "what does it do?" read
+**716-test suite.** For "what does it do?" read
 **[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
 for the honest current-state assessment + standing rules read
 **[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff

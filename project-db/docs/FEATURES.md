@@ -34,6 +34,23 @@ six tabs.
 
 ## Feature areas
 
+### 0. The daily briefing — the landing screen (newest)
+When you open ALTA, the first thing you see is a ranked **briefing of what
+needs attention** across every project — not a wall of counts. Each line is a
+cross-system truth you can't get by opening Monday and Drive in two tabs:
+
+- **Money risk** — a project whose money picture is low-confidence, whose
+  confirmed costs exceed its confirmed revenue, or that has a large pile of
+  unconfirmed quotes sitting in its folder.
+- **Scope gaps** — contract scope items with no matching task.
+- **Schedule** — tasks that are overdue and not marked done.
+- **Missing paperwork** — an active project with no contract on file.
+
+Items are ranked by severity (high / medium / low) and each links straight to
+its evidence. It's **computed deterministically** from data already pulled in —
+no AI guessing, no per-question cost — so it's always up to date and never
+invents a number. Also available as a one-line command (`project_db briefing`).
+
 ### 1. Data sync — Monday.com and Google Drive
 - **Monday.com:** pulls every board, item, status, date, owner, and CRM record
   into the canonical database. Recognizes column meanings automatically. Can

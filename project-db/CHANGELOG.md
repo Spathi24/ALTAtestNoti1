@@ -9,6 +9,53 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-03 — The attention briefing (reveal, don't just generate)
+
+**Theme:** Move the product's center of gravity from *showing the activity
+ALTA generated* (a proposal queue) to *revealing the cross-system truths it
+discovered* — the Monday-morning risk-and-money briefing EVALUATION.md §4–5
+call the draw. Deterministic, free (no LLM / no API), built on already-stored
+data.
+
+### What shipped
+
+- **`report_attention_briefing(session)` (`ai/views.py`)** — one pure,
+  deterministic detector that composes the money / scope / schedule / document
+  signals already in the canonical DB into a single severity-ranked list of
+  attention items. No LLM call, no external API → safe to recompute on every
+  request, never invents a number (invariant N2). Money items compose the
+  `report_project_financials` chokepoint rather than re-summing rows.
+- **Detectors:**
+  - *money* — low-confidence reconciliation; confirmed costs exceeding
+    confirmed revenue (guarded against the buyout no-revenue case); a pile of
+    unconfirmed quote money (nudges the confirm/quote toggle).
+  - *scope* — pending `scope_gap` proposals per project.
+  - *schedule* — overdue tasks (past due, not done/cancelled), ranked.
+  - *documents* — active/proposed projects with no contract on file.
+- **`project_db briefing [--limit N]`** — ASCII CLI renderer.
+- **Web `/` reframed to the briefing** — the ranked list now leads the landing
+  as severity-pilled cards linking to evidence; the counts grid + pending strip
+  are kept but demoted. Empty portfolio reads "All clear".
+  `ui_views.attention_briefing` is a thin pass-through so CLI + web render
+  identical data.
+
+### Verified live (real 21-project DB)
+
+`briefing` / `/` produce **15 ranked items across 7 projects (2 high / 9 medium
+/ 4 low)** — 923 Rockland's 23 overdue tasks (HIGH), honest low-confidence
+money flags on 3940/6554/5768, real scope gaps, and 1455's ~$367k
+unconfirmed-quote pile. CLI and web outputs match exactly.
+
+### Tests / state
+
+- **+31 tests** (`test_attention_briefing.py` ×26, `test_web_briefing.py` ×5).
+  **716 passing.**
+- Pure-reveal, read-only: no write-back, no API budget consumed (honors A8 /
+  N2 / N8). Next candidates: surface confirmed-loss once a PM confirms docs;
+  optionally tune cross-category ranking; RAG (#4) remains the API-gated item.
+
+---
+
 ## 2026-05-29 → 06-01 — The financial reconciliation layer (the "draw")
 
 **Theme:** Build the thing that makes ALTA more than a sync tool — read the

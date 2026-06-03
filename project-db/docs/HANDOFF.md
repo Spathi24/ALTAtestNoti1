@@ -12,8 +12,18 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-01, at **685 tests**, after the financial extraction +
-reconciliation layer (Builds #1 and #2) shipped.
+Last updated: 2026-06-03, at **716 tests**, after the deterministic **attention
+briefing** shipped (the EVALUATION §3/§5 reveal-don't-generate landing) on top
+of the financial extraction + reconciliation layer.
+
+**The briefing (newest, read this):** `ai/views.py::report_attention_briefing`
+is a pure deterministic detector — no LLM, no API, recomputes free over stored
+data — that ranks cross-system truths (money risk / scope gaps / overdue tasks /
+missing contracts) into one list. Money items compose
+`report_project_financials` (never re-sum rows). Surfaced by `project_db
+briefing` and as the web `/` landing (`ui_views.attention_briefing`). Detectors
++ thresholds live next to the function; tests in `test_attention_briefing.py` /
+`test_web_briefing.py`. It is pure-reveal (no write-back), honoring A8/N2/N8.
 
 ---
 
@@ -413,11 +423,13 @@ Key CLI (full list: `--help`): `init-db`, `sync monday [--delta]`,
 `sync GOOGLE_DRIVE`, `gdrive-auth`, `extract-content`, `ask`, `daily`,
 `propose timelines|scope <project>`, `proposals list|show|accept|reject`,
 `doctor`, `rebuild --yes`, `serve [--port]`, `import-roadmap`,
-`classify-roadmap`, and **`extract-financials <project> [--max-docs N]`**
+`classify-roadmap`, **`extract-financials <project> [--max-docs N]`**
 (batched, fresh-snapshot, prints the money-flow + confidence + roll-up
-cross-check).
+cross-check), and **`briefing [--limit N]`** (deterministic portfolio
+attention list — money/scope/schedule/docs, ranked; no LLM).
 
-Key web routes: `/` (Overview), `/projects`, `/projects/{id}`,
+Key web routes: `/` (**Attention briefing** — the ranked truths landing),
+`/projects`, `/projects/{id}`,
 **`/projects/{id}/financials`** (the money panel), `/documents/{id}`,
 **`POST /documents/{id}/financial-status`** (the confirmed/quoted toggle —
 returns the panel body partial), `/proposals[...]`, `/ask`, `/doctor`, `/db`.
