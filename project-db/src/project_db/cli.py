@@ -1209,6 +1209,52 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_briefing(args: argparse.Namespace) -> int:
+    """Portfolio attention briefing (read-only): the cross-system truths that
+    need a PM's attention -- money risk, scope gaps, overdue tasks, missing
+    contracts -- ranked by severity.
+
+    Deterministic: no LLM, no external API call.  Composes the money / scope /
+    schedule / document signals already stored in the canonical DB.  Thin
+    renderer over ``ai.views.report_attention_briefing``; the web `/` landing
+    renders the same data.
+    """
+    from project_db.ai.views import report_attention_briefing
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    limit = int(args.limit) if getattr(args, "limit", None) else 25
+    with session_scope() as s:
+        data = report_attention_briefing(s, limit=limit)
+
+    n = data["item_count"]
+    if not n:
+        print("Nothing needs attention -- no money, scope, schedule, or "
+              "document flags across the portfolio.")
+        return 0
+
+    bysev = data["by_severity"]
+    print(f"=== ATTENTION BRIEFING ({data['generated_on']}) ===")
+    print(f"  {n} item(s) across {data['project_count']} project(s): "
+          f"{bysev.get('high', 0)} high / {bysev.get('medium', 0)} medium / "
+          f"{bysev.get('low', 0)} low")
+    print("  by area: " + ", ".join(
+        f"{cat} {cnt}" for cat, cnt in sorted(data["by_category"].items())
+    ))
+    print()
+
+    tag = {"high": "[HIGH] ", "medium": "[MED]  ", "low": "[LOW]  "}
+    for i, it in enumerate(data["items"], 1):
+        print(f"{i:>2}. {tag.get(it['severity'], '')}{it['headline']}")
+        print(f"      ({it['category']}) {it['detail']}")
+    if data["truncated"]:
+        print(f"\n  ... and {n - data['shown_count']} more "
+              f"(showing top {data['shown_count']}).")
+    return 0
+
+
 def cmd_import_roadmap(args: argparse.Namespace) -> int:
     """Import the canonical design-phase roadmap from an xlsx.
 
@@ -1655,6 +1701,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Audit canonical-data integrity (read-only): phantom/duplicate "
              "projects, mislinked or orphaned documents",
     ).set_defaults(func=cmd_doctor)
+
+    briefing = sub.add_parser(
+        "briefing",
+        help="Attention briefing (read-only): ranked money/scope/schedule/"
+             "document flags across the portfolio. No LLM.",
+    )
+    briefing.add_argument(
+        "--limit", type=int, default=25,
+        help="Maximum number of items to show (default 25)",
+    )
+    briefing.set_defaults(func=cmd_briefing)
 
     rebuild = sub.add_parser(
         "rebuild",

@@ -1158,6 +1158,251 @@ def report_doctor(session: Session) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Attention briefing -- the Monday-morning risk-and-money surface
+# ---------------------------------------------------------------------------
+#
+# This is the deterministic detector layer the strategy (EVALUATION.md sections
+# 4-5) calls the "draw": instead of showing the PM activity ALTA *generated* (a
+# proposal queue), it surfaces cross-system *truths* ALTA discovered that a PM
+# cannot see by opening Monday and Drive in two tabs -- ranked by how much they
+# need attention.
+#
+# Everything here is computed in plain Python/SQL over already-stored canonical
+# data (FinancialRecord, Task, Proposal, Document).  No LLM call, no external
+# API -- so it is free to run, safe to recompute on every page load, and never
+# invents a number (invariant N2: the LLM extracts; deterministic code computes).
+# Money items compose ``report_project_financials`` (the one money chokepoint)
+# rather than re-summing FinancialRecord rows.
+
+_SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
+
+# Tunables for the money/schedule detectors.  Named here so they are auditable
+# and a future session can tighten them without spelunking the logic.
+_OVERDUE_HIGH_COUNT = 5           # >= this many overdue tasks on one project -> high
+_OVERDUE_HIGH_DAYS = 30           # any task overdue by >= this many days -> high
+_UNCONFIRMED_PILE_MIN = 20000.0   # unconfirmed quote money >= this -> surface it
+_UNCONFIRMED_PILE_MIN_DOCS = 2    # ...and at least this many unconfirmed docs
+
+
+def report_attention_briefing(
+    session: Session, *, limit: int = 25, today: date | None = None
+) -> dict[str, Any]:
+    """Portfolio-wide ranked list of cross-system truths needing attention.
+
+    Deterministic and free: composes the money / scope / schedule / document
+    signals already stored in the canonical DB.  No LLM, no external call, so it
+    is safe to recompute on every request.
+
+    Each item is a JSON-serializable dict::
+
+        {"project_id", "project_name", "category", "severity",
+         "severity_rank", "weight", "headline", "detail", "link"}
+
+    ``category`` is one of ``money`` / ``scope`` / ``schedule`` / ``documents``;
+    ``severity`` is ``high`` / ``medium`` / ``low``.  Items are ranked
+    severity-desc, then weight-desc (magnitude within a severity), then project
+    name asc.  The returned ``items`` list is capped at ``limit``; the
+    ``by_category`` / ``by_severity`` counts describe ALL detected items, not
+    just the shown slice.
+    """
+    today = today or date.today()
+    items: list[dict[str, Any]] = []
+
+    proj_by_id: dict[Any, Project] = {
+        p.canonical_id: p for p in session.query(Project).all()
+    }
+
+    def _name(pid: Any) -> str:
+        p = proj_by_id.get(pid)
+        return p.name if p and p.name else "(unknown project)"
+
+    def _add(
+        project_id: Any, project_name: str, category: str, severity: str,
+        *, weight: float, headline: str, detail: str, link: str,
+    ) -> None:
+        items.append({
+            "project_id": _ser(project_id) if project_id is not None else None,
+            "project_name": project_name,
+            "category": category,
+            "severity": severity,
+            "severity_rank": _SEVERITY_RANK[severity],
+            "weight": float(weight),
+            "headline": headline,
+            "detail": detail,
+            "link": link,
+        })
+
+    # --- MONEY ---------------------------------------------------------------
+    # Only projects that actually have extracted financial records; for each we
+    # call the money chokepoint once and read its already-computed summary.
+    fin_pids = [
+        row[0]
+        for row in session.query(FinancialRecord.project_id)
+        .filter(FinancialRecord.project_id.isnot(None))
+        .group_by(FinancialRecord.project_id)
+        .all()
+    ]
+    for pid in fin_pids:
+        if pid not in proj_by_id:
+            continue
+        rep = report_project_financials(session, str(pid))
+        if rep.get("error"):
+            continue
+        name = _name(pid)
+        link = f"/projects/{_ser(pid)}/financials"
+        ms = rep.get("money_summary", {})
+        conf = rep.get("confirmation", {})
+        cbmt = rep.get("confirmed_by_money_type", {})
+        totals = rep.get("totals", {})
+        ctotals = rep.get("confirmed_totals", {})
+
+        if ms.get("low_confidence"):
+            # A. Low-confidence reconciliation -- most money couldn't be
+            #    classified.  Honest "don't trust this margin" flag.
+            ratio = ms.get("classified_ratio")
+            pct = f"{ratio * 100:.0f}%" if ratio is not None else "an unknown share"
+            _add(pid, name, "money", "medium",
+                 weight=10000 + (1 - (ratio or 0)) * 1000,
+                 headline=f"{name}: money picture is low-confidence",
+                 detail=(f"Only {pct} of this project's money sorted into "
+                         f"revenue/cost buckets, so the margin is unreliable. "
+                         f"Usually a project type the model does not yet model."),
+                 link=link)
+        else:
+            # B. Confirmed costs exceed confirmed revenue -- a real loss signal.
+            #    Guarded: only when confidence is OK AND there is confirmed
+            #    revenue to compare.  A buyout/agency project legitimately has no
+            #    revenue in its docs, so we must not cry "loss" there.
+            rev = float(cbmt.get("contract_revenue", 0.0) or 0.0)
+            cost = float(cbmt.get("supplier_cost", 0.0) or 0.0)
+            if rev > 0 and cost > rev:
+                gap = cost - rev
+                _add(pid, name, "money", "high",
+                     weight=gap,
+                     headline=(f"{name}: confirmed costs exceed confirmed "
+                               f"revenue by {gap:,.0f}"),
+                     detail=(f"Confirmed supplier cost {cost:,.0f} vs confirmed "
+                             f"contract revenue {rev:,.0f}. Possible loss, an "
+                             f"un-filed revenue document, or unbilled work."),
+                     link=link)
+
+        # C. A pile of unconfirmed quote money -- nudge the confirm/quote toggle.
+        unconfirmed_in = (float(totals.get("client_in", 0.0) or 0.0)
+                          - float(ctotals.get("client_in", 0.0) or 0.0))
+        unconfirmed_out = (float(totals.get("contractor_out", 0.0) or 0.0)
+                           - float(ctotals.get("contractor_out", 0.0) or 0.0))
+        pile = max(unconfirmed_in, unconfirmed_out)
+        unconfirmed_docs = (int(conf.get("total_primary_docs", 0))
+                            - int(conf.get("confirmed_docs", 0)))
+        if pile >= _UNCONFIRMED_PILE_MIN and unconfirmed_docs >= _UNCONFIRMED_PILE_MIN_DOCS:
+            _add(pid, name, "money", "low",
+                 weight=pile,
+                 headline=f"{name}: {pile:,.0f} in unconfirmed quotes",
+                 detail=(f"{unconfirmed_docs} financial document(s) are quotes "
+                         f"not yet marked confirmed. Confirm which ones count so "
+                         f"the margin reflects money that actually moved."),
+                 link=link)
+
+    # --- SCOPE ---------------------------------------------------------------
+    # Pending scope-gap proposals: contract scope items with no matching task.
+    from project_db.db.models import Proposal as _Proposal
+    from project_db.db.models.proposals import ProposalStatus as _PS
+
+    scope_by_proj: dict[Any, int] = {}
+    for pr in (
+        session.query(_Proposal)
+        .filter(_Proposal.field_name == "scope_gap", _Proposal.status == _PS.PENDING)
+        .all()
+    ):
+        scope_by_proj[pr.entity_id] = scope_by_proj.get(pr.entity_id, 0) + 1
+    for pid, n in scope_by_proj.items():
+        name = _name(pid)
+        _add(pid, name, "scope", "medium",
+             weight=n,
+             headline=f"{name}: {n} contract scope item(s) with no task",
+             detail=("Work the contract commits to that is not tracked on the "
+                     "Monday board. Each flagged item carries a quoted excerpt; "
+                     "review and add a task or dismiss."),
+             link=f"/projects/{_ser(pid)}")
+
+    # --- SCHEDULE ------------------------------------------------------------
+    # Overdue tasks: a past due date with a not-done, not-cancelled status.
+    # This cross-cuts the whole portfolio in one place -- Monday shows it
+    # per-board, never ranked across jobs.
+    overdue_by_proj: dict[Any, list[Task]] = {}
+    for t in (
+        session.query(Task)
+        .filter(
+            Task.due_date.isnot(None),
+            Task.due_date < today,
+            Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+            Task.project_id.isnot(None),
+        )
+        .all()
+    ):
+        overdue_by_proj.setdefault(t.project_id, []).append(t)
+    for pid, tasks in overdue_by_proj.items():
+        if pid not in proj_by_id:
+            continue
+        name = _name(pid)
+        earliest = min(t.due_date for t in tasks)
+        days_over = (today - earliest).days
+        n = len(tasks)
+        severity = (
+            "high" if (n >= _OVERDUE_HIGH_COUNT or days_over >= _OVERDUE_HIGH_DAYS)
+            else "medium"
+        )
+        example = next((t.title for t in tasks if t.title), None)
+        ex = f' e.g. "{example}"' if example else ""
+        _add(pid, name, "schedule", severity,
+             weight=n * 100 + days_over,
+             headline=f"{name}: {n} task(s) overdue",
+             detail=(f"Earliest due {earliest.isoformat()} ({days_over} day(s) "
+                     f"ago), not marked done.{ex}"),
+             link=f"/projects/{_ser(pid)}")
+
+    # --- DOCUMENTS -----------------------------------------------------------
+    # Active/proposed projects with no contract-shaped document on file.
+    for p in report_missing_documents(session).get("projects", []):
+        status = (p.get("status") or "").upper()
+        severity = "medium" if status == "ACTIVE" else "low"
+        name = p.get("name") or "(unknown project)"
+        _add(p.get("canonical_id"), name, "documents", severity,
+             weight=1.0,
+             headline=f"{name}: no contract document on file",
+             detail=("No PDF / Google Doc / DOCX is filed under this project in "
+                     "Drive. The contract may be elsewhere, or the folder match "
+                     "missed it."),
+             link=f"/projects/{p.get('canonical_id')}")
+
+    # --- RANK + CAP ----------------------------------------------------------
+    # Stable two-pass sort: name asc first, then (severity, weight) desc on top,
+    # so equal-priority items read alphabetically.
+    items.sort(key=lambda it: ((it["project_name"] or "").lower(), it["headline"]))
+    items.sort(key=lambda it: (it["severity_rank"], it["weight"]), reverse=True)
+
+    by_category: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for it in items:
+        by_category[it["category"]] = by_category.get(it["category"], 0) + 1
+        by_severity[it["severity"]] = by_severity.get(it["severity"], 0) + 1
+
+    shown = items[:limit] if (limit and limit > 0) else items
+    project_ids = {it["project_id"] for it in items if it["project_id"]}
+
+    return {
+        "generated_on": today.isoformat(),
+        "item_count": len(items),
+        "project_count": len(project_ids),
+        "shown_count": len(shown),
+        "truncated": len(items) > len(shown),
+        "by_category": by_category,
+        "by_severity": by_severity,
+        "items": shown,
+    }
+
+
 REPORT_REGISTRY: dict[str, Any] = {
     "active_projects": report_active_projects,
     "deal_pipeline_value": report_deal_pipeline_value,
