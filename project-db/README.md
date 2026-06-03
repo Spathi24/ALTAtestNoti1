@@ -52,9 +52,16 @@ corrections to what Monday says is happening.
   and answers clause-level questions ("what scope does the 923 Rockland
   contract describe?") with answers cited to the source documents
   (`mode=rag`, "document-aware"). `project_db embed-documents` (idempotent;
-  prints cost) + `rag-search`. Needs `OPENAI_API_KEY` in `.env`.
+  prints cost) + `rag-search`. Needs `OPENAI_API_KEY` in `.env`. RAG also feeds
+  the **proposal bots** (timeline/scope) as extra evidence — surfacing clauses
+  buried deep in long contracts — with the conservative posture unchanged.
+- **Stays current automatically (2026-06-03).** `project_db refresh` does a
+  delta sync of the live connectors then re-embeds ONLY the documents whose text
+  changed (idempotent — unchanged docs cost $0). `serve` runs it in a background
+  thread on startup (opt out `--no-refresh`), so opening the app gives fresh
+  Monday data + current embeddings; the footer shows when it last refreshed.
 
-**742-test suite.** For "what does it do?" read
+**753-test suite.** For "what does it do?" read
 **[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
 for the honest current-state assessment + standing rules read
 **[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff

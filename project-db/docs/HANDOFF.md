@@ -12,7 +12,7 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-03, at **742 tests**, after **RAG** shipped (the askbot
+Last updated: 2026-06-03, at **753 tests**, after **RAG** shipped (the askbot
 can now read document text, not just metadata) on top of the deterministic
 **attention briefing** (EVALUATION §3/§5 reveal-don't-generate landing) and the
 financial extraction + reconciliation layer.
@@ -27,6 +27,20 @@ citable facts (mode=`rag`, `sources`). CLI `embed-documents` / `rag-search`.
 in `.env` (gitignored). Full corpus embedded live (462 docs / 5590 chunks /
 $0.052). Develop on `MockEmbeddingProvider` (free); a real embed run is cheap
 (~$0.02–0.06 whole corpus) and idempotent (unchanged docs skip).
+RAG also feeds the **proposal bots** (`generate_timeline_proposals` /
+`generate_scope_proposals` take `embedding_provider=`; additive RELEVANT
+DOCUMENT EXCERPTS section, conservative posture unchanged, `ProposalBatch.
+rag_chunks_used`). `retrieve_chunks` excludes trashed-doc chunks.
+
+**Refresh (`connectors/refresh.py::run_refresh`):** one call = delta-sync the
+live connectors (Monday; Drive when live) + re-embed ONLY changed docs
+(content_hash idempotent — answers "do we re-embed every change?": no). Every
+step guarded/reported, never raises. CLI `project_db refresh [--full]
+[--no-embed]`. `serve` runs it in a daemon thread on startup (opt-out
+`--no-refresh`) — BACKGROUND-only, never in `create_app` (tests stay offline);
+footer shows last-refresh via `web/refresh_state.py`. NOTE: the Drive OAuth
+token can expire (`invalid_grant`) — re-run `gdrive-auth`; the refresh reports
+it as a non-fatal step and continues.
 
 **The briefing (newest, read this):** `ai/views.py::report_attention_briefing`
 is a pure deterministic detector — no LLM, no API, recomputes free over stored
@@ -440,7 +454,8 @@ Key CLI (full list: `--help`): `init-db`, `sync monday [--delta]`,
 cross-check), **`briefing [--limit N]`** (deterministic portfolio attention
 list — money/scope/schedule/docs, ranked; no LLM), **`embed-documents
 [--project] [--overwrite] [--limit]`** (chunk+embed for RAG; idempotent; prints
-cost), and **`rag-search <query> [--project] [--top-k N]`** (retrieval debug).
+cost), **`rag-search <query> [--project] [--top-k N]`** (retrieval debug), and
+**`refresh [--full] [--no-embed]`** (delta sync + re-embed only changed docs).
 
 Key web routes: `/` (**Attention briefing** — the ranked truths landing),
 `/ask` (now **RAG-backed** when docs are embedded — `mode=rag`, cites sources),

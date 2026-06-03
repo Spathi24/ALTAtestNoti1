@@ -9,6 +9,44 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-03 (later 2) — Proposal RAG + one-call refresh
+
+**Theme:** Extend RAG to the proposal bots, and make staying current automatic.
+
+### Proposal-bot RAG
+- `generate_timeline_proposals` / `generate_scope_proposals` now pull the most
+  on-topic document passages (project-scoped semantic search) into the prompt as
+  ADDITIVE evidence — so a schedule milestone or scope clause buried deep in a
+  long contract is seen even when `assemble_project_context`'s recency
+  truncation cut it. Conservative anti-hallucination posture unchanged (pinned
+  by `TestProposalBotsStayConservative`); no embeddings → byte-identical prompt.
+  `ProposalBatch.rag_chunks_used` reports how many excerpts were injected. CLI
+  `propose` + web propose routes pass the optional provider.
+- Fix: `retrieve_chunks` excludes chunks whose Document was trashed in Drive.
+
+### Refresh (sync + incremental re-embed)
+- `connectors/refresh.py::run_refresh` — delta-syncs the live connectors
+  (Monday now; Drive when live) then re-embeds ONLY documents whose text changed
+  (idempotent via content_hash — unchanged docs cost $0). Every step guarded +
+  reported; a connector without credentials is recorded, not fatal.
+- CLI `project_db refresh [--full] [--no-embed]`.
+- `serve` runs it in a daemon thread on startup (delta + re-embed) so the app
+  opens on fresh data without blocking; opt out `--no-refresh`. Footer shows
+  "data refreshed <time>". Background-only — never in `create_app`, so tests
+  don't touch live APIs.
+- **Answers "do we re-embed every Drive change?"** — no: only changed docs.
+
+### Live-validated
+`refresh` did a real Monday delta sync (135 processed, 8 boards skipped
+unchanged, 18.8s), reported the expired Drive OAuth token as a non-fatal step
+and continued, and the embed step skipped all 462 unchanged docs for **$0.0000**.
+
+### Tests / state
+- +11 tests (4 proposal-RAG/trashed in `test_rag.py`, 7 in `test_refresh.py`).
+  **753 passing.** All offline.
+
+---
+
 ## 2026-06-03 (later) — RAG: the askbot can read the contracts now
 
 **Theme:** Give the AI eyes on the document TEXT, not just metadata. Until now

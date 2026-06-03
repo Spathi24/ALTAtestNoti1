@@ -122,7 +122,17 @@ so Drive (not QuickBooks) is the most complete financial source.
   **Financials panel** per project showing the money buckets, margin,
   cross-check, and per-document breakdown with verification badges.
 
-### 7. Command-line tools & data integrity
+### 7. Stays current automatically
+- **One-command refresh** (`project_db refresh`): pulls the latest Monday data
+  (fast delta sync) and then **re-embeds only the documents whose text actually
+  changed** — unchanged documents cost nothing, so keeping the search index
+  current is effectively free.
+- **Auto-refresh on launch:** the web app kicks off that refresh in the
+  background when it starts, so opening ALTA shows fresh data without waiting;
+  the footer tells you when it last updated. (A connector that's temporarily
+  unavailable is reported and skipped, never crashing the app.)
+
+### 8. Command-line tools & data integrity
 - A full CLI for every operation (sync, extract, ask, propose, review,
   financials), plus `doctor` (audits the data for problems) and `rebuild`
   (safely re-derives the database from the sources).
