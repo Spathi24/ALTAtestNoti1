@@ -66,7 +66,8 @@ corrections to what Monday says is happening.
 for the honest current-state assessment + standing rules read
 **[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff
 (invariants, the financial layer, worked-through problems, footguns) read
-**[docs/HANDOFF.md](docs/HANDOFF.md)**; day-by-day log in
+**[docs/HANDOFF.md](docs/HANDOFF.md)**; the money-saving roadmap-to-build in
+**[docs/INTENTIONS.md](docs/INTENTIONS.md)**; day-by-day log in
 **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
