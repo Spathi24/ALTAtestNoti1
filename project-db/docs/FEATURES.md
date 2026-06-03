@@ -90,6 +90,11 @@ invents a number. Also available as a one-line command (`project_db briefing`).
   answers are marked *document-aware*. (Verified live: a single question
   returned the full scope, contract value, duration, payment schedule, and
   exclusions, each line cited to the actual SOW files.)
+- **Document search page:** a dedicated search box over every embedded document
+  using **hybrid search** — it combines *meaning* (so "who pays the QST" finds
+  the tax clause) with *exact keywords* (so "estimate 25008" finds that exact
+  estimate, not a similar-looking template). Results link straight to the
+  document. No AI tokens spent beyond the tiny query lookup.
 
 ### 5. Financial reconciliation — the money picture (newest, headline feature)
 This is the layer that reads the *money* out of Drive documents — because at

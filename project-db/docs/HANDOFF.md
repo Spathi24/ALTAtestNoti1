@@ -12,7 +12,7 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-03, at **753 tests**, after **RAG** shipped (the askbot
+Last updated: 2026-06-03, at **763 tests**, after **RAG** shipped (the askbot
 can now read document text, not just metadata) on top of the deterministic
 **attention briefing** (EVALUATION §3/§5 reveal-don't-generate landing) and the
 financial extraction + reconciliation layer.
@@ -21,7 +21,9 @@ financial extraction + reconciliation layer.
 tests), `ai/chunking.py` (paragraph-aware ~500-tok), `ai/rag.py`
 (`embed_documents_for` idempotent via content_hash; `retrieve_chunks`
 brute-force numpy cosine — NOT sqlite-vec, that's the upgrade path). Vectors in
-`DocumentChunk` (float32 blob). `answer_with_llm` injects retrieved excerpts as
+`DocumentChunk` (float32 blob). `retrieve_chunks` is HYBRID (cosine + keyword distinct-term coverage fused via
+reciprocal rank fusion -- catches exact identifiers pure-vector blurs; `hybrid=
+False` for cosine-only). `answer_with_llm` injects retrieved excerpts as
 citable facts (mode=`rag`, `sources`). CLI `embed-documents` / `rag-search`.
 **Embeddings are the ONLY OpenAI use — chat stays Anthropic.** `OPENAI_API_KEY`
 in `.env` (gitignored). Full corpus embedded live (462 docs / 5590 chunks /
@@ -459,6 +461,7 @@ cost), **`rag-search <query> [--project] [--top-k N]`** (retrieval debug), and
 
 Key web routes: `/` (**Attention briefing** — the ranked truths landing),
 `/ask` (now **RAG-backed** when docs are embedded — `mode=rag`, cites sources),
+`/search` (read-only hybrid corpus search, no LLM tokens),
 `/projects`, `/projects/{id}`,
 **`/projects/{id}/financials`** (the money panel), `/documents/{id}`,
 **`POST /documents/{id}/financial-status`** (the confirmed/quoted toggle —

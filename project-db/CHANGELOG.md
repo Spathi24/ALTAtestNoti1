@@ -9,6 +9,28 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-03 (later 3) — Hybrid retrieval + documents search page
+
+**Theme:** Maximum-accuracy retrieval. Pure cosine blurs exact tokens (invoice
+numbers, civic addresses, proper names, "QST") — exactly what this corpus is
+full of. The honest accuracy lever (not reranking/HyDE/larger-model treadmill).
+
+- **Hybrid `retrieve_chunks`**: fuses the cosine ranking with a keyword
+  (distinct-term coverage) ranking via reciprocal rank fusion. Exact
+  identifiers surface even at lower semantic score. Free, local, deterministic,
+  a GENERAL mechanism (no per-project tuning). `hybrid=True` default;
+  `hybrid=False` = cosine-only. Results carry `similarity` / `keyword_score` /
+  fused `score`. Sharpens ask + both proposal bots + search at once.
+  Live proof: "estimate 25008" — pure cosine ranked TEMPLATE.xlsx (0.474) over
+  the real estimate; hybrid put the "Estimate # 25008.0" chunk (0.461, kw 1.00)
+  at #1.
+- **`/search` page** (+ Search nav): read-only hybrid search over the corpus,
+  optional project scope, doc links + match/sem/kw scores, graceful when
+  nothing's embedded. No LLM tokens — just the tiny query embedding.
+- **+10 tests** (4 hybrid, 6 search). **763 passing.**
+
+---
+
 ## 2026-06-03 (later 2) — Proposal RAG + one-call refresh
 
 **Theme:** Extend RAG to the proposal bots, and make staying current automatic.
