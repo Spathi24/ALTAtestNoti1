@@ -70,7 +70,10 @@
       <small>total: ${{ "%.2f"|format(d.stats.invoice_total or 0) }}</small>
     </article>
     <article>
-      <header><strong>Budget vs Contract</strong></header>
+      <header>
+        <strong>Budget vs Contract</strong>
+        <span class="pill pill-pending" style="font-size:0.7rem">reference</span>
+      </header>
       {% if d.budget.error %}
         <small><em>{{ d.budget.error }}</em></small>
       {% else %}
@@ -92,8 +95,15 @@
           {% endif %}
         </small>
       {% endif %}
+      <p style="margin:0.4rem 0 0"><small>
+        These are <strong>reference</strong> figures: a number typed into
+        Monday and a rough text scan. For the real money picture see
+        <a href="/projects/{{ d.project.canonical_id }}/financials">
+          &#10003; Financials</a> (reconciled from the actual documents).
+      </small></p>
     </article>
   </div>
+  {% include "_partials/money_glossary.html" %}
 </section>
 
 <!-- ============================ TASKS ============================ -->

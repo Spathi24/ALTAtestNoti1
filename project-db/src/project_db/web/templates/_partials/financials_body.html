@@ -8,6 +8,18 @@
   {% endif %}
 </small></p>
 
+<article class="money-authoritative" data-testid="money-authoritative">
+  <span class="pill pill-accepted">&#10003; AUTHORITATIVE</span>
+  <strong>This is the money picture to trust.</strong>
+  It is reconciled from the project's real quotes, invoices, and receipts. The
+  "Monday budget" and "contract estimate" shown on the project page are weaker
+  reference figures, not this. The headline number below is the
+  <strong>confirmed margin</strong>: confirmed revenue minus confirmed cost.
+</article>
+
+{% set show_types = True %}
+{% include "_partials/money_glossary.html" %}
+
 {% if d.money_summary and d.money_summary.confidence_note %}
 <article style="border-left:4px solid var(--pico-del-color,#c0392b);">
   <strong>&#9888; {{ d.money_summary.confidence_note }}</strong>

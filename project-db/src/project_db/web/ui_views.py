@@ -59,6 +59,74 @@ def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     return report_attention_briefing(session, limit=limit)
 
 
+def money_glossary() -> dict[str, Any]:
+    """Plain-language explanation of the project's money numbers.
+
+    The single source of this copy (rendered by the project page AND the
+    Financials panel) so the story can't drift. ``authority`` drives the visual
+    weight: ``authoritative`` is the one to trust; ``reference`` and ``rough``
+    are weaker cross-checks we keep on screen, clearly labelled, rather than
+    hide. Pure -- no DB, no I/O.
+    """
+    return {
+        "sources": [
+            {
+                "label": "Reconciled money picture (this Financials panel)",
+                "authority": "authoritative",
+                "blurb": (
+                    "Built from the project's ACTUAL quotes, invoices, and "
+                    "receipts in Drive. It separates money coming IN from the "
+                    "client from money going OUT to suppliers and subs, and "
+                    "shows the margin between them. This is the number to "
+                    "trust -- it comes from the real documents, flags how "
+                    "confident it is, and leaves out duplicate tracking sheets."
+                ),
+            },
+            {
+                "label": "Monday budget / contract value",
+                "authority": "reference",
+                "blurb": (
+                    "A single figure a person typed into the Monday board's "
+                    "Budget/Contract column. It is a planning target, only as "
+                    "current as the last time someone updated it by hand -- it "
+                    "is NOT read from the documents. Use it as a sanity check: "
+                    "if it disagrees with the reconciled picture, the board is "
+                    "probably stale or the job is drifting from its budget."
+                ),
+            },
+            {
+                "label": "Contract-text estimate",
+                "authority": "rough",
+                "blurb": (
+                    "The largest dollar amount a simple text scan found in the "
+                    "contract files. A crude first-pass guess from before the "
+                    "document-reading layer existed, kept only as a loose "
+                    "cross-reference. If it disagrees with the reconciled "
+                    "picture, trust the reconciled picture."
+                ),
+            },
+        ],
+        # The money-type buckets inside the reconciled picture, in plain words.
+        "money_types": [
+            {"key": "contract_revenue",
+             "blurb": "Money the client pays you -- what you invoice or quote them."},
+            {"key": "supplier_cost",
+             "blurb": "Money you pay suppliers and subcontractors (materials, labour)."},
+            {"key": "buyout_cost",
+             "blurb": "What you pay to buy out / relocate a tenant (agency projects)."},
+            {"key": "lease_rental",
+             "blurb": "Rent or lease payments."},
+            {"key": "deposit",
+             "blurb": "An upfront deposit."},
+            {"key": "tax",
+             "blurb": "Sales tax (GST/QST/TPS/TVQ), kept separate so it isn't double-counted."},
+            {"key": "other",
+             "blurb": "Money that couldn't be confidently sorted. A lot here means the "
+                      "picture is low-confidence -- treat the margin with caution."},
+        ],
+    }
+
+
 def search_documents(
     session: Session,
     query: str,

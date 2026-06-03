@@ -59,6 +59,10 @@ def create_app() -> FastAPI:
     from project_db.web import refresh_state
     templates.env.globals["last_refresh"] = refresh_state.get_last
 
+    # Plain-language money glossary -- rendered by the project page and the
+    # Financials panel so the "which number do I trust?" story is consistent.
+    templates.env.globals["money_glossary"] = ui_views.money_glossary
+
     # `| from_json` -- safely parse a JSON string in templates.  Used by
     # propose_result.html to break scope proposals down by source label
     # (contract / roadmap) without forcing the service module to

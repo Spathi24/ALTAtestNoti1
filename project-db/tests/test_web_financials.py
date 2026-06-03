@@ -86,6 +86,30 @@ def fin_project(session, org: Organization):
     return p
 
 
+class TestMoneyClarity:
+    def test_money_glossary_shape(self):
+        from project_db.web.ui_views import money_glossary
+
+        g = money_glossary()
+        assert [s["authority"] for s in g["sources"]] == [
+            "authoritative", "reference", "rough",
+        ]
+        assert all(s["blurb"].strip() for s in g["sources"])
+        assert any(t["key"] == "contract_revenue" for t in g["money_types"])
+
+    def test_financials_panel_marks_authoritative(self, client, fin_project):
+        body = client.get(f"/projects/{fin_project.canonical_id}/financials").text
+        assert "AUTHORITATIVE" in body
+        assert 'data-testid="money-glossary"' in body
+        assert "money picture to trust" in body
+
+    def test_project_page_marks_reference_and_links_out(self, client, fin_project):
+        body = client.get(f"/projects/{fin_project.canonical_id}").text
+        assert "reference" in body
+        assert 'data-testid="money-glossary"' in body
+        assert f"/projects/{fin_project.canonical_id}/financials" in body
+
+
 class TestFinancialsPanel:
     def test_renders_buckets_and_excludes_rollup(self, client, fin_project):
         r = client.get(f"/projects/{fin_project.canonical_id}/financials")

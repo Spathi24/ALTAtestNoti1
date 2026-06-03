@@ -226,3 +226,32 @@ td[style*="right"], th[style*="right"] { font-variant-numeric: tabular-nums; }
   border: 1px solid #2ecc7140;
   border-radius: 0.5rem;
 }
+
+/* =====================================================================
+   Money clarity (2026-06).  Make the authoritative number obvious and
+   explain every money source in plain language.
+   ===================================================================== */
+.money-authoritative {
+  border-left: 4px solid var(--alta-good, #1e7e3f);
+  background: #2ecc7110;
+  border-radius: 0.5rem;
+  padding: 0.7rem 1rem;
+  margin: 0.5rem 0 1rem;
+}
+.money-glossary { margin: 0 0 1.25rem; font-size: 0.9rem; }
+.money-glossary > summary { cursor: pointer; color: var(--alta-accent, #2563eb); }
+.money-sources { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.6rem 0; }
+.money-source {
+  margin: 0;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--pico-muted-border-color, #d7dce3);
+  border-left: 4px solid #aaa;
+  border-radius: 0.4rem;
+}
+.money-source.sev-high   { border-left-color: #1e7e3f; background: #2ecc710a; }
+.money-source.sev-medium { border-left-color: #f6c343; }
+.money-source.sev-low    { border-left-color: #aaa; }
+.money-source-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.money-source-blurb { margin: 0.3rem 0 0; color: var(--pico-muted-color); font-size: 0.86rem; }
+.money-types { margin: 0.4rem 0 0 1.2rem; }
+.money-types li { margin: 0.15rem 0; font-size: 0.86rem; }

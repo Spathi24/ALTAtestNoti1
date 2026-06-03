@@ -1,0 +1,33 @@
+{# Shared money explainer. Set `show_types = True` before including to also
+   list the money-type buckets. Authority drives colour + label so it's
+   visually obvious which number is the one to trust. #}
+{% set _g = money_glossary() %}
+<details class="money-glossary" data-testid="money-glossary">
+  <summary>What do these money numbers mean? (and which one to trust)</summary>
+  <div class="money-sources">
+    {% for s in _g.sources %}
+    <article class="money-source sev-{{ 'high' if s.authority == 'authoritative' else ('medium' if s.authority == 'reference' else 'low') }}">
+      <div class="money-source-head">
+        {% if s.authority == 'authoritative' %}
+          <span class="pill pill-accepted">&#10003; TRUST THIS</span>
+        {% elif s.authority == 'reference' %}
+          <span class="pill pill-pending">reference</span>
+        {% else %}
+          <span class="pill pill-rejected">rough</span>
+        {% endif %}
+        <strong>{{ s.label }}</strong>
+      </div>
+      <p class="money-source-blurb">{{ s.blurb }}</p>
+    </article>
+    {% endfor %}
+  </div>
+
+  {% if show_types %}
+  <h4>The money-type buckets (inside the reconciled picture)</h4>
+  <ul class="money-types">
+    {% for t in _g.money_types %}
+    <li><code>{{ t.key }}</code> &mdash; {{ t.blurb }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</details>
