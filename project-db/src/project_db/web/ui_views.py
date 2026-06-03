@@ -47,6 +47,18 @@ def project_financials(session: Session, project_id: str) -> dict[str, Any] | No
     return rep
 
 
+def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
+    """Portfolio attention briefing for the landing page.
+
+    Thin pass-through to ``ai.views.report_attention_briefing`` so the web `/`
+    landing and the ``project_db briefing`` CLI render identical data.  Pure
+    read, deterministic, no LLM -- safe to recompute on every request.
+    """
+    from project_db.ai.views import report_attention_briefing
+
+    return report_attention_briefing(session, limit=limit)
+
+
 def dashboard_summary(session: Session) -> dict[str, Any]:
     """Counts and recent activity for the dashboard.
 

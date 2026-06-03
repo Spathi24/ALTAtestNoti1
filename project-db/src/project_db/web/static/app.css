@@ -175,3 +175,54 @@ td[style*="right"], th[style*="right"] { font-variant-numeric: tabular-nums; }
 
 /* De-emphasise developer-only nav items so the bar reads PM-first */
 .nav-dev a { color: var(--pico-muted-color); font-size: 0.85rem; }
+
+/* =====================================================================
+   Attention briefing -- the / landing surface (2026-06).
+   Each item is a cross-system truth needing attention, ranked by
+   severity.  Severity pills extend the .pill family; the list reads as
+   a scannable stack of cards with a severity-coloured left edge.
+   ===================================================================== */
+.pill-high   { background: #e74c3c20; color: #b03020; }
+.pill-medium { background: #f6c34320; color: #b87b00; }
+.pill-low    { background: #2563eb18; color: #2a4fb8; }
+
+.briefing-summary { margin: 0.25rem 0 1rem; }
+.briefing-summary .pill { margin-left: 0.25rem; }
+
+.briefing-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.5rem; }
+.briefing-item {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--pico-muted-border-color, #d7dce3);
+  border-left: 4px solid #aaa;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.briefing-item.sev-high   { border-left-color: #e74c3c; }
+.briefing-item.sev-medium { border-left-color: #f6c343; }
+.briefing-item.sev-low    { border-left-color: #2563eb; }
+.briefing-item-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.briefing-cat {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pico-muted-color);
+}
+.briefing-headline { font-weight: 600; text-decoration: none; }
+.briefing-headline:hover { text-decoration: underline; }
+.briefing-detail {
+  margin: 0.3rem 0 0;
+  font-size: 0.88rem;
+  color: var(--pico-muted-color);
+}
+.briefing-clear {
+  padding: 0.9rem 1.1rem;
+  background: #2ecc7112;
+  border: 1px solid #2ecc7140;
+  border-radius: 0.5rem;
+}

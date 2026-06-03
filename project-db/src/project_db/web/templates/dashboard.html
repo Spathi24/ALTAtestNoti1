@@ -3,10 +3,45 @@
 
 {% block content %}
 <hgroup>
-  <h2>Overview</h2>
-  <p>One place for projects, documents, tasks, money, and AI suggestions —
-     pulled live from Monday.com and Google Drive.</p>
+  <h2>Today's briefing</h2>
+  <p>The cross-system truths that need attention &mdash; money, scope, schedule,
+     and missing paperwork &mdash; read out of Monday + Drive and ranked.
+     <small>as of {{ briefing.generated_on }}</small></p>
 </hgroup>
+
+<section data-testid="briefing">
+  {% if briefing.item_count %}
+    <p class="briefing-summary">
+      <strong data-testid="briefing-count">{{ briefing.item_count }}</strong>
+      item(s) need attention across
+      <strong>{{ briefing.project_count }}</strong> project(s):
+      <span class="pill pill-high">{{ briefing.by_severity.get('high', 0) }} high</span>
+      <span class="pill pill-medium">{{ briefing.by_severity.get('medium', 0) }} medium</span>
+      <span class="pill pill-low">{{ briefing.by_severity.get('low', 0) }} low</span>
+    </p>
+
+    <div class="briefing-list">
+      {% for it in briefing['items'] %}
+      <article class="briefing-item sev-{{ it.severity }}" data-testid="briefing-item">
+        <div class="briefing-item-head">
+          <span class="pill pill-{{ it.severity }}">{{ it.severity|upper }}</span>
+          <span class="briefing-cat">{{ it.category }}</span>
+          <a href="{{ it.link }}" class="briefing-headline">{{ it.headline }}</a>
+        </div>
+        <p class="briefing-detail">{{ it.detail }}</p>
+      </article>
+      {% endfor %}
+    </div>
+
+    {% if briefing.truncated %}
+      <p><small>Showing top {{ briefing.shown_count }} of
+        {{ briefing.item_count }} &mdash; see each project for the rest.</small></p>
+    {% endif %}
+  {% else %}
+    <p class="briefing-clear"><strong>All clear.</strong> No money, scope,
+      schedule, or document flags across the portfolio right now.</p>
+  {% endif %}
+</section>
 
 <div class="quick-links">
   <a href="/projects" role="button">Browse projects &rarr;</a>
