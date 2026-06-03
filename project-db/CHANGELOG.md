@@ -9,6 +9,60 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-03 (later) — RAG: the askbot can read the contracts now
+
+**Theme:** Give the AI eyes on the document TEXT, not just metadata. Until now
+`ask` read a JSON snapshot (projects/tasks/counts) and was blind to what the
+contracts actually say. RAG closes that. Strategy: BUY the commodity (OpenAI
+`text-embedding-3-small`) and keep the domain logic (chunking, project-filtered
+retrieval, idempotent storage, citing) ours.
+
+### What shipped
+
+- **`DocumentChunk`** sidecar table (mirrors the `DocumentText` pattern) +
+  SQLite migration: chunk text + float32 embedding blob + content_hash +
+  model/dims, `project_id` denormalised for cheap per-project filtering.
+- **`ai/chunking.py`** — paragraph-aware ~500-token chunks with bounded
+  overlap; tiktoken with a chars/4 offline fallback.
+- **`ai/embeddings.py`** — `EmbeddingProvider` abstraction +
+  `OpenAIEmbeddingProvider` (base_url pinned to api.openai.com so a stale
+  `OPENAI_BASE_URL` can't hijack it) + deterministic `MockEmbeddingProvider`.
+- **`ai/rag.py`** — `embed_documents_for` (idempotent via content_hash;
+  unchanged docs skipped so re-runs don't re-charge; commits progress, survives
+  Ctrl-C) and `retrieve_chunks` (brute-force numpy cosine — sub-10ms at this
+  scale, no native vector extension; sqlite-vec is the upgrade path).
+- **Askbot wiring** — `answer_with_llm` retrieves the most relevant excerpts
+  and feeds them as quotable, citable hard facts; mode becomes `rag`, cited
+  chunks return in `sources`. Best-effort: no key / nothing embedded -> falls
+  back to the metadata snapshot, never breaks.
+- **CLI** `embed-documents` (prints token + USD cost) + `rag-search`; `ask`
+  and web `/ask` show "answered using N excerpts" + a `document-aware` badge
+  with source links.
+
+### Live-validated on the real DB (cost reported)
+
+- Embedded the full corpus: **462/462 docs, 5590 chunks, 2.59M tokens =
+  $0.0518** (idempotent re-runs skip unchanged docs).
+- `ask "what scope does the 923 Rockland contract describe?"` -> **mode=rag**,
+  a fully contract-grounded answer (contract value $66,539.65, 35-day duration,
+  25/20/20/25/10 payment schedule, exclusions, change-order terms), **every
+  line cited to Final SOW.pdf / SOW 923 Rockland.docx**, retrieval cosine ~0.55.
+  The metadata-only askbot could not answer this at all.
+
+### Env / deps
+
+- New `[rag]` extra: `openai`, `tiktoken`, `numpy`. `OPENAI_API_KEY` in
+  `.env` enables embeddings (the only OpenAI use — chat stays Anthropic).
+
+### Tests / state
+
+- **+26 tests** (`test_rag.py`): chunking, mock embeddings, embed idempotency /
+  overwrite / stale-cleanup / project-filter, retrieve ordering / filter /
+  model-mismatch, askbot RAG injection + fallbacks, migration. All offline
+  (mock) — no API spend. **742 passing.**
+
+---
+
 ## 2026-06-03 — The attention briefing (reveal, don't just generate)
 
 **Theme:** Move the product's center of gravity from *showing the activity

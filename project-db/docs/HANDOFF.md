@@ -12,9 +12,21 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-03, at **716 tests**, after the deterministic **attention
-briefing** shipped (the EVALUATION §3/§5 reveal-don't-generate landing) on top
-of the financial extraction + reconciliation layer.
+Last updated: 2026-06-03, at **742 tests**, after **RAG** shipped (the askbot
+can now read document text, not just metadata) on top of the deterministic
+**attention briefing** (EVALUATION §3/§5 reveal-don't-generate landing) and the
+financial extraction + reconciliation layer.
+
+**RAG (newest):** `ai/embeddings.py` (OpenAI `text-embedding-3-small`, mock for
+tests), `ai/chunking.py` (paragraph-aware ~500-tok), `ai/rag.py`
+(`embed_documents_for` idempotent via content_hash; `retrieve_chunks`
+brute-force numpy cosine — NOT sqlite-vec, that's the upgrade path). Vectors in
+`DocumentChunk` (float32 blob). `answer_with_llm` injects retrieved excerpts as
+citable facts (mode=`rag`, `sources`). CLI `embed-documents` / `rag-search`.
+**Embeddings are the ONLY OpenAI use — chat stays Anthropic.** `OPENAI_API_KEY`
+in `.env` (gitignored). Full corpus embedded live (462 docs / 5590 chunks /
+$0.052). Develop on `MockEmbeddingProvider` (free); a real embed run is cheap
+(~$0.02–0.06 whole corpus) and idempotent (unchanged docs skip).
 
 **The briefing (newest, read this):** `ai/views.py::report_attention_briefing`
 is a pure deterministic detector — no LLM, no API, recomputes free over stored
@@ -425,10 +437,13 @@ Key CLI (full list: `--help`): `init-db`, `sync monday [--delta]`,
 `doctor`, `rebuild --yes`, `serve [--port]`, `import-roadmap`,
 `classify-roadmap`, **`extract-financials <project> [--max-docs N]`**
 (batched, fresh-snapshot, prints the money-flow + confidence + roll-up
-cross-check), and **`briefing [--limit N]`** (deterministic portfolio
-attention list — money/scope/schedule/docs, ranked; no LLM).
+cross-check), **`briefing [--limit N]`** (deterministic portfolio attention
+list — money/scope/schedule/docs, ranked; no LLM), **`embed-documents
+[--project] [--overwrite] [--limit]`** (chunk+embed for RAG; idempotent; prints
+cost), and **`rag-search <query> [--project] [--top-k N]`** (retrieval debug).
 
 Key web routes: `/` (**Attention briefing** — the ranked truths landing),
+`/ask` (now **RAG-backed** when docs are embedded — `mode=rag`, cites sources),
 `/projects`, `/projects/{id}`,
 **`/projects/{id}/financials`** (the money panel), `/documents/{id}`,
 **`POST /documents/{id}/financial-status`** (the confirmed/quoted toggle —

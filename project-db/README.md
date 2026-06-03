@@ -46,8 +46,15 @@ corrections to what Monday says is happening.
   No LLM, no API spend (it recomputes over already-stored data). Also a
   `project_db briefing` CLI. This is the EVALUATION.md §3/§5 shift from
   *showing activity ALTA generated* to *revealing truths it discovered*.
+- **RAG (2026-06-03): the askbot can read the contracts.** Document text
+  is chunked + embedded (OpenAI `text-embedding-3-small`) into a
+  `DocumentChunk` table; `ask` now retrieves the most relevant excerpts
+  and answers clause-level questions ("what scope does the 923 Rockland
+  contract describe?") with answers cited to the source documents
+  (`mode=rag`, "document-aware"). `project_db embed-documents` (idempotent;
+  prints cost) + `rag-search`. Needs `OPENAI_API_KEY` in `.env`.
 
-**716-test suite.** For "what does it do?" read
+**742-test suite.** For "what does it do?" read
 **[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
 for the honest current-state assessment + standing rules read
 **[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff

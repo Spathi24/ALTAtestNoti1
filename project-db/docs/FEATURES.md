@@ -78,10 +78,18 @@ invents a number. Also available as a one-line command (`project_db briefing`).
   A human accepts or rejects; only an accepted timeline is written back to
   Monday. Conservative by design — "no suggestion" is a valid answer.
 
-### 4. Ask — plain-language questions
+### 4. Ask — plain-language questions (now reads the documents)
 - Type a question; instant canned reports answer the common ones (active
   projects, deal pipeline, docs for a project, tasks without dates, etc.). For
   anything else, a fast AI model reads a database snapshot and answers.
+- **Document-aware answers (RAG):** the text of every contract/SOW/report is
+  embedded into a searchable index, so a free-form question now also pulls in
+  the most relevant **document excerpts** and answers clause-level questions —
+  "what scope does the 923 Rockland contract describe?", "what are our payment
+  terms?" — with the answer **cited back to the source documents**. These
+  answers are marked *document-aware*. (Verified live: a single question
+  returned the full scope, contract value, duration, payment schedule, and
+  exclusions, each line cited to the actual SOW files.)
 
 ### 5. Financial reconciliation — the money picture (newest, headline feature)
 This is the layer that reads the *money* out of Drive documents — because at
