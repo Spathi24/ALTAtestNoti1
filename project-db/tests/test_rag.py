@@ -434,6 +434,53 @@ class TestProposalRag:
         assert "RELEVANT DOCUMENT EXCERPTS" in captured["user"]
 
 
+class TestHybridRetrieval:
+    def test_keyword_scores_and_tokenize(self):
+        from project_db.ai.rag import _keyword_scores, _tokenize
+
+        assert _tokenize("the of and a") == []          # stopwords dropped
+        assert "25008" in _tokenize("Invoice 25008 due")  # numbers kept
+        scores = _keyword_scores(
+            "what does invoice 25008 say",
+            ["invoice 25008 is final", "general notes about weather"],
+        )
+        assert scores[0] > scores[1]
+        assert 0.0 <= scores[1] <= 1.0
+
+    def test_exact_identifier_surfaces(self, session, project_factory):
+        p = project_factory(name="ID Proj")
+        _doc_with_text(
+            session, p, name="Invoices.pdf",
+            body="Invoice number 25008 is due on completion.\n\n"
+                 "General notes about the building and the surrounding area.",
+        )
+        session.commit()
+        m = MockEmbeddingProvider(dims=128)
+        embed_documents_for(session, m, target_tokens=20, overlap_tokens=0)
+        hits = retrieve_chunks(session, m, "25008", top_k=3)
+        assert hits
+        assert "25008" in hits[0]["text"]
+        assert hits[0]["keyword_score"] > 0
+
+    def test_returns_score_fields(self, session, project_factory):
+        p = project_factory(name="Fields Proj")
+        _doc_with_text(session, p, name="Doc.pdf", body="payment terms on signing")
+        session.commit()
+        m = MockEmbeddingProvider(dims=64)
+        embed_documents_for(session, m)
+        hits = retrieve_chunks(session, m, "payment", top_k=2)
+        assert hits
+        assert {"keyword_score", "score", "similarity"} <= set(hits[0])
+
+    def test_pure_semantic_mode_still_works(self, session, project_factory):
+        p = project_factory(name="Sem Proj")
+        _doc_with_text(session, p, name="Doc.pdf", body="payment terms on signing")
+        session.commit()
+        m = MockEmbeddingProvider(dims=64)
+        embed_documents_for(session, m)
+        assert retrieve_chunks(session, m, "payment", top_k=2, hybrid=False)
+
+
 class TestMigration:
     def test_ensure_schema_creates_document_chunk(self):
         engine = create_engine("sqlite:///:memory:", future=True)

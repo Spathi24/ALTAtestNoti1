@@ -59,6 +59,63 @@ def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     return report_attention_briefing(session, limit=limit)
 
 
+def search_documents(
+    session: Session,
+    query: str,
+    *,
+    project_ref: str | None = None,
+    top_k: int = 20,
+) -> dict[str, Any]:
+    """Hybrid (semantic + keyword) search over embedded document chunks.
+
+    Read-only -- no LLM, just retrieval -- so it's the cheapest way to find
+    the exact clause/number/name across the corpus. Degrades gracefully: an
+    empty query, an un-embedded corpus, or a missing key each return a clear
+    ``error`` rather than raising.
+    """
+    from project_db.ai.rag import embedding_coverage
+
+    query = (query or "").strip()
+    out: dict[str, Any] = {
+        "query": query, "results": [], "error": None, "project": None,
+        "coverage": embedding_coverage(session),
+    }
+    out["embedded"] = out["coverage"]["chunks"] > 0
+
+    if not query:
+        return out
+    if not out["embedded"]:
+        out["error"] = ("No documents are embedded yet. Run "
+                        "`project_db embed-documents` first.")
+        return out
+
+    from project_db.ai.embeddings import get_optional_embedding_provider
+
+    provider = get_optional_embedding_provider()
+    if provider is None:
+        out["error"] = "No embedding provider configured (set OPENAI_API_KEY)."
+        return out
+
+    project_id = None
+    if project_ref:
+        from project_db.ai.views import _resolve_project
+
+        proj = _resolve_project(session, project_ref)
+        if proj is not None:
+            project_id = proj.canonical_id
+            out["project"] = {"canonical_id": str(proj.canonical_id), "name": proj.name}
+
+    from project_db.ai.rag import retrieve_chunks
+
+    try:
+        out["results"] = retrieve_chunks(
+            session, provider, query, project_id=project_id, top_k=top_k,
+        )
+    except Exception as exc:  # noqa: BLE001 -- surface, don't 500
+        out["error"] = f"Search failed: {exc}"
+    return out
+
+
 def dashboard_summary(session: Session) -> dict[str, Any]:
     """Counts and recent activity for the dashboard.
 

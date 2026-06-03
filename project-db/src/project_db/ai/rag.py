@@ -19,6 +19,7 @@ Arithmetic (cosine) is deterministic; the model's job stays "read + answer".
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
 
 import numpy as np
@@ -158,6 +159,45 @@ def embed_documents_for(
     return stats
 
 
+# Tiny English/French stopword set so common glue words don't dominate the
+# keyword score.  Deliberately small -- domain terms (numbers, names, "scope",
+# "payment") must survive.
+_STOPWORDS = {
+    "the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "is", "are",
+    "be", "by", "at", "as", "it", "this", "that", "with", "from", "we", "our",
+    "what", "does", "do", "how", "which", "when", "where", "shall", "will",
+    "le", "la", "les", "de", "des", "du", "un", "une", "et", "en", "au", "aux",
+    "que", "qui", "pour", "dans", "sur", "est", "sont",
+}
+
+# Reciprocal-rank-fusion constant (standard default).
+_RRF_K = 60
+
+
+def _tokenize(text: str | None) -> list[str]:
+    return [
+        t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(t) >= 2 and t not in _STOPWORDS
+    ]
+
+
+def _keyword_scores(query: str, texts: list[str]) -> list[float]:
+    """Distinct query-term coverage per text, in [0, 1].
+
+    Length-independent (presence, not raw frequency) so a long chunk isn't
+    favoured just for being long.  Catches the exact tokens -- invoice numbers,
+    civic addresses, proper names, ``QST`` -- that pure cosine similarity blurs.
+    """
+    qterms = set(_tokenize(query))
+    if not qterms:
+        return [0.0] * len(texts)
+    out: list[float] = []
+    for t in texts:
+        tset = set(_tokenize(t))
+        out.append(sum(1 for q in qterms if q in tset) / len(qterms) if tset else 0.0)
+    return out
+
+
 def retrieve_chunks(
     session: Session,
     provider: EmbeddingProvider,
@@ -166,12 +206,20 @@ def retrieve_chunks(
     project_id: Any | None = None,
     top_k: int = 12,
     min_similarity: float = 0.0,
+    hybrid: bool = True,
 ) -> list[dict[str, Any]]:
-    """Return the ``top_k`` chunks most cosine-similar to ``query``.
+    """Return the ``top_k`` chunks most relevant to ``query``.
+
+    By default uses HYBRID retrieval: semantic (cosine) ranking fused with a
+    keyword ranking via reciprocal rank fusion.  Pure cosine blurs exact tokens
+    (an invoice number, a civic address, a proper name); the keyword side pins
+    them.  Set ``hybrid=False`` for cosine-only.
 
     Only chunks embedded with the SAME model + dims as ``provider`` are
     candidates (mixing embedding spaces is meaningless).  Returns
-    JSON-serializable dicts ordered by descending similarity.
+    JSON-serializable dicts ordered best-first; each carries ``similarity``
+    (cosine), ``keyword_score`` (term coverage), and ``score`` (the fused rank
+    score actually used to order, or the cosine when ``hybrid=False``).
     """
     if not query or not query.strip():
         return []
@@ -202,19 +250,39 @@ def retrieve_chunks(
     norms[norms == 0] = 1.0
     sims = (matrix @ qvec) / (norms * qnorm)
 
-    order = np.argsort(-sims)[: max(top_k, 0)]
-    doc_ids = {candidates[i].document_id for i in order}
+    kw = np.asarray(_keyword_scores(query, [c.text for c in candidates]))
+
+    if hybrid:
+        # Reciprocal rank fusion of the cosine ranking and the keyword ranking.
+        sem_rank = np.empty(len(sims), dtype=int)
+        sem_rank[np.argsort(-sims)] = np.arange(len(sims))
+        kw_rank = np.empty(len(kw), dtype=int)
+        kw_rank[np.argsort(-kw)] = np.arange(len(kw))
+        fused = 1.0 / (_RRF_K + sem_rank) + 1.0 / (_RRF_K + kw_rank)
+    else:
+        fused = sims
+
+    order = np.argsort(-fused)
+
+    # Names for every candidate's document (few distinct docs even for many
+    # chunks) so the post-filter loop always has a name available.
+    doc_ids = {c.document_id for c in candidates}
     names = {
         d.canonical_id: (d.name, d.url)
         for d in session.query(Document)
         .filter(Document.canonical_id.in_(doc_ids))
         .all()
-    } if doc_ids else {}
+    }
 
     out: list[dict[str, Any]] = []
-    for i in order:
+    for idx in order:
+        i = int(idx)
         sim = float(sims[i])
-        if sim < min_similarity:
+        kscore = float(kw[i])
+        # Keep a chunk if it is semantically relevant enough OR it contains the
+        # query's exact terms -- so an exact-identifier hit with low cosine
+        # still surfaces (the whole point of hybrid).
+        if sim < min_similarity and kscore == 0.0:
             continue
         c = candidates[i]
         name, url = names.get(c.document_id, (None, None))
@@ -227,7 +295,11 @@ def retrieve_chunks(
             "chunk_index": c.chunk_index,
             "text": c.text,
             "similarity": round(sim, 4),
+            "keyword_score": round(kscore, 4),
+            "score": round(float(fused[i]), 6),
         })
+        if len(out) >= top_k:
+            break
     return out
 
 

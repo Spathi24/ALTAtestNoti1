@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Search documents</h2>
+  <p>Hybrid search (meaning + exact keywords) across every embedded contract,
+     quote, and report. Finds the clause, number, or name &mdash; no tokens
+     spent beyond the tiny query lookup.</p>
+</hgroup>
+
+<form method="get" action="/search" id="search-form">
+  <fieldset role="group">
+    <input type="search" name="q" value="{{ q or '' }}" autofocus
+           placeholder="e.g. 'payment terms', 'estimate 25008', 'who pays the QST'">
+    <button type="submit">Search</button>
+  </fieldset>
+  {% if data.project %}
+    <small>Scoped to project <strong>{{ data.project.name }}</strong> &middot;
+      <a href="/search?q={{ q|urlencode }}">search all projects</a></small>
+  {% endif %}
+</form>
+
+{% if data.error %}
+  <article class="briefing-clear" style="background:#e74c3c12;border-color:#e74c3c40;">
+    {{ data.error }}
+  </article>
+{% endif %}
+
+{% if data.query and not data.error %}
+  <section>
+    <h3>{{ data.results|length }} result(s)
+      <small>for &ldquo;{{ data.query }}&rdquo;</small>
+    </h3>
+    {% if not data.results %}
+      <p><em>No matching passages.</em></p>
+    {% endif %}
+    {% for r in data.results %}
+    <article class="briefing-item" data-testid="search-result">
+      <div class="briefing-item-head">
+        <a href="/documents/{{ r.document_id }}" class="briefing-headline">
+          {{ r.document_name or "(unknown document)" }}</a>
+        <span class="briefing-cat">chunk {{ r.chunk_index }}</span>
+        <span class="pill pill-low">match {{ "%.2f"|format(r.score * 100) if r.score else "-" }}</span>
+        <small>sem {{ "%.2f"|format(r.similarity) }}
+          {% if r.keyword_score %}&middot; kw {{ "%.2f"|format(r.keyword_score) }}{% endif %}</small>
+      </div>
+      <p class="briefing-detail">{{ r.text[:400] }}{% if r.text|length > 400 %}&hellip;{% endif %}</p>
+    </article>
+    {% endfor %}
+  </section>
+{% endif %}
+
+<section>
+  <p><small>{{ data.coverage.documents_embedded }} of
+    {{ data.coverage.documents_with_text }} documents embedded
+    ({{ data.coverage.chunks }} chunks). Keep this current with
+    <code>project_db refresh</code>.</small></p>
+</section>
+{% endblock %}

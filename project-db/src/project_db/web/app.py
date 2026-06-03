@@ -29,6 +29,7 @@ from project_db.web.routes import db as db_routes
 from project_db.web.routes import doctor as doctor_routes
 from project_db.web.routes import projects as project_routes
 from project_db.web.routes import proposals as proposal_routes
+from project_db.web.routes import search as search_routes
 from project_db.web.routes import tasks as task_routes
 
 
@@ -93,6 +94,7 @@ def create_app() -> FastAPI:
     page_router = APIRouter()
     project_routes.register(page_router, templates)
     proposal_routes.register(page_router, templates)
+    search_routes.register(page_router, templates)
     doctor_routes.register(page_router, templates)
     ask_routes.register(page_router, templates)
     task_routes.register(page_router, templates)
