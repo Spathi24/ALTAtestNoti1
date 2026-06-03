@@ -144,8 +144,25 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
                 },
             )
 
-        llm_resp = assistant.answer_with_llm(question, provider)
+        # RAG: supply relevant document excerpts when embeddings are available.
+        try:
+            from project_db.ai.embeddings import get_optional_embedding_provider
+            embed_provider = get_optional_embedding_provider()
+        except Exception:  # noqa: BLE001 -- never break /ask on RAG setup
+            embed_provider = None
+
+        llm_resp = assistant.answer_with_llm(
+            question, provider, embedding_provider=embed_provider,
+        )
         text, fmt = _format_answer(llm_resp.answer)
+        # De-duplicate cited documents for the "answered using" badge.
+        sources = []
+        seen = set()
+        for s in (llm_resp.sources or []):
+            name = s.get("document_name") or "(unknown)"
+            if name not in seen:
+                seen.add(name)
+                sources.append(s)
         return templates.TemplateResponse(
             request,
             "ask.html",
@@ -155,5 +172,6 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
                 "format": fmt,
                 "mode": llm_resp.mode,
                 "report": llm_resp.used_report,
+                "sources": sources,
             },
         )

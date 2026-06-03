@@ -139,6 +139,18 @@ def get_embedding_provider() -> EmbeddingProvider:
     )
 
 
+def get_optional_embedding_provider() -> EmbeddingProvider | None:
+    """Embedding provider if configured, else None -- never raises.
+
+    For surfaces (the askbot) that want RAG WHEN available but must keep
+    working when there's no OpenAI key or nothing has been embedded yet.
+    """
+    try:
+        return get_embedding_provider()
+    except EmbeddingError:
+        return None
+
+
 def estimate_cost_usd(token_count: int, *, model: str = DEFAULT_EMBEDDING_MODEL) -> float:
     """Rough USD cost to embed ``token_count`` tokens (text-embedding-3-small)."""
     return (token_count / 1_000_000) * OPENAI_SMALL_USD_PER_1M_TOKENS

@@ -55,6 +55,8 @@
         mode: <code>{{ mode }}</code>
         {% if report %} &middot; report: <code>{{ report }}</code>{% endif %}
         {% if mode == "llm" %}<span class="pill pill-pending">spent tokens</span>{% endif %}
+        {% if mode == "rag" %}<span class="pill pill-pending">spent tokens</span>
+          <span class="pill pill-low">document-aware</span>{% endif %}
         {% if mode == "canned" %}<span class="pill pill-accepted">free</span>{% endif %}
       </small>
     {% endif %}
@@ -69,6 +71,21 @@
     <article class="ask-answer">{{ result|safe }}</article>
   {% else %}
     <article>{{ result }}</article>
+  {% endif %}
+
+  {% if sources %}
+  <details class="rag-sources" open data-testid="rag-sources">
+    <summary>Answered using {{ sources|length }} document excerpt(s)</summary>
+    <ul>
+      {% for s in sources %}
+      <li>
+        <a href="/documents/{{ s.document_id }}">{{ s.document_name or "(unknown document)" }}</a>
+        <small>&middot; similarity
+          {{ "%.2f"|format(s.similarity) if s.similarity is not none else "-" }}</small>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
   {% endif %}
 </section>
 {% endif %}
@@ -88,9 +105,10 @@
     <li><code>budget vs contract for project &lt;name&gt;</code></li>
     <li><code>help</code> -- prints this list (via the assistant itself)</li>
   </ul>
-  <p><small>Anything that doesn't match a pattern goes to the fast LLM
-     -- it gets a JSON snapshot of the whole DB but no document text;
-     for document-aware questions use <code>project_db daily &lt;project&gt;</code>
-     or generate proposals from the project page.</small></p>
+  <p><small>Anything that doesn't match a pattern goes to the fast LLM over a
+     JSON snapshot of the whole DB.  When documents have been embedded
+     (<code>project_db embed-documents</code>), the most relevant contract /
+     scope excerpts are retrieved and fed to the model too -- those answers
+     are marked <code>document-aware</code> and cite the source documents.</small></p>
 </section>
 {% endblock %}

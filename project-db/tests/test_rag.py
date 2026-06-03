@@ -22,6 +22,8 @@ from project_db.ai.rag import (
     embedding_coverage,
     retrieve_chunks,
 )
+from project_db.ai.providers.mock import MockLLMProvider
+from project_db.ai.query import AiAssistant
 from project_db.db.base import Base
 from project_db.db.migrations import ensure_sqlite_schema
 from project_db.db.models import Document, DocumentChunk
@@ -271,6 +273,76 @@ class TestRetrieve:
 # ---------------------------------------------------------------------------
 # migration
 # ---------------------------------------------------------------------------
+
+
+class TestAskbotRag:
+    """answer_with_llm wires retrieved excerpts into the prompt as RAG."""
+
+    def _seed_embedded(self, session, project_factory, embed):
+        p = project_factory(name="RAG Ask Proj")
+        _doc_with_text(session, p, name="Payments.pdf",
+                       body="The client shall pay fifty percent on signing and "
+                            "the remaining balance on completion of the work.")
+        session.commit()
+        embed_documents_for(session, embed)
+        return p
+
+    def test_excerpts_injected_and_mode_rag(self, session, project_factory):
+        embed = MockEmbeddingProvider(dims=128)
+        self._seed_embedded(session, project_factory, embed)
+        chat = MockLLMProvider(responses=["50% on signing. (Payments.pdf)"])
+
+        resp = AiAssistant(session).answer_with_llm(
+            "what do our client payment terms say?", chat,
+            embedding_provider=embed, min_similarity=0.0,
+        )
+        assert resp.mode == "rag"
+        assert resp.sources and resp.sources[0]["document_name"] == "Payments.pdf"
+        # The prompt actually carried the excerpts + the RAG system rule.
+        user_msg = chat.calls[0]["messages"][0].content
+        assert "RELEVANT DOCUMENT EXCERPTS" in user_msg
+        assert "Payments.pdf" in user_msg
+        assert "DOCUMENT EXCERPTS (RAG)" in chat.calls[0]["system"]
+
+    def test_no_embedding_provider_is_plain_llm(self, session, project_factory):
+        embed = MockEmbeddingProvider(dims=128)
+        self._seed_embedded(session, project_factory, embed)
+        chat = MockLLMProvider(responses=["plain answer"])
+
+        resp = AiAssistant(session).answer_with_llm(
+            "what do our payment terms say?", chat,  # no embedding_provider
+        )
+        assert resp.mode == "llm"
+        assert resp.sources is None
+        assert "RELEVANT DOCUMENT EXCERPTS" not in chat.calls[0]["messages"][0].content
+
+    def test_empty_corpus_is_plain_llm(self, session, project_factory):
+        project_factory(name="No Embeds Proj")  # nothing embedded
+        embed = MockEmbeddingProvider(dims=128)
+        chat = MockLLMProvider(responses=["plain answer"])
+
+        resp = AiAssistant(session).answer_with_llm(
+            "what do our payment terms say?", chat, embedding_provider=embed,
+        )
+        assert resp.mode == "llm"
+        assert resp.sources is None
+
+    def test_retrieval_error_falls_back_to_llm(self, session, project_factory):
+        embed = MockEmbeddingProvider(dims=128)
+        self._seed_embedded(session, project_factory, embed)
+
+        class _BoomEmbed(MockEmbeddingProvider):
+            def embed(self, texts):
+                raise RuntimeError("boom")
+
+        chat = MockLLMProvider(responses=["plain answer"])
+        resp = AiAssistant(session).answer_with_llm(
+            "what do our payment terms say?", chat,
+            embedding_provider=_BoomEmbed(dims=128), min_similarity=0.0,
+        )
+        # Retrieval blew up -> no excerpts, but the answer still comes back.
+        assert resp.mode == "llm"
+        assert resp.sources is None
 
 
 class TestMigration:

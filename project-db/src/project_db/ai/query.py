@@ -80,6 +80,10 @@ class AiResponse:
     mode: str            # "canned" | "llm" | "sql" | "rag"
     answer: Any
     used_report: str | None = None
+    # When RAG supplied document excerpts, the chunks that were fed to the
+    # model (document_name / similarity / chunk_index) so the CLI + UI can
+    # show "answered using N document excerpts" with citations.
+    sources: list[dict[str, Any]] | None = None
 
 
 class AiAssistant:
@@ -159,12 +163,55 @@ class AiAssistant:
             answer=REPORT_REGISTRY[name](self.session, **kwargs),
         )
 
-    def answer_with_llm(self, question: str, provider: LLMProvider) -> AiResponse:
+    def _retrieve_context(
+        self, question: str, embedding_provider: Any, *,
+        top_k: int, min_similarity: float,
+    ) -> list[dict[str, Any]]:
+        """Best-effort RAG retrieval for the askbot.
+
+        Scopes to a named project when the question references one, else
+        searches the whole corpus.  Never raises -- a retrieval hiccup (no
+        embeddings yet, API error) just yields no excerpts and the askbot
+        falls back to the metadata snapshot.
+        """
+        try:
+            from project_db.ai.rag import retrieve_chunks
+            from project_db.ai.views import _resolve_project
+
+            project_id = None
+            ref = extract_project_ref(question)
+            if ref:
+                proj = _resolve_project(self.session, ref)
+                if proj is not None:
+                    project_id = proj.canonical_id
+            return retrieve_chunks(
+                self.session, embedding_provider, question,
+                project_id=project_id, top_k=top_k, min_similarity=min_similarity,
+            )
+        except Exception:  # noqa: BLE001 -- retrieval must never break ask
+            return []
+
+    def answer_with_llm(
+        self,
+        question: str,
+        provider: LLMProvider,
+        *,
+        embedding_provider: Any | None = None,
+        top_k: int = 8,
+        min_similarity: float = 0.2,
+    ) -> AiResponse:
         """Answer a free-form question with an LLM over the whole-DB snapshot.
 
         The escalation path when ``ask`` matches no canned report.
         ``provider`` should be a small/fast model (Haiku tier, via
         ``get_fast_provider``).
+
+        When ``embedding_provider`` is supplied AND the corpus has embedded
+        chunks, the most relevant document excerpts are retrieved (RAG) and
+        fed to the model as quotable, citable hard facts -- this is what lets
+        the askbot answer clause-level questions ("what do our payment terms
+        say?") that the metadata snapshot alone cannot.  Mode becomes "rag"
+        and the cited chunks are returned in ``sources``.
 
         Prompt philosophy (2025-05-26 rewrite): be ASSERTIVE and
         inferential.  The previous prompt was over-conservative -- it
@@ -238,14 +285,61 @@ class AiAssistant:
             "- Never end at a dead end -- end with the best conclusion the "
             "data supports."
         )
+        # RAG: retrieve the most relevant document excerpts and feed them as
+        # quotable, citable hard facts.  Best-effort -- no embedding provider
+        # or no embedded chunks just means we answer from the metadata
+        # snapshot, exactly as before.
+        chunks = (
+            self._retrieve_context(
+                question, embedding_provider,
+                top_k=top_k, min_similarity=min_similarity,
+            )
+            if embedding_provider is not None else []
+        )
+        excerpts_block = ""
+        sources: list[dict[str, Any]] | None = None
+        if chunks:
+            system = system + (
+                "\n\nDOCUMENT EXCERPTS (RAG):\n"
+                "- Below the snapshot you are given verbatim excerpts "
+                "retrieved from the company's ACTUAL project documents. You "
+                "MAY treat these as hard facts and quote them directly.\n"
+                "- When you use an excerpt, CITE it by its document name in "
+                "parentheses, e.g. (Final SOW.pdf).\n"
+                "- Do not invent document text beyond what the excerpts show."
+            )
+            _lines = [
+                f"[{i}] ({c['document_name']}) "
+                f"{' '.join((c['text'] or '').split())}"
+                for i, c in enumerate(chunks, 1)
+            ]
+            excerpts_block = (
+                "RELEVANT DOCUMENT EXCERPTS (retrieved by semantic search):\n"
+                + "\n\n".join(_lines)
+                + "\n\n---\n\n"
+            )
+            sources = [
+                {
+                    "document_name": c["document_name"],
+                    "document_id": c["document_id"],
+                    "chunk_index": c["chunk_index"],
+                    "similarity": c["similarity"],
+                    "project_id": c.get("project_id"),
+                }
+                for c in chunks
+            ]
+
         # Instruction at the TAIL: if the snapshot ever overflows the
         # context window, a front-loaded instruction is the first thing
         # truncated.
         user = (
+            f"{excerpts_block}"
             f"DATABASE SNAPSHOT (JSON):\n{json.dumps(snapshot, default=str)}\n\n"
             "---\n\n"
             f"QUESTION: {question}\n\n"
-            "Answer using the snapshot above.  First give the strongest "
+            "Answer using the excerpts and snapshot above.  Prefer the "
+            "document excerpts for clause-level / contract / scope wording "
+            "and cite them by document name.  First give the strongest "
             "directly supported answer.  If the exact answer is not "
             "present, infer the closest useful answer from adjacent "
             "records and label the inference.  Do not stop at missing "
@@ -265,5 +359,8 @@ class AiAssistant:
                 mode="llm", used_report=None, answer=f"LLM call failed: {exc}",
             )
         return AiResponse(
-            mode="llm", used_report=None, answer=resp.content.strip(),
+            mode="rag" if chunks else "llm",
+            used_report=None,
+            answer=resp.content.strip(),
+            sources=sources,
         )

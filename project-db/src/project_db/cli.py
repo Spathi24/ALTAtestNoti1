@@ -199,7 +199,15 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 f"[asking {provider.name} -- reading the database snapshot...]",
                 file=sys.stderr,
             )
-            response = assistant.answer_with_llm(question, provider)
+            # RAG: feed relevant document excerpts when embeddings are
+            # available (and something has been embedded).  Free-ish: embeds
+            # only the short question, and only if there are candidate chunks.
+            from project_db.ai.embeddings import get_optional_embedding_provider
+
+            embed_provider = get_optional_embedding_provider()
+            response = assistant.answer_with_llm(
+                question, provider, embedding_provider=embed_provider,
+            )
 
         print(f"[mode={response.mode}", end="")
         if response.used_report:
@@ -210,6 +218,15 @@ def cmd_ask(args: argparse.Namespace) -> int:
             print(response.answer)
         else:
             print(json.dumps(response.answer, indent=2, default=str))
+        if response.sources:
+            print(f"\n[answered using {len(response.sources)} document "
+                  f"excerpt(s):]")
+            seen = []
+            for s in response.sources:
+                name = s.get("document_name") or "(unknown)"
+                if name not in seen:
+                    seen.append(name)
+                    print(f"  - {name} (similarity {s.get('similarity')})")
     return 0
 
 
