@@ -17,7 +17,7 @@ Add new reports here.  The naming convention is ``report_<topic>(...)``.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID as _UUID
@@ -1159,6 +1159,127 @@ def report_doctor(session: Session) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Commitments / Money-at-Risk -- deterministic reconciliation of obligations
+# ---------------------------------------------------------------------------
+#
+# The chokepoint for ContractObligation, mirroring report_project_financials for
+# money. The LLM extracted the obligations (with evidence); here we compute --
+# deterministically, no LLM (invariant N2) -- which ones are overdue, due soon,
+# or conditional, and how much money is at risk on each side.
+
+_OBLIGATION_DUE_SOON_DAYS = 30
+_OBLIGATION_STATUS_RANK = {
+    "overdue": 4, "due_soon": 3, "conditional": 2, "upcoming": 1, "open": 0,
+}
+
+
+def _obligation_status(ob: Any, today: date, due_soon_days: int) -> str:
+    """Deterministic status for one obligation from its date / trigger."""
+    if ob.due_date is not None:
+        if ob.due_date < today:
+            return "overdue"
+        if ob.due_date <= today + timedelta(days=due_soon_days):
+            return "due_soon"
+        return "upcoming"
+    if ob.trigger:
+        return "conditional"   # depends on a condition, no fixed date
+    return "open"
+
+
+def report_commitments(
+    session: Session,
+    project_ref: str,
+    *,
+    today: date | None = None,
+    due_soon_days: int = _OBLIGATION_DUE_SOON_DAYS,
+) -> dict[str, Any]:
+    """Per-project obligations with deterministic status + money-at-risk totals.
+
+    Returns ``{"error": ...}`` on an unresolved ref; zeros + a ``note`` when the
+    project has no extracted obligations (pointing at ``extract-obligations``).
+    Pure / JSON-serializable. ``owed_to_us`` overdue = revenue past due to
+    collect; ``owed_by_us`` overdue = a payment/deadline we've missed.
+    """
+    from project_db.db.models import ContractObligation
+
+    project = _resolve_project(session, project_ref)
+    if project is None:
+        return {"error": f"No project matched ref={project_ref!r}"}
+    today = today or date.today()
+
+    obs = (
+        session.query(ContractObligation)
+        .filter(ContractObligation.project_id == project.canonical_id)
+        .all()
+    )
+    doc_names = {
+        d.canonical_id: d.name
+        for d in session.query(Document)
+        .filter(Document.project_id == project.canonical_id)
+        .all()
+    }
+
+    rows: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    money = {
+        "owed_to_us_overdue": Decimal(0), "owed_to_us_total": Decimal(0),
+        "owed_by_us_overdue": Decimal(0), "owed_by_us_total": Decimal(0),
+    }
+    for ob in obs:
+        status = _obligation_status(ob, today, due_soon_days)
+        counts[status] = counts.get(status, 0) + 1
+        amt = ob.amount if ob.amount is not None else Decimal(0)
+        if ob.direction == "owed_to_us":
+            money["owed_to_us_total"] += amt
+            if status == "overdue":
+                money["owed_to_us_overdue"] += amt
+        elif ob.direction == "owed_by_us":
+            money["owed_by_us_total"] += amt
+            if status == "overdue":
+                money["owed_by_us_overdue"] += amt
+        rows.append({
+            "canonical_id": _ser(ob.canonical_id),
+            "kind": ob.kind,
+            "direction": ob.direction,
+            "status": status,
+            "amount": _ser(ob.amount),
+            "currency": ob.currency,
+            "due_date": _ser(ob.due_date),
+            "trigger": ob.trigger,
+            "description": ob.description,
+            "counterparty": ob.counterparty,
+            "quoted_excerpt": ob.quoted_excerpt,
+            "confidence": ob.confidence,
+            "amount_verified": ob.amount_verified,
+            "document_id": _ser(ob.document_id),
+            "document_name": doc_names.get(ob.document_id),
+        })
+
+    # Most urgent first (status rank, then larger amounts).
+    rows.sort(
+        key=lambda r: (
+            _OBLIGATION_STATUS_RANK.get(r["status"], 0),
+            float(r["amount"] or 0),
+        ),
+        reverse=True,
+    )
+
+    return {
+        "project": {"canonical_id": _ser(project.canonical_id), "name": project.name},
+        "generated_on": today.isoformat(),
+        "obligation_count": len(obs),
+        "counts": counts,
+        "money_at_risk": {k: float(v) for k, v in money.items()},
+        "obligations": rows,
+        "note": (
+            None if obs else
+            "No obligations extracted yet. Run: project_db extract-obligations "
+            f"{project.name}"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Attention briefing -- the Monday-morning risk-and-money surface
 # ---------------------------------------------------------------------------
 #
@@ -1375,6 +1496,56 @@ def report_attention_briefing(
                      "Drive. The contract may be elsewhere, or the folder match "
                      "missed it."),
              link=f"/projects/{p.get('canonical_id')}")
+
+    # --- COMMITMENTS (Money-at-Risk) -----------------------------------------
+    # Overdue / due-soon contract obligations: revenue past due to collect, or a
+    # payment/deadline we owe. Same deterministic status as report_commitments.
+    from project_db.db.models import ContractObligation as _Oblig
+
+    oblig_by_proj: dict[Any, list[Any]] = {}
+    for ob in session.query(_Oblig).filter(_Oblig.project_id.isnot(None)).all():
+        oblig_by_proj.setdefault(ob.project_id, []).append(ob)
+
+    def _ex(o: Any) -> str:
+        return (o.description or o.kind or "obligation").strip()
+
+    for pid, obs in oblig_by_proj.items():
+        if pid not in proj_by_id:
+            continue
+        name = _name(pid)
+        link = f"/projects/{_ser(pid)}"
+        statuses = [(o, _obligation_status(o, today, _OBLIGATION_DUE_SOON_DAYS)) for o in obs]
+        overdue_in = [o for o, s in statuses if s == "overdue" and o.direction == "owed_to_us"]
+        overdue_out = [o for o, s in statuses if s == "overdue" and o.direction == "owed_by_us"]
+        due_soon = [o for o, s in statuses if s == "due_soon"]
+
+        if overdue_in:
+            amt = float(sum((o.amount or 0) for o in overdue_in))
+            _add(pid, name, "commitments", "high",
+                 weight=amt or len(overdue_in) * 100,
+                 headline=(f"{name}: {amt:,.0f} past due to collect" if amt
+                           else f"{name}: {len(overdue_in)} overdue receivable(s)"),
+                 detail=(f"{len(overdue_in)} obligation(s) the client owes us are past "
+                         f"due (e.g. \"{_ex(overdue_in[0])}\"). Revenue at risk if not "
+                         f"chased."),
+                 link=link)
+        if overdue_out:
+            amt = float(sum((o.amount or 0) for o in overdue_out))
+            _add(pid, name, "commitments", "high",
+                 weight=amt or len(overdue_out) * 100,
+                 headline=f"{name}: {len(overdue_out)} obligation(s) overdue",
+                 detail=(f"{len(overdue_out)} payment/deadline obligation(s) we owe are "
+                         f"past due (e.g. \"{_ex(overdue_out[0])}\"). Penalty / late "
+                         f"exposure."),
+                 link=link)
+        if due_soon:
+            amt = float(sum((o.amount or 0) for o in due_soon))
+            _add(pid, name, "commitments", "medium",
+                 weight=amt or len(due_soon) * 10,
+                 headline=f"{name}: {len(due_soon)} obligation(s) due soon",
+                 detail=(f"Due within {_OBLIGATION_DUE_SOON_DAYS} days "
+                         f"(e.g. \"{_ex(due_soon[0])}\")."),
+                 link=link)
 
     # --- RANK + CAP ----------------------------------------------------------
     # Stable two-pass sort: name asc first, then (severity, weight) desc on top,

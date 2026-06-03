@@ -1391,6 +1391,50 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_commitments(args: argparse.Namespace) -> int:
+    """Money-at-Risk for one project (read-only): obligations + their status.
+
+    Deterministic over already-extracted ContractObligation rows -- no LLM.
+    Thin renderer over ``ai.views.report_commitments``.
+    """
+    from project_db.ai.views import report_commitments
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        data = report_commitments(s, args.project)
+
+    if data.get("error"):
+        print(f"FAIL: {data['error']}", file=sys.stderr)
+        return 2
+
+    print(f"=== COMMITMENTS: {data['project']['name']} ({data['generated_on']}) ===")
+    if not data["obligation_count"]:
+        print(f"  {data.get('note') or 'No obligations on file.'}")
+        return 0
+
+    m = data["money_at_risk"]
+    print(f"  Money at risk -- to collect (overdue): ${m['owed_to_us_overdue']:,.0f} "
+          f"of ${m['owed_to_us_total']:,.0f}  |  we owe (overdue): "
+          f"${m['owed_by_us_overdue']:,.0f} of ${m['owed_by_us_total']:,.0f}")
+    print("  by status: " + ", ".join(
+        f"{k} {v}" for k, v in sorted(data["counts"].items())))
+    print()
+
+    tag = {"overdue": "[OVERDUE]", "due_soon": "[SOON]   ",
+           "conditional": "[COND]   ", "upcoming": "[FUTURE] ", "open": "[OPEN]   "}
+    for ob in data["obligations"][:40]:
+        amt = f"${float(ob['amount']):,.2f}" if ob["amount"] is not None else "(no amount)"
+        when = ob["due_date"] or (ob["trigger"] or "?")
+        print(f"  {tag.get(ob['status'], '')} [{ob['kind']}/{ob['direction']}] "
+              f"{amt} due {when}")
+        if ob["description"]:
+            print(f"       {ob['description']}")
+    return 0
+
+
 def cmd_briefing(args: argparse.Namespace) -> int:
     """Portfolio attention briefing (read-only): the cross-system truths that
     need a PM's attention -- money risk, scope gaps, overdue tasks, missing
@@ -1957,6 +2001,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of items to show (default 25)",
     )
     briefing.set_defaults(func=cmd_briefing)
+
+    commit = sub.add_parser(
+        "commitments",
+        help="Money-at-Risk for a project (read-only): contract obligations "
+             "with overdue/due-soon status. No LLM.",
+    )
+    commit.add_argument("project", help="Project canonical UUID or name fragment")
+    commit.set_defaults(func=cmd_commitments)
 
     rebuild = sub.add_parser(
         "rebuild",

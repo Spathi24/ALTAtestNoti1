@@ -7,12 +7,13 @@ attribution, skip-rules, and the all-or-nothing snapshot.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine, inspect, text
 
 from project_db.ai.obligations import extract_obligations_for_project
+from project_db.ai.views import report_attention_briefing, report_commitments
 from project_db.ai.providers import LLMProviderError
 from project_db.ai.providers.mock import MockLLMProvider
 from project_db.db.base import Base
@@ -34,6 +35,77 @@ def _contract_doc(session, project, *, name, body):
 
 def _mock(obligations):
     return MockLLMProvider(responses=[json.dumps({"obligations": obligations})])
+
+
+TODAY = date(2026, 6, 3)
+
+
+def _oblig(session, project, **kw):
+    defaults = dict(project_id=project.canonical_id, kind="payment_milestone",
+                    direction="owed_to_us")
+    defaults.update(kw)
+    o = ContractObligation(**defaults)
+    session.add(o)
+    session.flush()
+    return o
+
+
+class TestCommitmentsReport:
+    def test_status_and_money_at_risk(self, session, project_factory):
+        p = project_factory(name="Commit Proj")
+        _oblig(session, p, direction="owed_to_us", amount=Decimal("10000"),
+               due_date=TODAY - timedelta(days=5))                 # overdue
+        _oblig(session, p, kind="penalty", direction="owed_by_us",
+               amount=Decimal("500"), due_date=TODAY + timedelta(days=10))  # due_soon
+        _oblig(session, p, kind="settlement", direction="owed_to_us",
+               amount=Decimal("8000"), trigger="on key return")    # conditional
+        _oblig(session, p, kind="deposit", direction="owed_to_us",
+               amount=Decimal("2000"), due_date=TODAY + timedelta(days=90))  # upcoming
+        session.commit()
+
+        rep = report_commitments(session, str(p.canonical_id), today=TODAY)
+        assert rep["obligation_count"] == 4
+        assert rep["counts"]["overdue"] == 1
+        assert rep["counts"]["due_soon"] == 1
+        assert rep["counts"]["conditional"] == 1
+        assert rep["money_at_risk"]["owed_to_us_overdue"] == 10000.0
+        assert rep["money_at_risk"]["owed_to_us_total"] == 20000.0
+        assert rep["money_at_risk"]["owed_by_us_total"] == 500.0
+        assert rep["obligations"][0]["status"] == "overdue"        # most urgent first
+
+    def test_error_on_bad_ref(self, session):
+        assert report_commitments(session, "no-such-project").get("error")
+
+    def test_empty_project_has_note(self, session, project_factory):
+        p = project_factory(name="No Oblig Proj")
+        rep = report_commitments(session, str(p.canonical_id), today=TODAY)
+        assert rep["obligation_count"] == 0 and rep["note"]
+
+
+class TestBriefingCommitments:
+    def test_overdue_receivable_surfaces_high(self, session, project_factory):
+        p = project_factory(name="AtRisk Proj")
+        _oblig(session, p, direction="owed_to_us", amount=Decimal("12000"),
+               due_date=TODAY - timedelta(days=3), description="final payment")
+        session.commit()
+        items = [
+            i for i in report_attention_briefing(session, today=TODAY)["items"]
+            if i["category"] == "commitments" and i["project_id"] == str(p.canonical_id)
+        ]
+        assert items and items[0]["severity"] == "high"
+        assert "collect" in items[0]["headline"]
+
+    def test_due_soon_obligation_is_medium(self, session, project_factory):
+        p = project_factory(name="Soon Proj")
+        _oblig(session, p, kind="insurance_expiry", direction="owed_by_us",
+               amount=Decimal("500"), due_date=TODAY + timedelta(days=5),
+               description="insurance renewal")
+        session.commit()
+        items = [
+            i for i in report_attention_briefing(session, today=TODAY)["items"]
+            if i["category"] == "commitments" and i["project_id"] == str(p.canonical_id)
+        ]
+        assert items and items[0]["severity"] == "medium"
 
 
 class TestMigration:
