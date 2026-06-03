@@ -125,6 +125,32 @@ SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
     "is_rollup": "BOOLEAN",
 }
 
+SQLITE_CONTRACT_OBLIGATION_DDL = """
+CREATE TABLE contract_obligation (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    document_id TEXT,
+    kind VARCHAR NOT NULL DEFAULT 'other',
+    direction VARCHAR NOT NULL DEFAULT 'unknown',
+    description TEXT,
+    amount NUMERIC(14, 2),
+    currency VARCHAR,
+    due_date DATE,
+    trigger VARCHAR,
+    counterparty VARCHAR,
+    quoted_excerpt TEXT,
+    confidence FLOAT,
+    amount_verified BOOLEAN,
+    prompt_version VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+)
+"""
+
 SQLITE_DOCUMENT_CHUNK_DDL = """
 CREATE TABLE document_chunk (
     canonical_id TEXT PRIMARY KEY,
@@ -203,6 +229,9 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(
             conn, tables, "document_financial_status",
             SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL,
+        )
+        _create_table_if_missing(
+            conn, tables, "contract_obligation", SQLITE_CONTRACT_OBLIGATION_DDL
         )
         _create_table_if_missing(
             conn, tables, "document_chunk", SQLITE_DOCUMENT_CHUNK_DDL

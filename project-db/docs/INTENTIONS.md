@@ -169,6 +169,25 @@ larger prize.
   and surfacing in a **new "Pipeline" briefing view** ranked by score, each lead
   with its evidence + the contact path.
 
+**Partner's data pipeline (as described by the teammate, 2026-06-03) — the
+actual feed this layer would consume:**
+- *Property/owner outreach pipeline:* a Montreal-wide **properties CSV** keyed
+  by **matricule** -> search matricule on Montreal.ca (form + scraper bot) ->
+  **owning company name** -> look that company up on **REQ** (Registraire des
+  entreprises du Quebec) -> **owner + shareholder names** (individuals) ->
+  web / LinkedIn search -> **contact info**. Output: per-property owner contacts.
+- *Contractor-lead pipeline:* contractors within ~50 km with a **verified
+  website** -> email CSV -> automated outreach via **Instantly** (anti-spam) ->
+  invite to a **form** (management + HR-operations sections) -> submissions
+  matched into a **Supabase** DB (by VAT/phone; website already stored) -> a
+  connected **review dashboard**.
+- ALTA integration notes: **matricule** is the natural external key for the
+  existing `Property` entity; REQ owner/shareholder records map to `Client` /
+  `Lead` people via the resolver; the **Supabase** store + **Instantly**
+  campaign are existing external systems to *read from* (a future connector),
+  not to rebuild. ALTA's distinct edge is the **viability/profit scoring + the
+  canonical join** layered on top of this feed.
+
 **Realistic first slice (when the data feed is stable):**
 - Ingest the teammate's lot dataset into `Property` (lot number = external key)
   + owning-company → `Client`/`Lead` via the resolver.

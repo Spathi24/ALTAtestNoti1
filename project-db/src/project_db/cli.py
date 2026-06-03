@@ -509,6 +509,65 @@ def cmd_rag_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract_obligations(args: argparse.Namespace) -> int:
+    """Extract dated/dollar obligations from a project's contract documents.
+
+    Payment milestones, retainage, penalties, deposits, settlements, insurance/
+    permit deadlines -> ContractObligation rows, each with the verbatim clause.
+    Calls the LLM (batched); fresh-snapshot per run. Nothing leaves the local DB.
+    """
+    from project_db.ai import LLMProviderError, get_default_provider
+    from project_db.ai.obligations import extract_obligations_for_project
+    from project_db.ai.views import _resolve_project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        provider = get_default_provider()
+    except LLMProviderError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        print(f"Provider: {provider.name}")
+        print(f"Project:  {project.name}  ({project.canonical_id})")
+        print("Extracting contract obligations (this calls the LLM, batched)...")
+        try:
+            batch = extract_obligations_for_project(s, provider, project.canonical_id)
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(batch.summary())
+        if batch.errors:
+            print(f"\n  {len(batch.errors)} error(s):")
+            for e in batch.errors[:20]:
+                print(f"    - {e}")
+        if batch.warnings:
+            print(f"\n  {len(batch.warnings)} item(s) flagged:")
+            for w in batch.warnings[:20]:
+                print(f"    - {w}")
+        if batch.obligations:
+            print("\n  Obligations:")
+            for ob in batch.obligations[:40]:
+                amt = f"${ob.amount:,.2f}" if ob.amount is not None else "(no amount)"
+                when = ob.due_date.isoformat() if ob.due_date else (ob.trigger or "?")
+                verify = "" if ob.amount is None else (
+                    " [verified]" if ob.amount_verified else " [UNVERIFIED]")
+                print(f"    - [{ob.kind}/{ob.direction}] {amt} due {when}{verify}")
+                if ob.description:
+                    print(f"        {ob.description}")
+    return 0
+
+
 def cmd_extract_financials(args: argparse.Namespace) -> int:
     """Extract monetary records from a project's Drive financial documents.
 
@@ -1938,6 +1997,15 @@ def build_parser() -> argparse.ArgumentParser:
              "candidates; documents are batched across multiple LLM calls)",
     )
     ef.set_defaults(func=cmd_extract_financials)
+
+    eo = sub.add_parser(
+        "extract-obligations",
+        help="Extract dated/dollar obligations (milestones, retainage, "
+             "penalties, deposits, settlements, deadlines) from a project's "
+             "contract documents. Calls the LLM; fresh-snapshot per run.",
+    )
+    eo.add_argument("project", help="Project canonical UUID or name fragment")
+    eo.set_defaults(func=cmd_extract_obligations)
 
     ed = sub.add_parser(
         "embed-documents",

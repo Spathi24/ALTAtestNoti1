@@ -20,6 +20,11 @@ from project_db.db.models.finance import (
     Invoice,
     InvoiceStatus,
 )
+from project_db.db.models.obligations import (
+    OBLIGATION_DIRECTIONS,
+    OBLIGATION_KINDS,
+    ContractObligation,
+)
 from project_db.db.models.proposals import Proposal, ProposalStatus
 from project_db.db.models.rag import DocumentChunk
 from project_db.db.models.roadmap import (
@@ -38,10 +43,13 @@ from project_db.db.models.work import (
 
 __all__ = [
     "Client",
+    "ContractObligation",
     "DailyLog",
     "Deal",
     "Document",
     "DocumentChunk",
+    "OBLIGATION_DIRECTIONS",
+    "OBLIGATION_KINDS",
     "DocumentFinancialStatus",
     "DocumentText",
     "ExternalId",
