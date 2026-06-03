@@ -395,6 +395,103 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_embed_documents(args: argparse.Namespace) -> int:
+    """Chunk + embed document text into vectors for RAG (OpenAI embeddings).
+
+    Idempotent: unchanged documents are skipped (no re-charge). Run after
+    `extract-content`. This spends OpenAI embedding tokens -- cost is printed.
+    """
+    from project_db.ai.embeddings import EmbeddingError, get_embedding_provider
+    from project_db.ai.rag import embed_documents_for, embedding_coverage
+    from project_db.ai.views import _resolve_project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        provider = get_embedding_provider()
+    except EmbeddingError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project_id = None
+        if args.project:
+            p = _resolve_project(s, args.project)
+            if p is None:
+                print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+                return 2
+            project_id = p.canonical_id
+            print(f"Project: {p.name} ({p.canonical_id})")
+        print(f"Embedding model: {provider.model} ({provider.dims} dims)")
+        print("Chunking + embedding (calls the OpenAI embeddings API)...")
+        stats = embed_documents_for(
+            s, provider,
+            project_id=project_id,
+            overwrite=bool(args.overwrite),
+            limit=int(args.limit) if args.limit else None,
+        )
+        print()
+        print(f"  Documents: {stats['documents_processed']} embedded, "
+              f"{stats['documents_skipped']} unchanged, of "
+              f"{stats['documents_total']} with text")
+        print(f"  Chunks embedded:  {stats['chunks_embedded']}")
+        print(f"  Tokens (approx):  {stats['tokens_embedded']:,}")
+        print(f"  Est. cost (USD):  ${stats['estimated_cost_usd']:.4f}")
+        if stats["interrupted"]:
+            print("  (interrupted -- progress committed; re-run to continue)")
+        cov = embedding_coverage(s)
+        print(f"  Coverage: {cov['documents_embedded']}/"
+              f"{cov['documents_with_text']} docs embedded, "
+              f"{cov['chunks']} chunks total")
+    return 0
+
+
+def cmd_rag_search(args: argparse.Namespace) -> int:
+    """Retrieve the most relevant document chunks for a query (RAG debug).
+
+    Embeds the query and returns the top cosine-similar stored chunks. Useful
+    for sanity-checking retrieval before it feeds the askbot.
+    """
+    from project_db.ai.embeddings import EmbeddingError, get_embedding_provider
+    from project_db.ai.rag import retrieve_chunks
+    from project_db.ai.views import _resolve_project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        provider = get_embedding_provider()
+    except EmbeddingError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project_id = None
+        if args.project:
+            p = _resolve_project(s, args.project)
+            if p is None:
+                print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+                return 2
+            project_id = p.canonical_id
+        hits = retrieve_chunks(
+            s, provider, args.query,
+            project_id=project_id, top_k=int(args.top_k),
+        )
+        if not hits:
+            print("No matching chunks. Run `embed-documents` first.")
+            return 0
+        print(f"Top {len(hits)} chunk(s) for: {args.query!r}\n")
+        for i, h in enumerate(hits, 1):
+            print(f"{i:>2}. sim={h['similarity']:.3f}  {h['document_name']}  "
+                  f"[chunk {h['chunk_index']}]")
+            snippet = " ".join((h["text"] or "")[:240].split())
+            print(f"      {snippet}...")
+    return 0
+
+
 def cmd_extract_financials(args: argparse.Namespace) -> int:
     """Extract monetary records from a project's Drive financial documents.
 
@@ -1752,6 +1849,31 @@ def build_parser() -> argparse.ArgumentParser:
              "candidates; documents are batched across multiple LLM calls)",
     )
     ef.set_defaults(func=cmd_extract_financials)
+
+    ed = sub.add_parser(
+        "embed-documents",
+        help="Embed document text into vectors for RAG (OpenAI embeddings). "
+             "Idempotent; skips unchanged docs. Run after extract-content.",
+    )
+    ed.add_argument("--project", default=None,
+                    help="Limit to one project (UUID or name fragment)")
+    ed.add_argument("--overwrite", action="store_true",
+                    help="Re-embed even unchanged documents")
+    ed.add_argument("--limit", type=int, default=None,
+                    help="Cap the number of documents processed")
+    ed.set_defaults(func=cmd_embed_documents)
+
+    rs = sub.add_parser(
+        "rag-search",
+        help="Retrieve the most relevant document chunks for a query (RAG "
+             "debug surface).",
+    )
+    rs.add_argument("query", help="The search query")
+    rs.add_argument("--project", default=None,
+                    help="Limit retrieval to one project (UUID or name fragment)")
+    rs.add_argument("--top-k", type=int, default=8,
+                    help="Number of chunks to return (default 8)")
+    rs.set_defaults(func=cmd_rag_search)
 
     impr = sub.add_parser(
         "import-roadmap",

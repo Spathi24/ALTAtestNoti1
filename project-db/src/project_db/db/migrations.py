@@ -125,6 +125,36 @@ SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
     "is_rollup": "BOOLEAN",
 }
 
+SQLITE_DOCUMENT_CHUNK_DDL = """
+CREATE TABLE document_chunk (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    document_id TEXT NOT NULL,
+    project_id TEXT,
+    chunk_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    token_count INTEGER,
+    embedding BLOB,
+    embedding_model VARCHAR,
+    dims INTEGER,
+    content_hash VARCHAR NOT NULL,
+    embedded_at DATETIME,
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_DOCUMENT_CHUNK_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_document_chunk_document_id "
+    "ON document_chunk (document_id)",
+    "CREATE INDEX IF NOT EXISTS ix_document_chunk_project_id "
+    "ON document_chunk (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_document_chunk_content_hash "
+    "ON document_chunk (content_hash)",
+)
+
 SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL = """
 CREATE TABLE document_financial_status (
     document_id TEXT PRIMARY KEY,
@@ -174,6 +204,11 @@ def ensure_sqlite_schema(engine) -> None:
             conn, tables, "document_financial_status",
             SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL,
         )
+        _create_table_if_missing(
+            conn, tables, "document_chunk", SQLITE_DOCUMENT_CHUNK_DDL
+        )
+        for _idx_ddl in SQLITE_DOCUMENT_CHUNK_INDEXES:
+            conn.execute(text(_idx_ddl))
         # Post-DDL columns on roadmap_task (for DB files created before
         # the actor column landed).
         if "roadmap_task" in tables:

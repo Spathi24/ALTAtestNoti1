@@ -21,6 +21,7 @@ from project_db.db.models.finance import (
     InvoiceStatus,
 )
 from project_db.db.models.proposals import Proposal, ProposalStatus
+from project_db.db.models.rag import DocumentChunk
 from project_db.db.models.roadmap import (
     ROADMAP_PHASE_ORDER,
     RoadmapActor,
@@ -40,6 +41,7 @@ __all__ = [
     "DailyLog",
     "Deal",
     "Document",
+    "DocumentChunk",
     "DocumentFinancialStatus",
     "DocumentText",
     "ExternalId",
