@@ -22,12 +22,17 @@ from project_db.ai.rag import (
     embedding_coverage,
     retrieve_chunks,
 )
+from project_db.ai.proposals import (
+    generate_scope_proposals,
+    generate_timeline_proposals,
+)
 from project_db.ai.providers.mock import MockLLMProvider
 from project_db.ai.query import AiAssistant
 from project_db.db.base import Base
 from project_db.db.migrations import ensure_sqlite_schema
 from project_db.db.models import Document, DocumentChunk
 from project_db.db.models.docs import DocumentText
+from project_db.db.models.work import TaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +348,90 @@ class TestAskbotRag:
         # Retrieval blew up -> no excerpts, but the answer still comes back.
         assert resp.mode == "llm"
         assert resp.sources is None
+
+
+class TestRetrieveTrashed:
+    def test_trashed_doc_chunks_excluded(self, session, project_factory):
+        p = project_factory(name="Trash Retr Proj")
+        d = _doc_with_text(session, p, name="Old.pdf",
+                           body="client payment terms fifty percent on signing")
+        session.commit()
+        m = MockEmbeddingProvider(dims=64)
+        embed_documents_for(session, m)
+        assert retrieve_chunks(session, m, "payment") != []     # found while live
+        d.is_trashed = True
+        session.commit()
+        assert retrieve_chunks(session, m, "payment") == []     # excluded once trashed
+
+
+class TestProposalRag:
+    """Relevance excerpts feed the proposal bots as extra evidence (additive)."""
+
+    def _seed(self, session, project_factory, task_factory, embed):
+        p = project_factory(name="Prop RAG Proj")
+        _doc_with_text(
+            session, p, name="SOW.pdf",
+            body="Scope of work: demolition, framing, and final inspection. "
+                 "The contractor shall complete framing and pass final "
+                 "inspection per the project schedule and milestones.",
+        )
+        task_factory(project=p, title="Framing", status=TaskStatus.TODO)
+        session.commit()
+        embed_documents_for(session, embed)
+        return p
+
+    def test_timeline_injects_excerpts(self, session, project_factory, task_factory):
+        embed = MockEmbeddingProvider(dims=128)
+        p = self._seed(session, project_factory, task_factory, embed)
+
+        captured = {}
+
+        def on_call(**kw):
+            captured["user"] = kw["messages"][0].content
+            return '{"proposals": []}'
+
+        chat = MockLLMProvider(on_call=on_call)
+        batch = generate_timeline_proposals(
+            session, chat, p.canonical_id,
+            embedding_provider=embed, rag_min_similarity=0.0,
+        )
+        assert batch.rag_chunks_used >= 1
+        assert "RELEVANT DOCUMENT EXCERPTS" in captured["user"]
+
+    def test_timeline_without_embedding_has_no_excerpts(
+        self, session, project_factory, task_factory
+    ):
+        embed = MockEmbeddingProvider(dims=128)
+        p = self._seed(session, project_factory, task_factory, embed)
+
+        captured = {}
+
+        def on_call(**kw):
+            captured["user"] = kw["messages"][0].content
+            return '{"proposals": []}'
+
+        chat = MockLLMProvider(on_call=on_call)
+        batch = generate_timeline_proposals(session, chat, p.canonical_id)
+        assert batch.rag_chunks_used == 0
+        assert "RELEVANT DOCUMENT EXCERPTS" not in captured["user"]
+
+    def test_scope_injects_excerpts(self, session, project_factory, task_factory):
+        embed = MockEmbeddingProvider(dims=128)
+        p = self._seed(session, project_factory, task_factory, embed)
+
+        captured = {}
+
+        def on_call(**kw):
+            captured["user"] = kw["messages"][0].content
+            return '{"scope_gaps": []}'
+
+        chat = MockLLMProvider(on_call=on_call)
+        batch = generate_scope_proposals(
+            session, chat, p.canonical_id,
+            embedding_provider=embed, rag_min_similarity=0.0,
+        )
+        assert batch.rag_chunks_used >= 1
+        assert "RELEVANT DOCUMENT EXCERPTS" in captured["user"]
 
 
 class TestMigration:

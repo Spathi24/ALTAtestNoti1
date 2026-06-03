@@ -364,7 +364,15 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             )
 
         try:
-            batch = generate_timeline_proposals(session, provider, project.canonical_id)
+            from project_db.ai.embeddings import get_optional_embedding_provider
+            embed_provider = get_optional_embedding_provider()
+        except Exception:  # noqa: BLE001
+            embed_provider = None
+        try:
+            batch = generate_timeline_proposals(
+                session, provider, project.canonical_id,
+                embedding_provider=embed_provider,
+            )
         except Exception as exc:  # noqa: BLE001
             return _render_propose_result(
                 templates, request,
@@ -404,7 +412,15 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             )
 
         try:
-            batch = generate_scope_proposals(session, provider, project.canonical_id)
+            from project_db.ai.embeddings import get_optional_embedding_provider
+            embed_provider = get_optional_embedding_provider()
+        except Exception:  # noqa: BLE001
+            embed_provider = None
+        try:
+            batch = generate_scope_proposals(
+                session, provider, project.canonical_id,
+                embedding_provider=embed_provider,
+            )
         except Exception as exc:  # noqa: BLE001
             return _render_propose_result(
                 templates, request,

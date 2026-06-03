@@ -176,12 +176,16 @@ def retrieve_chunks(
     if not query or not query.strip():
         return []
 
+    # Join Document so chunks whose document was later trashed in Drive are
+    # excluded -- the soft-delete must not keep surfacing stale text.
     cq = (
         session.query(DocumentChunk)
+        .join(Document, Document.canonical_id == DocumentChunk.document_id)
         .filter(
             DocumentChunk.embedding.isnot(None),
             DocumentChunk.embedding_model == provider.model,
             DocumentChunk.dims == provider.dims,
+            Document.is_trashed.is_(False),
         )
     )
     if project_id is not None:

@@ -77,6 +77,7 @@ class ProposalBatch:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     skipped_reason: str | None = None  # set when the run was a no-op
+    rag_chunks_used: int = 0           # relevance-retrieved excerpts injected
 
     """``errors``   -- items REJECTED (never became a Proposal): bad index,
                        unparseable dates, end-before-start, etc.
@@ -110,6 +111,53 @@ class ProposalBatch:
 # ---------------------------------------------------------------------------
 
 
+def _retrieve_proposal_chunks(
+    session: Session,
+    embedding_provider: Any,
+    project_id: Any,
+    query: str,
+    *,
+    top_k: int,
+    min_similarity: float,
+) -> list[dict[str, Any]]:
+    """Best-effort relevance retrieval for proposal context.
+
+    Returns project-scoped chunks most relevant to the proposal's intent, so a
+    clause buried deep in a long contract (past the recency-truncation window
+    ``assemble_project_context`` applies) is still seen.  Never raises -- a
+    retrieval hiccup just yields no excerpts and the bots fall back to the
+    recency-ordered bodies exactly as before.  This is an INPUT upgrade only;
+    the conservative prompt posture is unchanged.
+    """
+    if embedding_provider is None:
+        return []
+    try:
+        from project_db.ai.rag import retrieve_chunks
+
+        return retrieve_chunks(
+            session, embedding_provider, query,
+            project_id=project_id, top_k=top_k, min_similarity=min_similarity,
+        )
+    except Exception:  # noqa: BLE001 -- retrieval must never break propose
+        return []
+
+
+def _render_rag_excerpts(rag_chunks: list[dict[str, Any]]) -> list[str]:
+    """Prompt lines for a RELEVANT DOCUMENT EXCERPTS section ([] when none)."""
+    if not rag_chunks:
+        return []
+    lines = [
+        "\n=== RELEVANT DOCUMENT EXCERPTS (semantic search -- the most "
+        "on-topic passages, which may come from parts of long documents not "
+        "shown in full below) ==="
+    ]
+    for c in rag_chunks:
+        body = " ".join((c.get("text") or "").split())
+        lines.append(f"\n--- EXCERPT from {c.get('document_name')} ---")
+        lines.append(body)
+    return lines
+
+
 def generate_timeline_proposals(
     session: Session,
     provider: LLMProvider,
@@ -122,6 +170,9 @@ def generate_timeline_proposals(
     token_budget: int = 20_000,
     max_documents_with_text: int = 30,
     max_output_tokens: int = 3000,
+    embedding_provider: Any | None = None,
+    rag_top_k: int = 8,
+    rag_min_similarity: float = 0.25,
 ) -> ProposalBatch:
     """Propose forward-looking start/end dates for a project's dateless tasks.
 
@@ -173,7 +224,22 @@ def generate_timeline_proposals(
         return batch
 
     today = date.today()
-    system, user = _build_timeline_prompt(ctx, dateless, dated, today)
+
+    # RAG: retrieve the passages most relevant to scheduling THESE tasks, so a
+    # milestone clause deep in a long contract is seen even when the recency
+    # truncation hid it.  Project-scoped; conservative posture unchanged.
+    rag_query = (
+        "construction schedule: start dates, end dates, durations, and "
+        "milestones for these tasks -- "
+        + "; ".join(t.get("title", "") for t in dateless[:25])
+    )
+    rag_chunks = _retrieve_proposal_chunks(
+        session, embedding_provider, project_id, rag_query,
+        top_k=rag_top_k, min_similarity=rag_min_similarity,
+    )
+    batch.rag_chunks_used = len(rag_chunks)
+
+    system, user = _build_timeline_prompt(ctx, dateless, dated, today, rag_chunks)
 
     try:
         raw = provider.complete_json(
@@ -198,6 +264,7 @@ def _build_timeline_prompt(
     dateless: list[dict[str, Any]],
     dated: list[dict[str, Any]],
     today: date,
+    rag_chunks: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Construct (system, user) for forward-looking timeline proposals.
 
@@ -266,6 +333,11 @@ def _build_timeline_prompt(
     for i, t in enumerate(dateless):
         sub = " [subitem]" if t.get("is_subitem") else ""
         lines.append(f"[{i}] {t.get('title', '(untitled)')}{sub}")
+
+    # Relevance-retrieved excerpts (RAG) -- targeted passages first, so a
+    # schedule clause from deep in a long contract is visible even when the
+    # recency truncation below cut it.
+    lines.extend(_render_rag_excerpts(rag_chunks or []))
 
     # Document bodies -- secondary evidence.  Each is introduced with its
     # Drive folder path and type so the model can tell a contract from an
@@ -477,6 +549,9 @@ def generate_scope_proposals(
     # 6554 Rue Saint Hubert produced 9k-character truncated JSON on the
     # first attempt AND the retry, with no useful result.
     max_output_tokens: int = 5000,
+    embedding_provider: Any | None = None,
+    rag_top_k: int = 8,
+    rag_min_similarity: float = 0.25,
 ) -> ProposalBatch:
     """Flag scope-of-work items in a project's documents that have no Monday task.
 
@@ -511,7 +586,19 @@ def generate_scope_proposals(
         )
         return batch
 
-    system, user = _build_scope_prompt(ctx)
+    # RAG: pull the most scope-relevant passages (project-scoped) so deliverables
+    # listed deep in a long SOW aren't missed by the recency truncation.
+    rag_query = (
+        f"{project_name} scope of work: deliverables, responsibilities, and "
+        "items the contractor must perform"
+    )
+    rag_chunks = _retrieve_proposal_chunks(
+        session, embedding_provider, project_id, rag_query,
+        top_k=rag_top_k, min_similarity=rag_min_similarity,
+    )
+    batch.rag_chunks_used = len(rag_chunks)
+
+    system, user = _build_scope_prompt(ctx, rag_chunks)
     try:
         raw = provider.complete_json(
             messages=[LLMMessage(role="user", content=user)],
@@ -529,7 +616,10 @@ def generate_scope_proposals(
     return batch
 
 
-def _build_scope_prompt(ctx: ProjectContext) -> tuple[str, str]:
+def _build_scope_prompt(
+    ctx: ProjectContext,
+    rag_chunks: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
     """Construct (system, user) for scope-reconciliation proposals.
 
     The model is shown the project's contract / scope-of-work documents and
@@ -574,6 +664,10 @@ def _build_scope_prompt(ctx: ProjectContext) -> tuple[str, str]:
             lines.append(f"- {t.get('title', '(untitled)')}{sub}")
     else:
         lines.append("(none -- this project has no tasks yet)")
+
+    # Relevance-retrieved excerpts (RAG) first -- targeted scope passages,
+    # including from parts of long SOWs the recency truncation below cut.
+    lines.extend(_render_rag_excerpts(rag_chunks or []))
 
     lines.append(f"\n=== DOCUMENT TEXT ({len(ctx.document_texts)} document(s)) ===")
     for d in ctx.document_texts:

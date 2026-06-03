@@ -816,17 +816,26 @@ def cmd_propose(args: argparse.Namespace) -> int:
             print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
             return 2
 
+        from project_db.ai.embeddings import get_optional_embedding_provider
+        embed_provider = get_optional_embedding_provider()
+
         print(f"Provider: {provider.name}")
         print(f"Project:  {project.name}  ({project.canonical_id})")
         print(f"Generating {kind_label} proposals (this calls the LLM)...")
         try:
-            batch = generator(s, provider, project.canonical_id)
+            batch = generator(
+                s, provider, project.canonical_id,
+                embedding_provider=embed_provider,
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
 
         print()
         print(batch.summary())
+        if batch.rag_chunks_used:
+            print(f"  (+{batch.rag_chunks_used} relevance-retrieved document "
+                  f"excerpt(s) used as extra evidence)")
         for p in batch.proposals:
             val = json.loads(p.proposed_value)
             conf = f"{p.confidence:.2f}" if p.confidence is not None else "?"
