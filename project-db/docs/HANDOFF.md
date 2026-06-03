@@ -12,7 +12,7 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-03, at **763 tests**, after **RAG** shipped (the askbot
+Last updated: 2026-06-03, at **766 tests**, after **RAG** shipped (the askbot
 can now read document text, not just metadata) on top of the deterministic
 **attention briefing** (EVALUATION §3/§5 reveal-don't-generate landing) and the
 financial extraction + reconciliation layer.

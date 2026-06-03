@@ -9,6 +9,20 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-03 (later 4) -- Money clarity in the UI
+
+Keep all three money sources on screen but make it unmistakable which is
+authoritative and what each means, in plain language. `ui_views.money_glossary()`
+is the single source of the copy (template global, so the project page + the
+Financials panel can't drift): reconciled picture = AUTHORITATIVE (green "trust
+this"), Monday budget = reference, contract-text estimate = rough -- each with a
+plain blurb on what it is and how they relate, plus a gloss of every money-type
+bucket. Financials panel gets a green AUTHORITATIVE banner; the project page's
+Budget-vs-Contract card gets a "reference" pill + a link to the reconciled
+panel. +3 tests. 766 passing.
+
+---
+
 ## 2026-06-03 (later 3) — Hybrid retrieval + documents search page
 
 **Theme:** Maximum-accuracy retrieval. Pure cosine blurs exact tokens (invoice
