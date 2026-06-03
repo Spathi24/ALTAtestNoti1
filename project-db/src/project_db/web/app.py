@@ -52,6 +52,12 @@ def create_app() -> FastAPI:
     templates.env.globals["app_version"] = app_version
     templates.env.globals["uptime_str"] = uptime_str
 
+    # Last background-refresh result (populated by the serve auto-refresh
+    # thread; defaults to "never" so the footer is safe in tests / when
+    # refresh is disabled).
+    from project_db.web import refresh_state
+    templates.env.globals["last_refresh"] = refresh_state.get_last
+
     # `| from_json` -- safely parse a JSON string in templates.  Used by
     # propose_result.html to break scope proposals down by source label
     # (contract / roadmap) without forcing the service module to

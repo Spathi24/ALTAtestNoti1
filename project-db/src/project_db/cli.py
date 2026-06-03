@@ -1641,11 +1641,46 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Pull fresh data (delta sync) then re-embed any CHANGED documents.
+
+    One command: delta-syncs the live connectors (Monday now; Drive when it
+    goes live), then runs the idempotent embed step so only documents whose
+    text actually changed get re-embedded. Each step is independent -- a
+    connector without credentials is reported and skipped, not fatal.
+    """
+    from project_db.connectors.refresh import run_refresh
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        report = run_refresh(
+            s,
+            delta=not args.full,
+            embed=not args.no_embed,
+            log=lambda m: print(m),
+        )
+
+    print()
+    status = "OK" if report.ok else "completed WITH ERRORS"
+    print(f"=== REFRESH {status} ({report.one_line()}) ===")
+    for st in report.steps:
+        mark = "OK  " if st.ok else "FAIL"
+        print(f"  [{mark}] {st.name}: {st.summary or st.error or ''}")
+    return 0 if report.ok else 1
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """Launch the local web UI bound to 127.0.0.1.
 
     Hard-binds to loopback -- there is no --host flag on purpose.  The UI
     has no auth and exposes mutation routes; remote access is out of scope.
+
+    On startup it kicks off a BACKGROUND refresh (delta sync + incremental
+    re-embed) so the app opens on fresh data without blocking startup. The
+    footer shows when it last refreshed. Disable with --no-refresh.
     """
     try:
         import uvicorn
@@ -1656,6 +1691,34 @@ def cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    if not getattr(args, "no_refresh", False):
+        import threading
+
+        from project_db.connectors.refresh import run_refresh
+        from project_db.web import refresh_state
+
+        def _bg_refresh() -> None:
+            try:
+                refresh_state.mark_running()
+                with session_scope() as s:
+                    rep = run_refresh(
+                        s, delta=True, embed=True,
+                        log=lambda m: print(m, file=sys.stderr),
+                    )
+                refresh_state.set_last(rep)
+                print(f"[refresh] done: {rep.one_line()}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001 -- background, never crash serve
+                refresh_state.set_last(None)
+                print(f"[refresh] background refresh errored: {exc}", file=sys.stderr)
+
+        threading.Thread(target=_bg_refresh, name="alta-refresh", daemon=True).start()
+        print("[refresh] background data refresh started "
+              "(delta sync + re-embed changed docs; --no-refresh to disable)")
 
     from project_db.web.app import create_app
 
@@ -1932,7 +1995,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--port", type=int, default=8000,
         help="TCP port to bind on 127.0.0.1 (default 8000)",
     )
+    serve.add_argument(
+        "--no-refresh", action="store_true",
+        help="Skip the background data refresh (delta sync + re-embed) on startup",
+    )
     serve.set_defaults(func=cmd_serve)
+
+    refresh = sub.add_parser(
+        "refresh",
+        help="Pull fresh data (delta sync) then re-embed only CHANGED documents",
+    )
+    refresh.add_argument(
+        "--full", action="store_true",
+        help="Force a full sync instead of delta",
+    )
+    refresh.add_argument(
+        "--no-embed", action="store_true",
+        help="Sync only; skip the re-embedding step",
+    )
+    refresh.set_defaults(func=cmd_refresh)
 
     return p
 

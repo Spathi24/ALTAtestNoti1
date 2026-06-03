@@ -46,6 +46,13 @@
       up <code data-testid="uptime">{{ uptime_str() }}</code>
       &middot;
       db <code data-testid="db-path">{{ db_path() }}</code>
+      {% set lr = last_refresh() %}
+      {% if lr.running %}
+        &middot; <span data-testid="last-refresh">refreshing data&hellip;</span>
+      {% elif lr.at %}
+        &middot; <span data-testid="last-refresh">data refreshed
+          <code>{{ lr.at }}</code>{% if lr.summary %} ({{ lr.summary }}){% endif %}</span>
+      {% endif %}
     </small>
   </footer>
 </body>
