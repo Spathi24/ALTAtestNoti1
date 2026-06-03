@@ -61,7 +61,7 @@ corrections to what Monday says is happening.
   thread on startup (opt out `--no-refresh`), so opening the app gives fresh
   Monday data + current embeddings; the footer shows when it last refreshed.
 
-**766-test suite.** For "what does it do?" read
+**778-test suite.** For "what does it do?" read
 **[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
 for the honest current-state assessment + standing rules read
 **[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff

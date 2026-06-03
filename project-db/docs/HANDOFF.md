@@ -12,7 +12,7 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-03, at **766 tests**, after **RAG** shipped (the askbot
+Last updated: 2026-06-03, at **778 tests**, after **RAG** shipped (the askbot
 can now read document text, not just metadata) on top of the deterministic
 **attention briefing** (EVALUATION §3/§5 reveal-don't-generate landing) and the
 financial extraction + reconciliation layer.
@@ -457,7 +457,9 @@ cross-check), **`briefing [--limit N]`** (deterministic portfolio attention
 list — money/scope/schedule/docs, ranked; no LLM), **`embed-documents
 [--project] [--overwrite] [--limit]`** (chunk+embed for RAG; idempotent; prints
 cost), **`rag-search <query> [--project] [--top-k N]`** (retrieval debug), and
-**`refresh [--full] [--no-embed]`** (delta sync + re-embed only changed docs).
+**`refresh [--full] [--no-embed]`** (delta sync + re-embed only changed docs),
+**`extract-obligations <project>`** (Money-at-Risk extraction), and
+**`commitments <project>`** (read-only obligations + status).
 
 Key web routes: `/` (**Attention briefing** — the ranked truths landing),
 `/ask` (now **RAG-backed** when docs are embedded — `mode=rag`, cites sources),

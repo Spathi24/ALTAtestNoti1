@@ -42,6 +42,12 @@ cross-system truth you can't get by opening Monday and Drive in two tabs:
 - **Money risk** — a project whose money picture is low-confidence, whose
   confirmed costs exceed its confirmed revenue, or that has a large pile of
   unconfirmed quotes sitting in its folder.
+- **Money at risk (commitments)** — a contract obligation that's **overdue or
+  due soon**: revenue past due to collect (an unbilled milestone, forgotten
+  retainage), or a payment/deadline *we* owe (a settlement due "on key return",
+  an insurance renewal, a penalty clause). ALTA reads these obligations out of
+  the contracts and flags the ones slipping — the recurring leaks that cost
+  contractors real money. (`extract-obligations` / `commitments` / the briefing.)
 - **Scope gaps** — contract scope items with no matching task.
 - **Schedule** — tasks that are overdue and not marked done.
 - **Missing paperwork** — an active project with no contract on file.

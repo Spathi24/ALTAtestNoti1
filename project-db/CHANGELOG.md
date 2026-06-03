@@ -9,6 +9,33 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-03 (later 5) -- Money-at-Risk: contract obligations + commitments
+
+INTENTIONS.md #1, the highest-ROI build: catch the recurring cross-system money
+leaks (unbilled milestone, forgotten retainage, the $8k key-return settlement,
+a missed insurance/penalty deadline) before they become losses.
+
+- **ContractObligation** sidecar model + migration (mirrors FinancialRecord:
+  schema-light validated vocab, quoted_excerpt evidence, amount_verified).
+- **ai/obligations.py** `extract_obligations_for_project` -- LLM extracts dated/
+  dollar obligations (payment_milestone / retainage / penalty / deposit /
+  settlement / insurance_expiry / permit_deadline) with direction owed_to_us vs
+  owed_by_us. Reuses the financial layer's helpers (amount verification, backoff,
+  parsers); same all-or-nothing snapshot + conservative posture; STABLE system
+  prompt (cache-friendly). CLI `extract-obligations <project>`.
+- **report_commitments** -- deterministic chokepoint (no LLM): per-obligation
+  status (overdue / due_soon / conditional / upcoming / open) from date/trigger
+  + money-at-risk totals (owed_to_us overdue = revenue past due to collect;
+  owed_by_us overdue = a payment/deadline we owe). CLI `commitments <project>`.
+- **Briefing surface:** a new `commitments` category on the `/` landing --
+  overdue receivables ("$X past due to collect", high), overdue obligations we
+  owe (penalty/late exposure, high), due-soon (medium). So at-risk money shows
+  up the moment obligations are extracted.
+- Develop on mocks (done); a live `extract-obligations` run is a budgeted
+  Anthropic action (not spent yet). +12 tests. 778 passing.
+
+---
+
 ## 2026-06-03 (later 4) -- Money clarity in the UI
 
 Keep all three money sources on screen but make it unmistakable which is
