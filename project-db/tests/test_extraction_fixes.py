@@ -139,7 +139,27 @@ class TestRollupRecompute:
     def test_content_is_rollup(self):
         assert content_is_rollup("Current Project Overview ... Total Project Projection 549241")
         assert content_is_rollup("Pro Forma model: IRR 18%, NOI 500000, cap rate 5%")
+        # Lead-stage valuations / market reports (the $2.5B junk).
+        assert content_is_rollup("Wellness Centre Market Report. Total Investment $2.5 billion")
+        assert content_is_rollup("la valeur marchande actuelle de la propriete est 1 520 000")
         assert not content_is_rollup("Invoice #123 for tile work, total 5000")
+
+    def test_market_report_skipped_at_selection(self, session, project_factory):
+        from project_db.ai.financials import _select_financial_documents
+
+        p = project_factory(name="Lead Proj")
+        d = Document(name="Market Report.pdf", url="x://m", mime_type="application/pdf",
+                     project_id=p.canonical_id)
+        session.add(d)
+        session.flush()
+        session.add(DocumentText(
+            document_id=d.canonical_id, extraction_method="t",
+            extracted_text="Wellness Centre Market Report. Total Investment $2.5 billion projected."))
+        session.commit()
+        cands = _select_financial_documents(
+            session, p.canonical_id,
+            max_documents=50, per_doc_char_cap=8000, total_char_budget=100_000)
+        assert d.name not in {c.document.name for c in cands}  # not extracted
 
     def _seed(self, session, p, name, *, amount, direction, body=""):
         d = Document(name=name, url=f"x://{name}", mime_type=XLSX_MIME,

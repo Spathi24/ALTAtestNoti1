@@ -94,13 +94,24 @@ def _name_is_rollup(name: str | None) -> bool:
 # only unambiguous projection/underwriting language.
 _PROJECTION_CONTENT_RE = re.compile(
     r"total project projection|current project overview|\bproject projection\b|"
-    r"\bpro ?forma\b|\birr\b|\bnoi\b|\bcap rate\b|net operating income",
+    r"\bpro ?forma\b|\birr\b|\bnoi\b|\bcap rate\b|net operating income|"
+    # Valuation / market-report / feasibility content -- LEADS / acquisition
+    # deals (1364 St-Catherine, 12366 Lachapelle): market values and projected
+    # investments are NOT project transactions.  Caught $2.5B+ of junk.
+    r"market report|valeur marchande|market value|projected investment|"
+    r"total investment|feasibility|appraisal|as-stabilized|future value|"
+    r"development cost|\bdev cost\b",
     re.I,
 )
 
 
 def content_is_rollup(text: str | None) -> bool:
-    """True when a document's TEXT marks it an internal projection/model sheet."""
+    """True when a document's TEXT marks it a non-transactional analysis doc.
+
+    Internal projection / model / overview sheets AND lead-stage valuations /
+    market reports / feasibility studies -- none are project transactions, so
+    their figures must not land in the money totals.
+    """
     return bool(text and _PROJECTION_CONTENT_RE.search(text[:8000]))
 
 
@@ -581,6 +592,11 @@ def _select_financial_documents(
         # Skip obvious non-financial files (photos, drawings) so we don't waste
         # the extractor on them -- even though they share a financial mime.
         if _NON_FINANCIAL_RE.search(f"{doc.name or ''} {doc.folder_path or ''}"):
+            continue
+        # Skip non-transactional analysis docs (projection models, market
+        # reports, valuations) by CONTENT, so a lead-stage market report isn't
+        # extracted into billions of junk "amounts".
+        if content_is_rollup(text):
             continue
         score = _financial_score(doc.name, doc.folder_path or "", text)
         # A contract-shaped doc (PDF / DOCX / Google Doc) is worth reading even
