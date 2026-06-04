@@ -59,7 +59,7 @@ from project_db.db.models.docs import DocumentText
 logger = logging.getLogger(__name__)
 
 # Bump when the prompt text or output schema changes.
-FINANCIAL_PROMPT_VERSION = "financials-v4"
+FINANCIAL_PROMPT_VERSION = "financials-v5"
 
 # Roll-up / internal-tracking documents are detected DETERMINISTICALLY by name,
 # not by asking the LLM.  The Friday v3 approach (LLM classifies primary vs
@@ -203,11 +203,31 @@ def _company_name() -> str:
 # and decides.  Folder/name signal is a hint, never authoritative (5768's
 # "Invoices" folder held a quote), so a generous prior is fine.
 _FINANCIAL_KEYWORDS = (
-    "invoice", "facture", "quote", "soumission", "devis", "estimate",
+    "invoice", "facture", "quote", "quoting", "soumission", "devis", "estimate",
     "estimat", "receipt", "quittance", "payment", "paiement", "deposit",
     "acompte", "contract", "contrat", "change order", "purchase", "bon de",
     "sales", "billing", "cost", "budget", "financ", "material", "materiel",
     "contractor", "entrepreneur", "sub quote", "order",
+    # Added 2026-06-04: real project financial docs were being filtered out
+    # because the gate only checked the file NAME and missed these (923 Rockland
+    # had 0 records: "Final SOW.pdf" / "preliminary quoting file.xlsx" all
+    # scored 0 -- "quote" does not match "quoting", and SOW/scope had no keyword).
+    "sow", "scope of work", "proposal", "milestone", "retainage", "holdback",
+    "work package", "bid", "tender", "$",
+)
+
+# Clearly NON-transactional analysis / underwriting / model spreadsheets that
+# happen to live in (or got linked to) a project folder.  Their cells are
+# projections and assumptions, not project transactions -- extracting them
+# produced tens of millions in junk "unknown" amounts (6554's "Financial
+# Breakdown.xlsx" alone = $53M).  Skipped at candidate selection.  Conservative:
+# only names that unambiguously denote an analysis tool, never a real cost doc.
+_NONTRANSACTIONAL_MODEL_RE = re.compile(
+    r"acquisition model|multifamily acquisition|pro-?forma|\bproforma\b|"
+    r"projection|scoring model|pipeline tracker|broker directory|cruncher|"
+    r"study notes|valuation|underwriting|\bproforma\b|cmhc|\bmefq\b|"
+    r"website cruncher|red roof|green roof",
+    re.I,
 )
 
 # Mime types worth reading for money.  Image-only / CAD / archive files never
@@ -463,9 +483,34 @@ class _Candidate:
     truncated: bool
 
 
-def _financial_score(name: str, folder_path: str) -> int:
-    """Count financial-keyword hits across a document's name + folder path."""
-    hay = f"{name or ''} {folder_path or ''}".lower()
+# Contract-shaped documents carry payment terms / scope in their BODY, not
+# their filename -- so they're worth reading even with a zero keyword score.
+_CONTRACT_SHAPED_MIMES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.google-apps.document",
+}
+
+
+# Clearly NON-financial files -- photos, drawings, renderings.  Excluded so a
+# project's Photos folder doesn't get fed to the extractor.  Deliberately does
+# NOT include "logo" (a real invoice was named "logo.invoice_11825.pdf").
+_NON_FINANCIAL_RE = re.compile(
+    r"\bphotos?\b|\bimage\b|drawing|rendering|site walk|site visit|"
+    r"floor ?plan|elevation|\bsketch\b",
+    re.I,
+)
+
+
+def _financial_score(name: str, folder_path: str, text: str = "") -> int:
+    """Count financial-keyword hits across name + folder + the document TEXT.
+
+    Scoring the TEXT (not just the filename) is the fix for the silent
+    zero-extraction bug: a contract / SOW whose name has no money keyword but
+    whose body is full of payment terms now scores and gets read.  The text is
+    capped only against a pathological giant model sheet.
+    """
+    hay = f"{name or ''} {folder_path or ''} {(text or '')[:200_000]}".lower()
     return sum(1 for kw in _FINANCIAL_KEYWORDS if kw in hay)
 
 
@@ -500,15 +545,30 @@ def _select_financial_documents(
 
     scored: list[tuple[int, Any, Document, DocumentText]] = []
     for doc, txt in rows:
-        if not (txt.extracted_text or "").strip():
+        text = txt.extracted_text or ""
+        if not text.strip():
             continue
         # Mime gate: only document types that carry extractable money text.
         if doc.mime_type and doc.mime_type not in _FINANCIAL_MIMES:
             continue
-        score = _financial_score(doc.name, doc.folder_path or "")
-        if score == 0:
+        # Skip clearly non-transactional analysis / acquisition / model sheets:
+        # their cells are projections, not project transactions (the $53M junk).
+        if _NONTRANSACTIONAL_MODEL_RE.search(doc.name or ""):
             continue
-        scored.append((score, doc.modified_at_source or doc.created_at, doc, txt))
+        # Skip obvious non-financial files (photos, drawings) so we don't waste
+        # the extractor on them -- even though they share a financial mime.
+        if _NON_FINANCIAL_RE.search(f"{doc.name or ''} {doc.folder_path or ''}"):
+            continue
+        score = _financial_score(doc.name, doc.folder_path or "", text)
+        # A contract-shaped doc (PDF / DOCX / Google Doc) is worth reading even
+        # with no keyword hit -- the money lives in its body.  Spreadsheets still
+        # need a signal (so we don't pull in every data sheet).
+        is_contract_shaped = doc.mime_type in _CONTRACT_SHAPED_MIMES
+        if score == 0 and not is_contract_shaped:
+            continue
+        scored.append(
+            (max(score, 1), doc.modified_at_source or doc.created_at, doc, txt)
+        )
 
     # Highest keyword score first, then most-recently modified.
     scored.sort(key=lambda r: (r[0], r[1] or datetime.min), reverse=True)
@@ -590,6 +650,24 @@ def _build_financial_prompt(
         "- Returning few records, or none, is correct when the document has "
         "no clear monetary amounts.\n"
         "- Skip pure $0.00 / placeholder amounts (e.g. a blank template line).\n"
+        "\nSPREADSHEETS / TABLES (the biggest source of error -- read carefully):\n"
+        "- Sheets are rendered as tab-separated rows under a '### SheetName' "
+        "header, with the column-header row first.  USE the header row to decide "
+        "what each number means.\n"
+        "- A number is an AMOUNT only if its column or label clearly denotes "
+        "MONEY (price, cost, total, subtotal, amount, deposit, $, CAD).  NEVER "
+        "extract quantities, counts, square footage, dimensions, lengths, hours, "
+        "percentages, unit measures, years, dates, or ID numbers as monetary "
+        "amounts.  Most cells in a construction quote are NOT money.\n"
+        "- If a sheet shows MULTIPLE alternative SCENARIOS or PROJECTIONS (e.g. "
+        "'projection for 15 units' vs '28 units', or several costing variants), "
+        "they are NOT additive -- do not emit them all.  Extract at most the one "
+        "authoritative figure, or skip them.\n"
+        "- An internal cost projection / budget model / 'overview' sheet (rows "
+        "like 'Total Construction', 'Total Buyouts', 'Project Projection', "
+        "'Total after tax') is an internal SUMMARY, not a client invoice or a "
+        "supplier bill.  Its grand totals are direction='unknown' unless the "
+        "document plainly states who pays whom.\n"
         "- Output STRICT JSON only.  No prose, no markdown fences."
     )
 

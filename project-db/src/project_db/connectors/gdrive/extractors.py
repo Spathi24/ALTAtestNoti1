@@ -94,12 +94,32 @@ def extract_docx(raw: bytes) -> tuple[str | None, str]:
     return (text or None), "docx-python"
 
 
-def extract_xlsx(raw: bytes) -> tuple[str | None, str]:
-    """Extract text from a .xlsx Excel workbook.
+# Spreadsheets are the worst offenders for unbounded extraction: a single
+# acquisition model produced 2.18M chars of text, and feeding a wall of bare
+# numbers to the LLM yields garbage "amounts" with no direction.  We therefore
+# (a) keep each sheet's HEADER row visible so the model can associate values
+# with columns, (b) cap rows + chars PER SHEET, and (c) cap the whole workbook,
+# noting any truncation so the model knows content continues.
+_XLSX_MAX_ROWS_PER_SHEET = 200
+_XLSX_MAX_CHARS_PER_SHEET = 16_000
+_XLSX_MAX_TOTAL_CHARS = 60_000
+# Trailing empty columns are common in exported sheets; drop them so rows aren't
+# a forest of tabs.
+def _trim_trailing_empty(cells: list) -> list:
+    end = len(cells)
+    while end > 0 and (cells[end - 1] is None or str(cells[end - 1]).strip() == ""):
+        end -= 1
+    return cells[:end]
 
-    Renders each sheet as TSV-style rows.  ``data_only=True`` so formula
-    cells return their last-cached computed value rather than the formula
-    string, which is closer to what a contract reader would see.
+
+def extract_xlsx(raw: bytes) -> tuple[str | None, str]:
+    """Extract text from a .xlsx Excel workbook, structure-preserving + bounded.
+
+    Each sheet is rendered as TSV with its header row kept visible, capped to a
+    sane number of rows/chars (a workbook is not a contract -- an uncapped
+    acquisition model is megabytes of noise).  ``data_only=True`` so formula
+    cells return their last-cached computed value; sheets that were never
+    recalculated come back mostly blank and are flagged.
     """
     try:
         from openpyxl import load_workbook
@@ -115,13 +135,43 @@ def extract_xlsx(raw: bytes) -> tuple[str | None, str]:
         return None, "failed-parse"
 
     parts: list[str] = []
+    total_chars = 0
     try:
         for sheet in wb.worksheets:
-            parts.append(f"### {sheet.title}")
+            if total_chars >= _XLSX_MAX_TOTAL_CHARS:
+                parts.append("### (further sheets omitted -- workbook too large)")
+                break
+            sheet_lines: list[str] = [f"### {sheet.title}"]
+            sheet_chars = 0
+            rows_emitted = 0
+            rows_seen = 0
+            nonempty = 0
             for row in sheet.iter_rows(values_only=True):
-                if not any(cell not in (None, "") for cell in row):
+                rows_seen += 1
+                cells = _trim_trailing_empty(list(row))
+                if not any(c not in (None, "") for c in cells):
                     continue
-                parts.append("\t".join("" if c is None else str(c) for c in row))
+                nonempty += 1
+                if rows_emitted >= _XLSX_MAX_ROWS_PER_SHEET or sheet_chars >= _XLSX_MAX_CHARS_PER_SHEET:
+                    continue  # keep counting rows_seen so the note is accurate
+                line = "\t".join("" if c is None else str(c) for c in cells)
+                sheet_lines.append(line)
+                sheet_chars += len(line) + 1
+                rows_emitted += 1
+            if nonempty == 0:
+                # Almost always a never-recalculated formula sheet (data_only
+                # returns None) -- say so rather than emit an empty section.
+                sheet_lines.append(
+                    "(no values -- sheet may contain only uncomputed formulas)"
+                )
+            elif nonempty > rows_emitted:
+                sheet_lines.append(
+                    f"(... {nonempty - rows_emitted} more row(s) not shown; "
+                    f"sheet truncated for length)"
+                )
+            block = "\n".join(sheet_lines)
+            parts.append(block)
+            total_chars += len(block) + 1
     finally:
         wb.close()
     text = "\n".join(parts).strip()
