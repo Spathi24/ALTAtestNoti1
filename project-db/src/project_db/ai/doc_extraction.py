@@ -56,6 +56,19 @@ _DOC_TYPES = [
 ]
 # Types whose figures are NOT this project's money -- skip entirely.
 _SKIP_TYPES = {"acquisition_or_proforma_model", "market_report_or_valuation"}
+# Direction logically ENTAILED by the document type (deterministic, not a
+# guess): a quote/estimate/client-invoice we issue is revenue; a supplier
+# invoice / PO is cost.  Used ONLY to resolve a record the LLM left 'unknown'
+# (a typed estimate with no client named) -- never to override a confident
+# client_in / contractor_out.  Ambiguous types (receipt / change_order / lease /
+# settlement / budget) are left unknown.
+_DIRECTION_BY_TYPE = {
+    "construction_quote": "client_in",
+    "construction_estimate": "client_in",
+    "client_invoice": "client_in",
+    "supplier_invoice": "contractor_out",
+    "purchase_order": "contractor_out",
+}
 # Map document_type -> the doc_role the confirmed-vs-quoted default uses.
 _DOC_ROLE_BY_TYPE = {
     "construction_quote": "quote", "construction_estimate": "estimate",
@@ -426,6 +439,10 @@ def extract_financials_structured_for_project(
             direction = str(item.get("direction") or "unknown")
             if direction not in ("client_in", "contractor_out", "unknown"):
                 direction = "unknown"
+            # Resolve a hedged 'unknown' from the document type the LLM assigned
+            # (a construction estimate IS our revenue side) -- deterministic.
+            if direction == "unknown":
+                direction = _DIRECTION_BY_TYPE.get(dtype, "unknown")
             new_records.append(FinancialRecord(
                 project_id=project_uuid,
                 document_id=doc.canonical_id,

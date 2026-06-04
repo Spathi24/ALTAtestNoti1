@@ -98,6 +98,21 @@ class TestStructuredExtraction:
         assert batch.skipped_reason
         assert session.query(FinancialRecord).count() == 1   # prior preserved
 
+    def test_unknown_direction_resolved_from_doc_type(self, session, project_factory):
+        # An estimate the LLM typed correctly but left direction=unknown -> the
+        # type entails client_in (revenue), deterministically.
+        p = project_factory(name="P")
+        _doc(session, p, "Estimation.pdf", "TOTAL 71,975 $")
+        session.commit()
+        ext = MockStructuredExtractor(by_name={"Estimation.pdf": {
+            "document_type": "construction_estimate", "is_transactional": True,
+            "summary": "estimate", "records": [{
+                "amount": 71975, "currency": "CAD", "direction": "unknown",
+                "record_kind": "total", "description": "total",
+                "quoted_excerpt": "TOTAL 71,975 $", "confidence": 0.8}]}})
+        extract_financials_structured_for_project(session, ext, p.canonical_id)
+        assert session.query(FinancialRecord).one().direction == "client_in"
+
     def test_zero_and_unparseable_amounts_skipped(self, session, project_factory):
         p = project_factory(name="P")
         _doc(session, p, "Q.pdf", "stuff")
