@@ -9,6 +9,38 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-04 (later) -- Structured LLM extraction (retire the regex pile)
+
+Owner pushback (correct): the heuristic pile (keyword gate + model/projection/
+market-report regexes) was brittle whack-a-mole, and flattening docs to text
+first was a lossy mistake. Re-architected per current best practice (schema-
+based structured outputs; LLM for semantic understanding, deterministic code for
+validation + arithmetic).
+
+- `ai/doc_extraction.py` (OpenAI structured outputs): the LLM CLASSIFIES each
+  document (quote / estimate / client-invoice / supplier-invoice / receipt /
+  lease / settlement / budget / acquisition-model / market-report) + sets
+  is_transactional, then extracts via a STRICT json schema (no malformed JSON,
+  no hallucinated fields, no retry waste). Deterministic code still verifies
+  every amount against the source text and sums (invariant N2). Spreadsheets ->
+  markdown tables (+40% accuracy, fewer tokens than TSV). NO keyword/roll-up/
+  model regexes -- the LLM subsumes them. CLI `extract-financials --structured`
+  (gpt-4o-mini; OpenAI is the only thing with structured outputs + the owner's
+  budget).
+- Live-validated on the exact files that each needed a hand-coded rule, then a
+  full-portfolio re-extraction: every project 100% classified or honestly empty,
+  **0 unknown**, no low-confidence flags. 5768 $1M junk -> clean; 1364 $3.6B ->
+  $0; 6554 dev deal -> clean. The supplier-vs-client direction (a long-standing
+  hard problem) is correct after a prompt tweak; gpt-4o-mini == gpt-4o here.
+- +7 tests. 797 passing.
+
+DIRECTION FOR NEXT SESSION: the structured path (ai/doc_extraction.py) is now
+the recommended extractor; the legacy regex path + its report-time rollup
+recompute remain as a deterministic safety net but should fade. The same
+classify-then-extract pattern should be applied to the obligations layer.
+
+---
+
 ## 2026-06-04 -- Financial extraction overhaul (PM found it badly wrong)
 
 A PM reviewing the app found financials missing/garbled. Investigated the whole
