@@ -32,6 +32,15 @@ from project_db.ai.providers import (
 from project_db.ai.providers.base import LLMProvider
 
 
+@pytest.fixture(autouse=True)
+def _no_openai_backup(monkeypatch):
+    """These tests probe BACKEND RESOLUTION; the Anthropic->OpenAI fallback is
+    covered in test_provider_fallback.py.  Ensure a leaked OPENAI_API_KEY (from
+    .env in a full-suite run) doesn't wrap providers in a FallbackProvider here.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # MockLLMProvider
 # ---------------------------------------------------------------------------
