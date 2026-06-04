@@ -9,6 +9,41 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-04 -- Financial extraction overhaul (PM found it badly wrong)
+
+A PM reviewing the app found financials missing/garbled. Investigated the whole
+live DB; found four distinct bugs and fixed them all.
+
+1. **Candidate selection silently dropped real docs.** The gate required a money
+   keyword in the FILENAME -> 923 Rockland = 0 records ("Final SOW.pdf" /
+   "preliminary quoting file.xlsx" all scored 0). EIGHT more projects were also
+   silently empty. Fix: score the document TEXT; broaden keywords; read
+   contract-shaped docs on content; skip photos/drawings.
+2. **$71M of "unknown" junk.** Acquisition / pro-forma / projection / market-
+   report spreadsheets were extracted as if their cells were transactions
+   (6554 "Financial Breakdown" = $53M; 1364 lead "Market Report" = $2.5B). Fix:
+   skip non-transactional analysis sheets by NAME and by CONTENT
+   (content_is_rollup: projection/valuation/feasibility markers).
+3. **XLSX extraction unbounded + structureless** (a 2.18M-char model dumped
+   whole; wide tables flattened so dimensions/quantities read as money). Fix:
+   header-aware, row/char capped, empty-sheet (uncomputed-formula) flagged.
+4. **Roll-up status was frozen at extraction.** Fix: re-derive it at REPORT time
+   (stored OR name OR content rule) + added budget/projection/job-costing -- so
+   improving detection cleans already-extracted projects for FREE.
+
+Result (verified live, mostly free recompute -- only ~$0.15 of Anthropic on the
+candidate-selection victims): the portfolio went from a few-clean / lots-of-junk
+state to **15 clean projects + 2 honestly low-confidence** (3940 small, 6554 a
+real development deal). 923 Rockland 0 -> 27 recs (100%); 5768 (the PM's example)
+18% -> 100%, $1.05M "other" -> $0; 1364 $3.6B -> $0. Prompt -> financials-v5.
++25 tests (test_extraction_fixes.py). 790 passing.
+
+Note: the live REPORTS are now correct for every project (report-time recompute).
+A full re-extraction (budgeted) would also scrub the stored junk records, but is
+not required for correct numbers.
+
+---
+
 ## 2026-06-03 (later 5) -- Money-at-Risk: contract obligations + commitments
 
 INTENTIONS.md #1, the highest-ROI build: catch the recurring cross-system money
