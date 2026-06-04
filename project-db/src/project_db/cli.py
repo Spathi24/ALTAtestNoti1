@@ -568,6 +568,62 @@ def cmd_extract_obligations(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_extract_financials_structured(args: argparse.Namespace) -> int:
+    """Structured (OpenAI, classify-then-extract) financial extraction path."""
+    from project_db.ai.doc_extraction import (
+        OpenAIStructuredExtractor,
+        StructuredExtractorError,
+        extract_financials_structured_for_project,
+    )
+    from project_db.ai.views import _resolve_project, report_project_financials
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        extractor = OpenAIStructuredExtractor()
+    except StructuredExtractorError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+        print(f"Extractor: {extractor.name} ({extractor.model})")
+        print(f"Project:   {project.name}  ({project.canonical_id})")
+        print("Classifying + extracting each document (OpenAI structured outputs)...")
+        try:
+            batch = extract_financials_structured_for_project(
+                s, extractor, project.canonical_id)
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(batch.summary())
+        for e in batch.errors[:10]:
+            print(f"  - {e}")
+        if batch.classifications:
+            print("\n  Document classifications:")
+            for name, dtype, txn in batch.classifications[:50]:
+                print(f"    [{'txn ' if txn else 'skip'}] {dtype:<28} {name[:45]}")
+
+        rep = report_project_financials(s, str(project.canonical_id))
+        t = rep.get("totals", {})
+        ms = rep.get("money_summary", {})
+        print(f"\n  Client in {t.get('client_in',0):,.2f} | Contractor out "
+              f"{t.get('contractor_out',0):,.2f} | Unknown {t.get('unknown',0):,.2f} "
+              f"| Margin {t.get('margin',0):,.2f}")
+        cr = ms.get("classified_ratio")
+        if cr is not None:
+            print(f"  Classified: {cr*100:.0f}%"
+                  + ("  LOW CONFIDENCE" if ms.get("low_confidence") else ""))
+    return 0
+
+
 def cmd_extract_financials(args: argparse.Namespace) -> int:
     """Extract monetary records from a project's Drive financial documents.
 
@@ -580,7 +636,15 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
     Fresh snapshot: a re-run replaces the project's prior financial records.
     Nothing is written to any external system; this only enriches the
     canonical DB.
+
+    With --structured, uses the OpenAI structured-outputs extractor, which
+    CLASSIFIES each document (quote / invoice / supplier bill / budget / model /
+    market report) and extracts via a strict schema -- no keyword/roll-up
+    heuristics.  Recommended.
     """
+    if getattr(args, "structured", False):
+        return _cmd_extract_financials_structured(args)
+
     from project_db.ai import (
         LLMProviderError,
         extract_financials_for_project,
@@ -2047,6 +2111,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-docs", type=int, default=None,
         help="Cap the number of financial documents processed (default: all "
              "candidates; documents are batched across multiple LLM calls)",
+    )
+    ef.add_argument(
+        "--structured", action="store_true",
+        help="Use the OpenAI structured-outputs extractor (classifies each doc; "
+             "no keyword/roll-up heuristics). Needs OPENAI_API_KEY. Recommended.",
     )
     ef.set_defaults(func=cmd_extract_financials)
 
