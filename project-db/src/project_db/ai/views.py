@@ -604,8 +604,32 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     # sheets are excluded (they restate the invoices, so summing both would
     # double-count) and surfaced separately as a cross-check.  Decision: the
     # individual invoices/quotes/contracts are authoritative.
-    primary = [r for r in records if not r.is_rollup]
-    rollup = [r for r in records if r.is_rollup]
+    # Effective roll-up = stored value OR the CURRENT name rule OR the CONTENT
+    # rule (a projection/model sheet whose name hides it).  Re-deriving here
+    # means improving the rules cleans up already-extracted projects for FREE,
+    # with no re-extraction -- the same free-recompute discipline as money_type.
+    from project_db.ai.financials import (
+        _name_is_rollup as _is_rollup_name,
+        content_is_rollup as _is_rollup_content,
+    )
+
+    _rec_doc_ids = {r.document_id for r in records if r.document_id}
+    doc_texts = {
+        row[0]: row[1]
+        for row in session.query(
+            DocumentText.document_id, DocumentText.extracted_text
+        ).filter(DocumentText.document_id.in_(_rec_doc_ids)).all()
+    } if _rec_doc_ids else {}
+
+    def _eff_rollup(r: FinancialRecord) -> bool:
+        return (
+            bool(r.is_rollup)
+            or _is_rollup_name(doc_names.get(r.document_id))
+            or _is_rollup_content(doc_texts.get(r.document_id))
+        )
+
+    primary = [r for r in records if not _eff_rollup(r)]
+    rollup = [r for r in records if _eff_rollup(r)]
 
     # --- Confirmed-vs-quoted -------------------------------------------------
     # They dump every quote into a project, including ones they didn't go with.
@@ -837,7 +861,7 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
                 "quoted_excerpt": r.quoted_excerpt,
                 "confidence": r.confidence,
                 "amount_verified": r.amount_verified,
-                "is_rollup": bool(r.is_rollup),
+                "is_rollup": _eff_rollup(r),
                 "money_type": _mt(r),
                 "confirmed": r.document_id in confirmed_doc_ids,
             }

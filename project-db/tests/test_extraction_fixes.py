@@ -12,13 +12,17 @@ import io
 
 import pytest
 
+from decimal import Decimal
+
 from project_db.ai.financials import (
     _NONTRANSACTIONAL_MODEL_RE,
     _financial_score,
     _select_financial_documents,
+    content_is_rollup,
 )
+from project_db.ai.views import report_project_financials
 from project_db.connectors.gdrive.extractors import extract_xlsx
-from project_db.db.models import Document
+from project_db.db.models import Document, FinancialRecord
 from project_db.db.models.docs import DocumentText
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -127,3 +131,48 @@ class TestCandidateSelection:
             max_documents=50, per_doc_char_cap=8000, total_char_budget=100_000,
         )
         assert "Agreement.pdf" in {c.document.name for c in cands}
+
+
+class TestRollupRecompute:
+    """Roll-up status is re-derived at REPORT time (free cleanup, no re-extract)."""
+
+    def test_content_is_rollup(self):
+        assert content_is_rollup("Current Project Overview ... Total Project Projection 549241")
+        assert content_is_rollup("Pro Forma model: IRR 18%, NOI 500000, cap rate 5%")
+        assert not content_is_rollup("Invoice #123 for tile work, total 5000")
+
+    def _seed(self, session, p, name, *, amount, direction, body=""):
+        d = Document(name=name, url=f"x://{name}", mime_type=XLSX_MIME,
+                     project_id=p.canonical_id)
+        session.add(d)
+        session.flush()
+        if body:
+            session.add(DocumentText(document_id=d.canonical_id,
+                                     extracted_text=body, extraction_method="t"))
+        session.add(FinancialRecord(
+            project_id=p.canonical_id, document_id=d.canonical_id,
+            direction=direction, record_kind="total", amount=Decimal(str(amount)),
+            is_rollup=False))
+        session.flush()
+
+    def test_budget_named_doc_excluded_from_totals(self, session, project_factory):
+        p = project_factory(name="Budget Proj")
+        self._seed(session, p, "C61 revamp budget.xlsx", amount=400000, direction="unknown")
+        self._seed(session, p, "Invoice.pdf", amount=5000, direction="contractor_out")
+        session.commit()
+        rep = report_project_financials(session, str(p.canonical_id))
+        assert rep["primary_record_count"] == 1          # budget moved to rollup
+        assert rep["rollup_record_count"] == 1
+        assert rep["totals"]["contractor_out"] == 5000.0
+        assert rep["totals"]["unknown"] == 0.0           # the $400k junk gone from totals
+
+    def test_projection_content_doc_excluded_despite_innocent_name(
+        self, session, project_factory
+    ):
+        p = project_factory(name="Proj Content")
+        self._seed(session, p, "Quoting File.xlsx", amount=549241, direction="unknown",
+                   body="Current Project Overview\nTotal Project Projection\t549241")
+        session.commit()
+        rep = report_project_financials(session, str(p.canonical_id))
+        assert rep["primary_record_count"] == 0          # content-detected projection
+        assert rep["rollup_record_count"] == 1

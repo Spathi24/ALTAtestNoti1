@@ -72,13 +72,36 @@ FINANCIAL_PROMPT_VERSION = "financials-v5"
 _ROLLUP_NAME_RE = re.compile(
     r"\bcosts\b|costing|cost tracker|\btracker\b|payment log|\blisting\b|"
     r"breakdown|etat de compte|état de compte|statement of account|"
-    r"contractors ?\+ ?material|contractors and material",
+    r"contractors ?\+ ?material|contractors and material|"
+    # Added 2026-06-04: internal planning summaries restate/aggregate the real
+    # invoices, so they double-count and pollute 'other' (3940's "C61 revamp
+    # budget.xlsx" = $400k+ junk).  Excluded from totals, shown as cross-check.
+    r"\bbudget\b|projection|job costing",
     re.I,
 )
 
 
 def _name_is_rollup(name: str | None) -> bool:
     return bool(name and _ROLLUP_NAME_RE.search(name))
+
+
+# Content markers of an internal PROJECTION / MODEL / OVERVIEW sheet.  It
+# restates aggregate projections (often across several scenarios), so summing
+# its cells double-counts and pollutes the totals.  Detected from the TEXT so a
+# doc whose NAME hides it (5768's "Quoting File.xlsx", which is really a
+# multi-scenario project projection: "Current Project Overview", "Total Project
+# Projection") is still excluded from the transaction totals.  Conservative --
+# only unambiguous projection/underwriting language.
+_PROJECTION_CONTENT_RE = re.compile(
+    r"total project projection|current project overview|\bproject projection\b|"
+    r"\bpro ?forma\b|\birr\b|\bnoi\b|\bcap rate\b|net operating income",
+    re.I,
+)
+
+
+def content_is_rollup(text: str | None) -> bool:
+    """True when a document's TEXT marks it an internal projection/model sheet."""
+    return bool(text and _PROJECTION_CONTENT_RE.search(text[:8000]))
 
 
 # --- Money-type classification (deterministic, no LLM) ----------------------
