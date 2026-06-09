@@ -45,6 +45,23 @@ from project_db.db.models import (
 from project_db.db.models.work import ProjectStatus, TaskStatus
 
 
+@pytest.fixture(autouse=True)
+def _freeze_today(monkeypatch):
+    """Pin the proposal engine's notion of "today" to a fixed date.
+
+    These tests hardcode future proposed dates like 2026-06-01.  The timeline
+    bot's past-date guard rejects proposed_start < today, so once the real clock
+    passes those dates every test produces 0 proposals (a time-bomb).  Freezing
+    today keeps the hardcoded dates safely in the future, deterministically.
+    """
+    class _Fixed(date):
+        @classmethod
+        def today(cls):
+            return date(2026, 5, 15)
+
+    monkeypatch.setattr("project_db.ai.proposals.date", _Fixed)
+
+
 # ---------------------------------------------------------------------------
 # Fixture: a project with dateless tasks + a contract with extracted text
 # ---------------------------------------------------------------------------

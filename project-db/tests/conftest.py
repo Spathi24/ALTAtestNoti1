@@ -29,6 +29,14 @@ os.environ["QUICKBOOKS_CLIENT_SECRET"] = "test_qb_secret"
 os.environ["QUICKBOOKS_REALM_ID"] = "test_realm_123"
 os.environ["QUICKBOOKS_ACCESS_TOKEN"] = "test_access_token"
 os.environ["ANTHROPIC_API_KEY"] = "test_anthropic_key"
+# Trigger config's one-time .env load NOW (it fills absent/empty vars), then
+# remove any real OPENAI_API_KEY it pulled in.  Later `import project_db.config`
+# is cached, so it won't reload -- the test base env has NO OpenAI key, so
+# get_default_provider stays plain Anthropic (no FallbackProvider) regardless of
+# test order.  Tests that want the Anthropic->OpenAI fallback set the key via
+# monkeypatch.
+import project_db.config as _config  # noqa: E402,F401
+os.environ.pop("OPENAI_API_KEY", None)
 
 from project_db.db.base import Base
 from project_db.db.models import (
