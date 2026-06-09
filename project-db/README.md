@@ -61,7 +61,17 @@ corrections to what Monday says is happening.
   thread on startup (opt out `--no-refresh`), so opening the app gives fresh
   Monday data + current embeddings; the footer shows when it last refreshed.
 
-**797-test suite.** For "what does it do?" read
+- **Financial extraction rebuilt on LLM classification (2026-06-04).** A PM
+  found the old keyword/regex extractor was missing real docs and reading
+  spreadsheet junk. Replaced with `ai/doc_extraction.py`: the LLM CLASSIFIES each
+  document and extracts via OpenAI **structured outputs** (strict schema);
+  deterministic code still verifies + sums. `extract-financials --structured`.
+  Whole portfolio re-extracted clean (0 unknown).
+- **Anthropic primary + OpenAI fallback (2026-06-04).** `ask` / `propose` /
+  extraction try Anthropic, then transparently fall back to OpenAI on failure
+  (the owner's Anthropic credits ran out) instead of erroring.
+
+**806-test suite.** For "what does it do?" read
 **[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
 for the honest current-state assessment + standing rules read
 **[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff

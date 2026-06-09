@@ -12,10 +12,37 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-03, at **797 tests**, after **RAG** shipped (the askbot
-can now read document text, not just metadata) on top of the deterministic
-**attention briefing** (EVALUATION §3/§5 reveal-don't-generate landing) and the
-financial extraction + reconciliation layer.
+Last updated: 2026-06-04, at **806 tests**.  The two newest things below
+(structured extraction + provider fallback) are the ones a fresh instance most
+needs; then RAG, the briefing, and the financial layer.
+
+**⚠ BUDGET / PROVIDER REALITY (read first).** The owner's **Anthropic credits
+are at $0**; **OpenAI has ~$4** left. So: `get_default_provider` / `get_fast_
+provider` now return a **FallbackProvider — Anthropic PRIMARY, OpenAI automatic
+backup** (`ai/providers/fallback.py`). A call tries Anthropic; on failure (e.g.
+"credit balance too low") it transparently retries on OpenAI instead of erroring.
+When Anthropic has no key, OpenAI is used directly. Backup model =
+`OPENAI_FALLBACK_MODEL` (default `gpt-4o-mini`), pinned to api.openai.com. So
+`ask` / `propose` / extraction all WORK today via the OpenAI fallback. Embeddings
+are OpenAI too. Develop on mocks; a live LLM run costs OpenAI cents now, not
+Anthropic.
+
+**STRUCTURED FINANCIAL EXTRACTION (newest, the big rearchitecture — read §2.0).**
+A PM found financials badly wrong (Excel not read, $millions of junk). Root
+cause: the old extractor (`ai/financials.py`) was a brittle pile of regexes
+(keyword gate, roll-up / model / market-report rules) over flattened text. It
+was REPLACED by `ai/doc_extraction.py`: the LLM **classifies** each document
+(quote / invoice / supplier-bill / budget / acquisition-model / market-report)
++ sets `is_transactional`, then extracts via **OpenAI structured outputs**
+(strict json schema -- no malformed JSON, no hallucinated fields); deterministic
+code still verifies amounts + sums (N2 intact). NO keyword/roll-up regexes -- the
+LLM subsumes them. Spreadsheets -> markdown tables. CLI `extract-financials
+<project> --structured`. **This is now the recommended extractor.** Full-portfolio
+re-extraction done: every project 100% classified or honestly empty, 0 unknown,
+no false low-confidence (5768 $1M junk -> clean; 1364 $3.6B -> $0; 6554 dev deal
+-> clean). The legacy `ai/financials.py` path + its report-time roll-up recompute
+remain as a deterministic safety net but are DEPRECATED. **Apply the same
+classify-then-extract pattern to the obligations layer next** (see below).
 
 **RAG (newest):** `ai/embeddings.py` (OpenAI `text-embedding-3-small`, mock for
 tests), `ai/chunking.py` (paragraph-aware ~500-tok), `ai/rag.py`
@@ -25,8 +52,9 @@ brute-force numpy cosine — NOT sqlite-vec, that's the upgrade path). Vectors i
 reciprocal rank fusion -- catches exact identifiers pure-vector blurs; `hybrid=
 False` for cosine-only). `answer_with_llm` injects retrieved excerpts as
 citable facts (mode=`rag`, `sources`). CLI `embed-documents` / `rag-search`.
-**Embeddings are the ONLY OpenAI use — chat stays Anthropic.** `OPENAI_API_KEY`
-in `.env` (gitignored). Full corpus embedded live (462 docs / 5590 chunks /
+**OpenAI is used for embeddings, structured extraction, AND now as the chat
+fallback** (see the budget note above — Anthropic is primary but out of credits).
+`OPENAI_API_KEY` in `.env` (gitignored). Full corpus embedded live (462 docs / 5590 chunks /
 $0.052). Develop on `MockEmbeddingProvider` (free); a real embed run is cheap
 (~$0.02–0.06 whole corpus) and idempotent (unchanged docs skip).
 RAG also feeds the **proposal bots** (`generate_timeline_proposals` /
@@ -52,6 +80,31 @@ missing contracts) into one list. Money items compose
 briefing` and as the web `/` landing (`ui_views.attention_briefing`). Detectors
 + thresholds live next to the function; tests in `test_attention_briefing.py` /
 `test_web_briefing.py`. It is pure-reveal (no write-back), honoring A8/N2/N8.
+
+**Money-at-Risk / commitments (`db/models/obligations.py`, `ai/obligations.py`,
+`report_commitments`):** the highest-ROI INTENTIONS #1 build. `extract-obligations
+<project>` (LLM) pulls dated/dollar obligations (payment milestones, retainage,
+penalties, deposits, settlements, insurance/permit deadlines) into
+`ContractObligation`; `report_commitments` deterministically computes status
+(overdue/due-soon/conditional) + money-at-risk; a `commitments` category on the
+briefing surfaces overdue receivables / obligations we owe. Built + unit-tested,
+but the extraction still uses the OLD conservative-prompt approach and has NOT
+been run live (it used Anthropic). See [[project-obligations]] memory.
+
+**WHAT'S NEXT (the plan, owner-agreed 2026-06-04), in order:**
+1. **Re-do the obligations extraction with the structured classify-then-extract
+   pattern** (`ai/doc_extraction.py` style, OpenAI) and RUN IT LIVE so the
+   briefing shows real flagged dollars. This is the agreed next task.
+2. **"Value caught" tally** (INTENTIONS #2) — count the $ ALTA surfaced; the
+   pay-justification scoreboard the boss wants. Cheap, deterministic.
+3. **Plain-English per-project money one-liner** (free).
+4. **Then STOP building and put it in front of the PM** (STRATEGY §9 adoption
+   test) — the data is finally clean; the PM's reaction drives the next iteration.
+5. Horizon: **acquisition / lead-gen intelligence** (INTENTIONS §5 — partner's
+   matricule->REQ->contacts pipeline), gated on the data feed + the ops brain
+   being in daily use.
+The owner's boss mandate: the software must demonstrably SAVE MONEY and be
+USABLE, not just clever. Judge every next build by that + rule N8.
 
 ---
 

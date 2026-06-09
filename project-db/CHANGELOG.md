@@ -9,6 +9,18 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-04 (later 2) -- Anthropic primary, OpenAI automatic fallback
+
+Owner's Anthropic credits hit $0, stranding ask/propose/extract. FallbackProvider
+(`ai/providers/fallback.py`): Anthropic primary, OpenAI backup on any failure
+(each backend's own retry runs fully on primary first). get_default/fast_provider
+wire it when both keys exist; OpenAI used directly when no Anthropic key; explicit
+LLM_PROVIDER respected; backup pinned to api.openai.com + OPENAI_FALLBACK_MODEL
+(gpt-4o-mini). Live-verified: ask hit a "credit balance too low" 400 and answered
+via OpenAI, no error surfaced. +8 tests. 806 passing.
+
+---
+
 ## 2026-06-04 (later) -- Structured LLM extraction (retire the regex pile)
 
 Owner pushback (correct): the heuristic pile (keyword gate + model/projection/

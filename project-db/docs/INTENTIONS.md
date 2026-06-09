@@ -1,6 +1,16 @@
 # ALTA — Intentions (the money-saving roadmap, to complete later)
 
-**Date:** 2026-06-03. **Status:** durable intentions, not a committed plan.
+**Date:** 2026-06-03 (status note 2026-06-04). **Status:** durable intentions.
+
+> **STATUS 2026-06-04:** #1 (Money-at-Risk) is BUILT — `ContractObligation` +
+> `extract-obligations` + `report_commitments` + the briefing `commitments`
+> category — but its extraction still uses the old conservative-prompt approach
+> and has NOT been run live. **Next agreed task: re-do that extraction with the
+> structured classify-then-extract pattern (`ai/doc_extraction.py` style,
+> OpenAI) and run it live**, then build #2 (value-caught tally), then show the
+> PM. The financial extraction itself was rebuilt this way already (see
+> CHANGELOG 2026-06-04). Provider is now Anthropic-primary / OpenAI-fallback
+> (Anthropic credits at $0).
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
 usable, and informative, not just clever. Every intention below is judged by
