@@ -59,6 +59,18 @@ def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     return report_attention_briefing(session, limit=limit)
 
 
+def value_caught(session: Session) -> dict[str, Any]:
+    """ROI scoreboard for the landing page (INTENTIONS #2).
+
+    Thin pass-through to ``ai.views.report_value_caught`` so the web `/` card and
+    the ``project_db value-caught`` CLI render identical numbers.  Pure read,
+    deterministic, no LLM -- safe to recompute on every request.
+    """
+    from project_db.ai.views import report_value_caught
+
+    return report_value_caught(session)
+
+
 def money_glossary() -> dict[str, Any]:
     """Plain-language explanation of the project's money numbers.
 

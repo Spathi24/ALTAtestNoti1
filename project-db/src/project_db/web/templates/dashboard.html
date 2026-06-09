@@ -2,6 +2,25 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
+{% if value_caught.headline_total %}
+<article data-testid="value-caught" class="vc-card">
+  <header><strong>Money ALTA has surfaced</strong>
+    <small>&mdash; as of {{ value_caught.generated_on }}</small></header>
+  <p class="dash-number" data-testid="vc-total">
+    ${{ "{:,.0f}".format(value_caught.headline_total) }}
+  </p>
+  <p>needing attention across
+    <strong>{{ value_caught.flagged_project_count }}</strong> project(s):
+    to collect (overdue)
+    <strong>${{ "{:,.0f}".format(value_caught.money.receivables_overdue) }}</strong>
+    &middot; due soon
+    ${{ "{:,.0f}".format(value_caught.money.receivables_due_soon) }}
+    &middot; we owe (overdue)
+    <strong>${{ "{:,.0f}".format(value_caught.money.obligations_overdue) }}</strong>
+  </p>
+</article>
+{% endif %}
+
 <hgroup>
   <h2>Today's briefing</h2>
   <p>The cross-system truths that need attention &mdash; money, scope, schedule,

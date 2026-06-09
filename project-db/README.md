@@ -7,7 +7,7 @@ corrections to what Monday says is happening.
 
 > **New here?** Read **[docs/README.md](docs/README.md)** first — it is the
 > documentation map (what to read, in what order, which docs are live vs.
-> historical). Current state: **815 tests passing**; the brain is built; the
+> historical). Current state: **822 tests passing**; the brain is built; the
 > next focus is adoption, not more features (Anthropic credits at $0 — see
 > the budget note in [docs/HANDOFF.md](docs/HANDOFF.md)).
 

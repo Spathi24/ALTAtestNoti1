@@ -9,6 +9,33 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-09 (later) -- Value-caught ROI tally (INTENTIONS #2)
+
+The "pay-justification scoreboard" the owner's boss wants: one deterministic
+number for "how much money has ALTA put in front of us?" Now that obligations are
+extracted live, this aggregates them.
+
+- `ai/views.py::report_value_caught` -- portfolio tally over ContractObligation,
+  reusing `_obligation_status` (same status logic as report_commitments + the
+  briefing, so the numbers agree). Buckets: revenue past due to collect
+  (owed_to_us overdue), receivables due soon, obligations we owe (owed_by_us
+  overdue); headline = collect-overdue + owe-overdue. A $0/null-amount obligation
+  adds nothing and doesn't flag a project (it's a DOLLAR scoreboard). No LLM,
+  free to recompute (N2).
+- CLI `value-caught` (read-only renderer) + a headline card on the web `/`
+  landing above the briefing (`web/ui_views.value_caught`, `dashboard.html`).
+  Both read the same report, so CLI and web agree.
+- Live (real DB): "$1,926 needing attention across 2 project(s)" -- 5768 owes
+  $1,523 overdue, 2150 Tupper $402 to collect (the only projects with obligations
+  extracted so far; the number grows as more are run).
+- +7 tests (`test_value_caught.py` + 2 web card assertions). **822 passing.**
+
+Scope note: v1 tallies COMMITMENTS dollars only (cleanest, non-double-counted).
+Financial-risk flags (low-confidence margins, unconfirmed-quote piles) are a
+softer signal left out of v1 to avoid double-counting -- a later extension.
+
+---
+
 ## 2026-06-09 -- Obligations rebuilt on structured extraction + run live
 
 Closed the last loose end in the "brain": the Money-at-Risk obligations layer was

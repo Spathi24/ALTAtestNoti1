@@ -9,6 +9,7 @@ portfolio reads "All clear", and that the demoted counts grid is still present
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine
@@ -99,6 +100,28 @@ class TestBriefingLanding:
         body = client.get("/").text
         assert "pill-high" in body
         assert 'data-testid="briefing-count"' in body
+
+
+class TestValueCaughtCard:
+    def test_card_shows_total(self, client, session, project_factory):
+        from project_db.db.models import ContractObligation
+
+        p = project_factory(name="VC Proj")
+        session.add(ContractObligation(
+            project_id=p.canonical_id, kind="payment_milestone",
+            direction="owed_to_us", amount=Decimal("12345"),
+            due_date=date.today() - timedelta(days=4)))
+        session.commit()
+
+        body = client.get("/").text
+        assert 'data-testid="value-caught"' in body
+        assert 'data-testid="vc-total"' in body
+        assert "12,345" in body
+
+    def test_card_absent_when_no_money(self, client, session, project_factory):
+        project_factory(name="No Money Proj")
+        body = client.get("/").text
+        assert 'data-testid="value-caught"' not in body
 
 
 class TestUiViewsBriefing:

@@ -12,7 +12,7 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-09, at **815 tests**.  The two newest things below
+Last updated: 2026-06-09, at **822 tests**.  The two newest things below
 (structured extraction + provider fallback) are the ones a fresh instance most
 needs; then RAG, the briefing, and the financial layer.  The obligations layer
 is now structured + live-validated too (see below).
@@ -107,9 +107,10 @@ See [[project-obligations]] memory.
    pattern** and RUN IT LIVE.~~ **DONE 2026-06-09** — `ai/obligation_extraction.py`,
    live-validated; the $8k key-return settlement surfaces. (Residual: cross-copy
    dedup + agency direction, documented above, deferred.)
-2. **"Value caught" tally** (INTENTIONS #2) — count the $ ALTA surfaced; the
-   pay-justification scoreboard the boss wants. Cheap, deterministic.
-3. **Plain-English per-project money one-liner** (free).
+2. ~~**"Value caught" tally** (INTENTIONS #2).~~ **DONE 2026-06-09** —
+   `report_value_caught` + `value-caught` CLI + the `/` headline card. Live:
+   "$1,926 surfaced across 2 projects". v1 tallies commitments dollars only.
+3. **Plain-English per-project money one-liner** (free). ← next
 4. **Then STOP building and put it in front of the PM** (STRATEGY §9 adoption
    test) — the data is finally clean; the PM's reaction drives the next iteration.
 5. Horizon: **acquisition / lead-gen intelligence** (INTENTIONS §5 — partner's

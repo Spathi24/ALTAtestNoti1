@@ -87,12 +87,14 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, session: Session = Depends(db)) -> HTMLResponse:
         briefing = ui_views.attention_briefing(session)
+        value = ui_views.value_caught(session)
         summary = ui_views.dashboard_summary(session)
         pending = ui_views.recent_pending_proposals(session, limit=10)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            {"briefing": briefing, "summary": summary, "pending": pending},
+            {"briefing": briefing, "value_caught": value,
+             "summary": summary, "pending": pending},
         )
 
     page_router = APIRouter()

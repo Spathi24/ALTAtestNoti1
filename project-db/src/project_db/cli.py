@@ -1570,6 +1570,43 @@ def cmd_commitments(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_value_caught(args: argparse.Namespace) -> int:
+    """The ROI scoreboard (read-only): total money ALTA has surfaced as needing
+    action across the whole portfolio (INTENTIONS #2).
+
+    Deterministic over already-extracted ContractObligation rows -- no LLM, no
+    API. Thin renderer over ``ai.views.report_value_caught``; the web `/` landing
+    shows the same number as a headline card.
+    """
+    from project_db.ai.views import report_value_caught
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        data = report_value_caught(s)
+
+    print(f"=== VALUE CAUGHT ({data['generated_on']}) ===")
+    print(f"  ALTA has surfaced ${data['headline_total']:,.0f} needing attention "
+          f"across {data['flagged_project_count']} project(s).")
+    m = data["money"]
+    print(f"    - Revenue past due to collect (overdue): ${m['receivables_overdue']:,.0f}")
+    print(f"    - Receivables due soon:                   ${m['receivables_due_soon']:,.0f}")
+    print(f"    - Obligations we owe (overdue):           ${m['obligations_overdue']:,.0f}")
+    if not data["flagged_project_count"]:
+        print(f"  {data.get('note') or ''}")
+        return 0
+    print()
+    print("  By project:")
+    for p in data["projects"][:30]:
+        total = p["receivables_overdue"] + p["obligations_overdue"]
+        print(f"    ${total:>12,.0f}  {p['project_name']}  "
+              f"(collect ${p['receivables_overdue']:,.0f} / owe "
+              f"${p['obligations_overdue']:,.0f})")
+    return 0
+
+
 def cmd_briefing(args: argparse.Namespace) -> int:
     """Portfolio attention briefing (read-only): the cross-system truths that
     need a PM's attention -- money risk, scope gaps, overdue tasks, missing
@@ -2144,6 +2181,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commit.add_argument("project", help="Project canonical UUID or name fragment")
     commit.set_defaults(func=cmd_commitments)
+
+    vc = sub.add_parser(
+        "value-caught",
+        help="ROI scoreboard (read-only): total money ALTA has surfaced as "
+             "needing action across the portfolio. No LLM.",
+    )
+    vc.set_defaults(func=cmd_value_caught)
 
     rebuild = sub.add_parser(
         "rebuild",

@@ -1304,6 +1304,117 @@ def report_commitments(
 
 
 # ---------------------------------------------------------------------------
+# Value caught -- the ROI scoreboard (INTENTIONS #2)
+# ---------------------------------------------------------------------------
+#
+# A single deterministic number (no LLM, free to recompute over stored rows)
+# answering the owner's boss: "how much money has ALTA put in front of us?"
+# Aggregates the COMMITMENTS money-at-risk across the whole portfolio -- the
+# cleanest, non-double-counted exposure. Financial-risk flags (low-confidence
+# margins, unconfirmed-quote piles) are deliberately NOT tallied here: a softer,
+# different signal that would risk double-counting (a later extension).
+
+
+def report_value_caught(
+    session: Session,
+    *,
+    today: date | None = None,
+    due_soon_days: int = _OBLIGATION_DUE_SOON_DAYS,
+) -> dict[str, Any]:
+    """Portfolio tally of the money ALTA has surfaced as needing action.
+
+    Buckets (all deterministic, from ``ContractObligation`` via
+    ``_obligation_status`` -- the same status logic ``report_commitments`` and
+    the briefing use, so the numbers agree):
+
+      - ``receivables_overdue``  : ``owed_to_us`` overdue  -> revenue past due to COLLECT
+      - ``receivables_due_soon`` : ``owed_to_us`` due soon
+      - ``obligations_overdue``  : ``owed_by_us`` overdue   -> penalty / late exposure we owe
+
+    ``headline_total = receivables_overdue + obligations_overdue`` (the
+    boss-facing "money ALTA flagged"). Pure / JSON-serializable; zeros + a note
+    when nothing is surfaced yet.
+    """
+    from project_db.db.models import ContractObligation
+
+    today = today or date.today()
+    proj_names = {p.canonical_id: p.name for p in session.query(Project).all()}
+
+    money = {
+        "receivables_overdue": Decimal(0),
+        "receivables_due_soon": Decimal(0),
+        "obligations_overdue": Decimal(0),
+    }
+    status_counts: dict[str, int] = {}
+    per_project: dict[Any, dict[str, Any]] = {}
+
+    obs = (
+        session.query(ContractObligation)
+        .filter(ContractObligation.project_id.isnot(None))
+        .all()
+    )
+    for ob in obs:
+        status = _obligation_status(ob, today, due_soon_days)
+        status_counts[status] = status_counts.get(status, 0) + 1
+        amt = ob.amount if ob.amount is not None else Decimal(0)
+        pp = per_project.setdefault(ob.project_id, {
+            "project_id": _ser(ob.project_id),
+            "project_name": proj_names.get(ob.project_id) or "(unknown project)",
+            "receivables_overdue": Decimal(0),
+            "receivables_due_soon": Decimal(0),
+            "obligations_overdue": Decimal(0),
+            "flagged_count": 0,
+        })
+        # A scoreboard of DOLLARS: only a positive-amount obligation flags a
+        # project (a null/$0 overdue item adds nothing and shouldn't show as "$0").
+        contributed = Decimal(0)
+        if ob.direction == "owed_to_us":
+            if status == "overdue":
+                money["receivables_overdue"] += amt
+                pp["receivables_overdue"] += amt
+                contributed = amt
+            elif status == "due_soon":
+                money["receivables_due_soon"] += amt
+                pp["receivables_due_soon"] += amt
+                contributed = amt
+        elif ob.direction == "owed_by_us" and status == "overdue":
+            money["obligations_overdue"] += amt
+            pp["obligations_overdue"] += amt
+            contributed = amt
+        if contributed > 0:
+            pp["flagged_count"] += 1
+
+    headline_total = money["receivables_overdue"] + money["obligations_overdue"]
+
+    breakdown = [
+        {**pp,
+         "receivables_overdue": float(pp["receivables_overdue"]),
+         "receivables_due_soon": float(pp["receivables_due_soon"]),
+         "obligations_overdue": float(pp["obligations_overdue"])}
+        for pp in per_project.values() if pp["flagged_count"] > 0
+    ]
+    breakdown.sort(
+        key=lambda r: r["receivables_overdue"] + r["obligations_overdue"],
+        reverse=True,
+    )
+
+    return {
+        "generated_on": today.isoformat(),
+        "headline_total": float(headline_total),
+        "money": {k: float(v) for k, v in money.items()},
+        "obligation_count": len(obs),
+        "status_counts": status_counts,
+        "flagged_project_count": len(breakdown),
+        "projects": breakdown,
+        "note": (
+            None if breakdown else
+            "No money-at-risk surfaced yet -- run extract-obligations on "
+            "projects to populate the tally."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Attention briefing -- the Monday-morning risk-and-money surface
 # ---------------------------------------------------------------------------
 #

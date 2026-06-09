@@ -8,8 +8,10 @@
 > approach; live-validated on 2150 Tupper + 5768 St-Laurent (the "$8,000 on key
 > return" settlement surfaces, verified). Known residual limits (deferred, not
 > forced): cross-copy settlement duplication + agency-buyout direction — see the
-> CHANGELOG 2026-06-09 entry and HANDOFF. **Next agreed task: #2 (value-caught
-> tally)**, then the per-project money one-liner (#3), then show the PM. The
+> CHANGELOG 2026-06-09 entry and HANDOFF. **#2 (value-caught tally) is now also
+> DONE** (`report_value_caught` + `value-caught` CLI + the `/` headline card;
+> live: "$1,926 surfaced across 2 projects"). **Next agreed task: #3 (the
+> plain-English per-project money one-liner)**, then show the PM. The
 > financial extraction was rebuilt the same way earlier (CHANGELOG 2026-06-04).
 > Provider is Anthropic-primary / OpenAI-fallback (Anthropic credits at $0).
 **Framing (owner, via boss):** the software is already well-built; what it is
