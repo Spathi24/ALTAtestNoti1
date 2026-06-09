@@ -10,8 +10,12 @@
 > forced): cross-copy settlement duplication + agency-buyout direction — see the
 > CHANGELOG 2026-06-09 entry and HANDOFF. **#2 (value-caught tally) is now also
 > DONE** (`report_value_caught` + `value-caught` CLI + the `/` headline card;
-> live: "$1,926 surfaced across 2 projects"). **Next agreed task: #3 (the
-> plain-English per-project money one-liner)**, then show the PM. The
+> live: "$1,926 surfaced across 2 projects"). **#3 (the plain-English
+> per-project money one-liner) is now also DONE** (`report_project_money_line`
+> + `money-line` CLI + a project-page banner; reworked to headline the CONFIRMED
+> view rather than a quote-inflated margin). **Next: STOP building and show the
+> PM** (STRATEGY §9), plus the live transcription feature after the job-site
+> requirements visit. The
 > financial extraction was rebuilt the same way earlier (CHANGELOG 2026-06-04).
 > Provider is Anthropic-primary / OpenAI-fallback (Anthropic credits at $0).
 **Framing (owner, via boss):** the software is already well-built; what it is

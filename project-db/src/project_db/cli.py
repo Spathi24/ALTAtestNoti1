@@ -1607,6 +1607,29 @@ def cmd_value_caught(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_money_line(args: argparse.Namespace) -> int:
+    """One-line money summary for a project (read-only): revenue / costs / margin
+    plus any overdue obligations (INTENTIONS #3).
+
+    Deterministic over already-extracted records -- no LLM, no API. Thin renderer
+    over ``ai.views.report_project_money_line``; the project page shows the same
+    sentence.
+    """
+    from project_db.ai.views import report_project_money_line
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        data = report_project_money_line(s, args.project)
+    if data.get("error"):
+        print(f"FAIL: {data['error']}", file=sys.stderr)
+        return 2
+    print(data["line"])
+    return 0
+
+
 def cmd_briefing(args: argparse.Namespace) -> int:
     """Portfolio attention briefing (read-only): the cross-system truths that
     need a PM's attention -- money risk, scope gaps, overdue tasks, missing
@@ -2188,6 +2211,14 @@ def build_parser() -> argparse.ArgumentParser:
              "needing action across the portfolio. No LLM.",
     )
     vc.set_defaults(func=cmd_value_caught)
+
+    ml = sub.add_parser(
+        "money-line",
+        help="One-line money summary for a project (read-only): revenue / costs "
+             "/ margin + overdue obligations. No LLM.",
+    )
+    ml.add_argument("project", help="Project canonical UUID or name fragment")
+    ml.set_defaults(func=cmd_money_line)
 
     rebuild = sub.add_parser(
         "rebuild",

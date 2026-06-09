@@ -188,6 +188,9 @@ class TestProjectDetail:
         assert "Final SOW.pdf" in body
         # Proposals panel shows the pending one
         assert "PENDING" in body
+        # Money one-liner banner renders (INTENTIONS #3); no records here ->
+        # the honest "nothing extracted yet" form, but the banner is present.
+        assert 'data-testid="money-line"' in body
         # (Phase E note: the raw-JSON debug panel at the bottom of the
         # project page now dumps the full data dict, which includes the
         # proposal's prompt_version.  The visible panels above it still

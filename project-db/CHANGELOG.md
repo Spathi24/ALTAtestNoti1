@@ -9,6 +9,33 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-09 (later 2) -- Plain-English money one-liner (INTENTIONS #3)
+
+A one-sentence per-project money summary: deterministic template over
+report_project_financials + report_commitments, no LLM.
+
+- `ai/views.py::report_project_money_line` + `_money_short` ($402 / $52k / $1.2M).
+  CLI `money-line <project>`; a banner on the web project page (`ui_views.
+  project_detail` -> `project_detail.html`), both from the same helper.
+- **Honesty rework (the important part).** A naive "revenue | costs | margin"
+  over the all-in totals LIED: 1455's all-in margin reads $809k because every
+  unawarded quote in the folder is summed as revenue; its confirmed margin reads
+  -$89k because the client docs are quotes (nothing confirmed). So the one-liner
+  now headlines the CONFIRMED view (agreeing with the Financials panel = the
+  money chokepoint): it prints a real margin ONLY when client revenue is actually
+  confirmed; otherwise it leads with known costs and flags revenue as unconfirmed
+  quotes, pointing at the panel (which is also the PM's confirm-the-awarded-quote
+  workflow). Honest over confident-but-wrong. Low-confidence projects say so.
+  - Live: "1455 Rue St. Mathieu: $88.7k in costs so far; client revenue not yet
+    confirmed ($931k quoted on file -- confirm awarded quotes in Financials)".
+- +7 tests (`test_money_line.py` + a project-page banner assertion). **829 passing.**
+
+This surfaced a real adoption hook: per-project margins only become trustworthy
+once a PM curates the confirmed/quoted toggle -- the one-liner now makes that gap
+visible instead of hiding it behind a fake number.
+
+---
+
 ## 2026-06-09 (later) -- Value-caught ROI tally (INTENTIONS #2)
 
 The "pay-justification scoreboard" the owner's boss wants: one deterministic

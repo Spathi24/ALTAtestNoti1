@@ -378,6 +378,7 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
     from project_db.ai.views import (
         report_budget_vs_contract,
         report_docs_for_project,
+        report_project_money_line,
         report_project_overview,
         report_tasks_without_dates,
     )
@@ -394,6 +395,7 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
     docs = report_docs_for_project(session, ref)
     dateless = report_tasks_without_dates(session, ref)
     budget = report_budget_vs_contract(session, ref)
+    money_line = report_project_money_line(session, ref)
 
     # Combined task list with EVERY date column populated, so the project
     # page can show "what's dated, what isn't, what dates were set" in one
@@ -496,6 +498,7 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
         "documents_by_folder": by_folder,
         "documents_total": docs.get("document_count", 0),
         "budget": budget,
+        "money_line": money_line,
         "proposals_by_status": by_status,
         "proposals_total": len(proposals_for_project),
     }

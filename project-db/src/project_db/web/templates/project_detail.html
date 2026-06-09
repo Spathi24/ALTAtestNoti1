@@ -12,6 +12,14 @@
   </p>
 </hgroup>
 
+{% if d.money_line and d.money_line.line %}
+<p data-testid="money-line"
+   class="money-line{% if d.money_line.low_confidence %} money-line-warn{% endif %}">
+  <strong>Money:</strong>
+  <a href="/projects/{{ d.project.canonical_id }}/financials">{{ d.money_line.line }}</a>
+</p>
+{% endif %}
+
 <nav aria-label="page sections">
   <ul>
     <li><a href="#identity">Identity</a></li>

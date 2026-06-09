@@ -1415,6 +1415,98 @@ def report_value_caught(
 
 
 # ---------------------------------------------------------------------------
+# Money one-liner -- the whole financial state of a project in one sentence
+# ---------------------------------------------------------------------------
+#
+# INTENTIONS #3: a deterministic template over report_project_financials +
+# report_commitments (no LLM). Honest -- when the picture is low-confidence it
+# says so instead of printing a confident margin. ASCII output (cp1252-safe for
+# the CLI). Used by the CLI and the project page.
+
+
+def _money_short(value: Any) -> str:
+    """Compact money string: $402, $52k, $1.2M. ASCII-only."""
+    x = float(value or 0)
+    sign = "-" if x < 0 else ""
+    a = abs(x)
+    if a >= 1e6:
+        return f"{sign}${(f'{a/1e6:.1f}M').replace('.0M', 'M')}"
+    if a >= 1e3:
+        return f"{sign}${(f'{a/1e3:.1f}k').replace('.0k', 'k')}"
+    return f"{sign}${a:.0f}"
+
+
+def report_project_money_line(
+    session: Session, project_ref: str, *, today: date | None = None,
+) -> dict[str, Any]:
+    """One plain-English sentence summarizing a project's money state.
+
+    Returns ``{project, line, low_confidence, has_records}`` (or ``{error}`` on an
+    unresolved ref). ``line`` is the headline sentence -- revenue / costs / margin
+    for a clean renovation, a LOW-CONFIDENCE note for an unmodeled project type,
+    or a "nothing extracted yet" hint -- with a commitments tail when obligations
+    are overdue. Pure / deterministic.
+    """
+    fin = report_project_financials(session, project_ref)
+    if fin.get("error"):
+        return {"error": fin["error"]}
+    name = fin["project"]["name"]
+    com = report_commitments(session, project_ref, today=today)
+
+    # Shared tail: overdue obligations / money past due to collect.
+    tail = ""
+    if not com.get("error") and com.get("obligation_count"):
+        overdue = com.get("counts", {}).get("overdue", 0)
+        to_collect = com.get("money_at_risk", {}).get("owed_to_us_overdue", 0)
+        if overdue:
+            tail = f" | {overdue} obligation(s) overdue"
+            if to_collect:
+                tail += f" ({_money_short(to_collect)} to collect)"
+
+    ms = fin.get("money_summary", {})
+    has_records = fin.get("record_count", 0) > 0
+    low_conf = bool(ms.get("low_confidence"))
+
+    if not has_records:
+        line = f"{name}: no financial records extracted yet (run extract-financials)."
+        return {"project": fin["project"], "line": line,
+                "low_confidence": False, "has_records": False}
+
+    if low_conf:
+        line = (f"{name}: money picture LOW CONFIDENCE -- unusual project type; "
+                f"{fin['record_count']} record(s), see Financials.{tail}")
+        return {"project": fin["project"], "line": line,
+                "low_confidence": True, "has_records": True}
+
+    # Headline the CONFIRMED view so the one-liner AGREES with the Financials
+    # panel (the money chokepoint). A real margin is shown ONLY when client
+    # revenue is actually confirmed; otherwise the revenue side is a pile of
+    # unconfirmed quotes (the "we dump every quote in the folder" problem) and a
+    # single margin would be misleading -- so we lead with known costs and flag
+    # that revenue is unconfirmed, pointing at the panel (which is also the PM's
+    # confirm-the-awarded-quote workflow). Honest over confident-but-wrong.
+    cbmt = fin.get("confirmed_by_money_type", {})
+    conf_rev = cbmt.get("contract_revenue", 0.0)
+    conf_cost = cbmt.get("supplier_cost", 0.0)
+    totals = fin.get("totals", {})
+    if conf_rev > 0:
+        margin = fin.get("confirmed_construction_margin", conf_rev - conf_cost)
+        line = (f"{name}: revenue {_money_short(conf_rev)} | "
+                f"costs {_money_short(conf_cost)} | "
+                f"margin ~{_money_short(margin)} (confirmed){tail}")
+    else:
+        cost_known = conf_cost or totals.get("contractor_out", 0.0)
+        quoted = totals.get("client_in", 0.0)
+        line = f"{name}: {_money_short(cost_known)} in costs so far; client revenue not yet confirmed"
+        if quoted:
+            line += (f" ({_money_short(quoted)} quoted on file -- "
+                     f"confirm awarded quotes in Financials)")
+        line += tail
+    return {"project": fin["project"], "line": line,
+            "low_confidence": False, "has_records": True}
+
+
+# ---------------------------------------------------------------------------
 # Attention briefing -- the Monday-morning risk-and-money surface
 # ---------------------------------------------------------------------------
 #

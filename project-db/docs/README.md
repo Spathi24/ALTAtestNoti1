@@ -5,7 +5,7 @@ synthesis rather than reconcile the old ones). This index is the **single map**:
 what to read, in what order, and which docs are live vs. historical. Read this
 first if you are a fresh instance.
 
-**Current state (2026-06-09):** on `main`, **822 tests passing**. The "brain" is
+**Current state (2026-06-09):** on `main`, **829 tests passing**. The "brain" is
 largely built — financial reconciliation, the deterministic attention briefing,
 RAG over contracts, hybrid search, one-command refresh. Per every strategic doc,
 the next bottleneck is **adoption, not more features** (STRATEGY §9 / rule N8).
@@ -79,7 +79,7 @@ LLM run as a deliberate, budgeted action (now OpenAI cents).
 
 ## Conventions
 - Test count is hand-maintained across README / HANDOFF / CHANGELOG; keep them in
-  sync (currently **822**).
+  sync (currently **829**).
 - CHANGELOG: newest on top, one entry per session (date · theme · what · tests · state).
 - Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
   (use the model actually running).
