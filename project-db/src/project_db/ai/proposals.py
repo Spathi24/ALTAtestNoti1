@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 # in trust.  The RoadmapTask table + import/classify CLIs are kept (harmless,
 # queryable); only the prompt injection is gone.  Proposals are now grounded
 # purely in the project's own contracts and schedule, with quoted-excerpt
-# evidence.  See EVALUATION.md section 3.
+# evidence.  See STRATEGY.md rule N5 (the frozen roadmap-injection slop).
 TIMELINE_PROMPT_VERSION = "timeline-v5-quoted"
 SCOPE_PROMPT_VERSION = "scope-v4-quoted"
 
@@ -627,7 +627,7 @@ def _build_scope_prompt(
     to that have NO corresponding task.  Gaps are grounded in THIS project's
     documents -- the canonical-roadmap injection was removed 2026-05-29 (it
     produced template-derived flags the PM had to second-guess; see the
-    TIMELINE_PROMPT_VERSION note and EVALUATION.md section 3).
+    TIMELINE_PROMPT_VERSION note and STRATEGY.md rule N5).
 
     Instruction sits at the TAIL (truncation lesson from the timeline prompt).
     """

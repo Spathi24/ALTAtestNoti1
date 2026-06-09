@@ -5,11 +5,20 @@ A unified data layer that pulls live data from all of the company's SaaS tools
 you query across all of them — or have an LLM read your contracts and propose
 corrections to what Monday says is happening.
 
-> **New here?** Read **[docs/README.md](docs/README.md)** first — it is the
-> documentation map (what to read, in what order, which docs are live vs.
-> historical). Current state: **829 tests passing**; the brain is built; the
-> next focus is adoption, not more features (Anthropic credits at $0 — see
-> the budget note in [docs/HANDOFF.md](docs/HANDOFF.md)).
+> **New here? Read the docs in this order** (the set is intentionally lean):
+> 1. **[docs/STRATEGY.md](docs/STRATEGY.md)** — mission + the standing
+>    ALWAYS/NEVER rules + owner clarifications.
+> 2. **[docs/HANDOFF.md](docs/HANDOFF.md)** — how it works now (engineering
+>    state, the financial layer, the extraction pipeline diagram, footguns).
+> 3. **[docs/FEATURES.md](docs/FEATURES.md)** — plain-language "what it does".
+> 4. **[docs/INTENTIONS.md](docs/INTENTIONS.md)** — the forward roadmap (the
+>    core "active adaptation" purpose, money layers, the lead-gen north star).
+> 5. **[CHANGELOG.md](CHANGELOG.md)** — day-by-day history; the **current test
+>    count lives here** (latest entry) and nowhere else.
+>
+> Current state: the brain is built; the next focus is the active-adaptation
+> automation + adoption, not more features. Budget: Anthropic credits at $0,
+> OpenAI fallback — see the budget note in HANDOFF.
 
 **Status timeline (latest detail 2026-06-04):**
 - Phase 1 (Brain foundation): DocumentText sidecar + Proposal table +
@@ -43,15 +52,15 @@ corrections to what Monday says is happening.
 - **Roadmap prompt injection REMOVED (2026-05-29).** The `roadmap_task`
   table + import/classify CLIs are kept, but injecting the architect
   design-phase roadmap into the contractor proposal prompts produced
-  template noise and was stripped (see `docs/EVALUATION.md` §3).
+  template noise and was stripped (see the rule N5 in STRATEGY.md).
 - **Attention briefing (2026-06-03): the new landing.** The web `/`
   now leads with a ranked, deterministic briefing of the cross-system
   truths that need attention — money risk (low-confidence margins,
   confirmed costs exceeding revenue, unconfirmed-quote piles), scope
   gaps, overdue tasks, missing contracts — each linking to its evidence.
   No LLM, no API spend (it recomputes over already-stored data). Also a
-  `project_db briefing` CLI. This is the EVALUATION.md §3/§5 shift from
-  *showing activity ALTA generated* to *revealing truths it discovered*.
+  `project_db briefing` CLI. This is the strategic shift from
+  *showing activity ALTA generated* to *revealing truths it discovered* (A8).
 - **RAG (2026-06-03): the askbot can read the contracts.** Document text
   is chunked + embedded (OpenAI `text-embedding-3-small`) into a
   `DocumentChunk` table; `ask` now retrieves the most relevant excerpts
@@ -77,14 +86,13 @@ corrections to what Monday says is happening.
   extraction try Anthropic, then transparently fall back to OpenAI on failure
   (the owner's Anthropic credits ran out) instead of erroring.
 
-**806-test suite.** For "what does it do?" read
-**[docs/FEATURES.md](docs/FEATURES.md)** (plain-language feature list);
-for the honest current-state assessment + standing rules read
-**[docs/EVALUATION.md](docs/EVALUATION.md)**; for the developer handoff
-(invariants, the financial layer, worked-through problems, footguns) read
-**[docs/HANDOFF.md](docs/HANDOFF.md)**; the money-saving roadmap-to-build in
-**[docs/INTENTIONS.md](docs/INTENTIONS.md)**; day-by-day log in
-**[CHANGELOG.md](CHANGELOG.md)**.
+For "what does it do?" read **[docs/FEATURES.md](docs/FEATURES.md)**
+(plain-language feature list); for the mission + the standing ALWAYS/NEVER rules
+read **[docs/STRATEGY.md](docs/STRATEGY.md)**; for the developer handoff
+(invariants, the financial layer, the extraction pipeline diagram, footguns) read
+**[docs/HANDOFF.md](docs/HANDOFF.md)**; the forward roadmap in
+**[docs/INTENTIONS.md](docs/INTENTIONS.md)**; day-by-day log (and the current
+test count) in **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
 
@@ -164,7 +172,7 @@ QuickBooks connector code complete • Drive delta sync via
 blocker is hosting a public HTTPS endpoint, not Monday API capability.
 
 **See [docs/STRATEGY.md](docs/STRATEGY.md) for the strategic direction,
-[docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan, and
+[docs/INTENTIONS.md](docs/INTENTIONS.md) for the forward roadmap, and
 [CHANGELOG.md](CHANGELOG.md) for day-by-day progress.**
 
 ---
@@ -555,8 +563,8 @@ project-db/
 
 ### 🧠 v0.3 — The Brain (per [STRATEGY.md](docs/STRATEGY.md))
 
-The current focus. The phased plan lives in
-[docs/ROADMAP.md](docs/ROADMAP.md); the abridged version:
+The forward plan now lives in
+[docs/INTENTIONS.md](docs/INTENTIONS.md); the abridged history:
 
 **Phase 1 — Brain foundation (done)**
 - [x] `DocumentText` sidecar — extract text from PDFs, Google Docs, DOCX, Excel; 10 MB cap

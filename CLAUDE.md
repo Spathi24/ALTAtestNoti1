@@ -184,10 +184,12 @@ ALTAtest/
 ├── docs/                            ← top-level design + planning docs
 └── project-db/                      ← the actual Python package
     ├── README.md                    ← user-facing setup + usage docs
-    ├── docs/
+    ├── docs/                        ← lean set: STRATEGY, HANDOFF, INTENTIONS,
+    │   │                              FEATURES (+ MONDAY_USAGE / adding-a-connector)
+    │   ├── STRATEGY.md              ← mission + standing ALWAYS/NEVER rules
+    │   ├── HANDOFF.md               ← engineering state + extraction pipeline diagram
+    │   ├── INTENTIONS.md            ← forward roadmap
     │   ├── MONDAY_USAGE.md          ← push/pull/add workflow for Monday
-    │   ├── design-v0.1.md
-    │   ├── OPTIMIZATION_v0.2.md
     │   ├── adding-a-connector.md
     │   └── ...
     ├── scripts/

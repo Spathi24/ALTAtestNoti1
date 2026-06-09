@@ -1510,8 +1510,8 @@ def report_project_money_line(
 # Attention briefing -- the Monday-morning risk-and-money surface
 # ---------------------------------------------------------------------------
 #
-# This is the deterministic detector layer the strategy (EVALUATION.md sections
-# 4-5) calls the "draw": instead of showing the PM activity ALTA *generated* (a
+# This is the deterministic detector layer the strategy (STRATEGY.md, rule A8)
+# calls the "draw": instead of showing the PM activity ALTA *generated* (a
 # proposal queue), it surfaces cross-system *truths* ALTA discovered that a PM
 # cannot see by opening Monday and Drive in two tabs -- ranked by how much they
 # need attention.

@@ -1,7 +1,7 @@
 # Adding a new connector
 
-> **Read [`STRATEGY.md`](STRATEGY.md) and [`ROADMAP.md`](ROADMAP.md) before
-> picking up a new connector.** As of 2026-05-14 the strategic direction is
+> **Read [`STRATEGY.md`](STRATEGY.md) (esp. rule N6) before picking up a new
+> connector.** As of 2026-05-14 the strategic direction is
 > to NOT add new connectors (CompanyCam, live QB, etc.) until the existing
 > Monday + Drive integration is producing daily value to a PM via the LLM
 > reconciliation layer. This guide stays valid as reference for the day a

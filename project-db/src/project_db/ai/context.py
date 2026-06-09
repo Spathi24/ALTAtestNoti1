@@ -45,7 +45,7 @@ _CHARS_PER_TOKEN = 4
 # carry a contract's schedule/scope sections with their surrounding
 # context, not just an out-of-context fragment.  The genuinely long
 # (50+ page) contracts still get truncated; relevant-chunk retrieval
-# (RAG) is the post-Phase-5 fix for those, tracked in ROADMAP.md.
+# (RAG) is the fix for those, now implemented (see CHANGELOG / ai/rag.py).
 _PER_DOC_CHAR_CAP_DEFAULT = 16000
 
 

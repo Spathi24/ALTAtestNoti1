@@ -36,6 +36,57 @@ recurring, cross-system leaks a human lets slip. LLM **extracts evidence once**
 
 ---
 
+## 0. Active adaptation — automatic field-update management  ⭐⭐ (THE core purpose)
+
+**Status:** design only; requirements gathered at a job-site visit (~2026-06-10).
+**Do not build before those requirements land** (building blind = the drift trap,
+N8). This consolidates the former `TRANSCRIPTION_FEATURE.md`.
+
+**What.** A worker on site reports — by chat (WhatsApp to a number), voice, or
+later a photo — *what was done / what's left*. ALTA classifies it, matches it to
+that day's to-do list and the project timeline/scope, and proposes the resulting
+updates **dependency-aware** (is this task done? does it slip a date? is it
+off-plan? does it cascade to dependents?), through human approval. This is the
+original purpose — automatic management — and the thing nobody else does;
+financials are secondary to it.
+
+**The key architectural insight: chat, voice transcription, and image
+recognition are ONE pipeline with three input adapters, not three features:**
+
+```
+[ typed chat msg ]  ┐
+[ voice transcript ] ├─→ FIELD SIGNAL → classify (done / new task / scope-change /
+[ site photo (vision)]┘  (raw+project)   blocker / date-shift) + verbatim evidence
+                                           ↓ reconcile vs tasks/timeline/scope/deps
+                                           ↓ PROPOSALS → human approves → Monday / canonical DB
+```
+
+Build the core **once** (field-signal → classify → reconcile → propose); add
+adapters cheaply. Google Docs are INPUT-only — outputs land in the canonical DB
+or as Monday tasks, never written back to a Doc.
+
+**Maps onto the existing framework (it's mostly an input source, not a new
+paradigm):** `DailyLog` (storage; bare today — add a structured sidecar like
+`DocumentText`/`FinancialRecord`), the classify-then-extract structured pattern
+(`ai/doc_extraction.py`, `ai/obligation_extraction.py`),
+`assemble_project_context` (current state for the prompt), and the Proposal
+write-back engine (`ai/proposals.py`; `_ACCEPTABLE_FIELDS` extends *carefully* —
+A2/A3, advisor-not-actor).
+
+**Gaps to build (post-requirements):** a channel-agnostic field-note ingest
+(CLI/web text-in first; WhatsApp/webhook later — blocked on hosting, like Monday
+webhooks); `ai/field_note_extraction.py`; proposal generation from a note; and
+the hard part, **dependency-aware timeline cascade** (deterministic graph math) —
+which **gates on whether Monday actually stores the task-dependency graph** (the
+#1 question to answer at the job site). Bring back 1–2 real, messy field notes as
+test fixtures.
+
+**Build-when:** after the job-site requirements. Prototype the channel-agnostic
+core (typed text → classify → proposals) first; prove it; then add WhatsApp +
+vision.
+
+---
+
 ## 1. Commitments & Money-at-Risk layer  ⭐ (highest ROI — do first)
 
 **What.** Extract the *dated/dollar obligations* out of contracts — payment
@@ -111,19 +162,23 @@ tally). Tiny once §1 exists.
 
 Lighter, high-informativeness, near-zero cost. Each is a small deterministic
 add unless noted.
-- **Plain-English money one-liner per project** — "Contracted $76.5k · invoiced
-  $52k · costs $48k · ~$28k margin · 2 milestones unbilled." A deterministic
-  template over `report_project_financials` + commitments. One sentence = the
-  whole financial state. (No LLM.)
+- ~~**Plain-English money one-liner per project**~~ **DONE 2026-06-09**
+  (`report_project_money_line` + `money-line` CLI + project-page banner;
+  headlines the CONFIRMED view rather than a quote-inflated margin).
 - **"What changed since you last looked"** — a weekly diff over the canonical DB
   (new invoices, milestone done-but-unbilled, new sub invoice over quote). Makes
   opening ALTA a habit. Needs a lightweight per-week snapshot.
 - **Exportable / printable project brief** — a clean one-page financial + risk
   summary the PM can email the owner or client. Gets ALTA's value out of
   localhost into the business's workflow.
+- **Small UX/robustness backlog** (from the former refocus plan): a Drive-OAuth-
+  expiry banner in the web UI (token expiry currently fails quietly); a
+  plain-English "this project type isn't modeled — rough estimate" label instead
+  of the technical LOW CONFIDENCE; an "extraction pending — run extract-financials"
+  empty state on the Financials panel; plain-English error messages. Low effort,
+  do opportunistically.
 
-**Build-when:** opportunistically; the one-liner is the cheapest and pairs with
-§1/§2.
+**Build-when:** opportunistically; pairs with §1/§2.
 
 ---
 
@@ -222,15 +277,41 @@ until the current brain is in daily PM use. Keep it as the documented north star
 build the connector slice when the lead data is ready and a PM is using the ops
 side.
 
+**Build it as a SEPARATE app, integrated via shared DATA — not merged code
+(owner discussion 2026-06-09).** The co-worker is scraping two DBs (leads =
+properties; contractors = pricing/employment). The optimizer ("which contractor
+is best for this project given scope/timeline/financials") is a *different
+product* with different users and cadence than the ops brain; folding it into
+this codebase is how you get another ~19k lines and lose the plot (the exact
+drift we're fighting). Keep both codebases independently comprehensible and
+connect them at the **canonical data layer** (the optimizer reads the ops DB —
+project scope/timeline/financials — plus the two scraped DBs). Define that data
+interface even while the optimizer lives elsewhere. **Technique note:** the
+contractor-to-task choice is a **matching / assignment + weighted-scoring**
+problem (constraint optimization / linear assignment, or a simple weighted rank
+to start) — NOT gradient descent (that's for continuous differentiable
+objectives). Aim at the right tool.
+
 ---
 
 ## Sequencing (intention, not commitment)
 
-1. **§1 Commitments & Money-at-Risk** + **§2 Value-caught tally** — the
-   demonstrable-ROI core. Build §4's cost techniques into it as you go.
-2. **§3 usability wins** — opportunistic, mostly free, high informativeness.
-3. **§5 acquisition intelligence** — the north star; begin the connector slice
-   when the lot-data feed is stable AND the ops brain is in real PM use.
+**Done (2026-06-09):** §1 Commitments/Money-at-Risk (structured + live), §2
+Value-caught tally, §3 money one-liner.
+
+**Next, in order:**
+1. **§0 Active adaptation** — the core purpose. Build the channel-agnostic
+   field-note → classify → propose prototype AFTER the job-site requirements
+   (esp. the Monday dependency-graph question). This now leads the roadmap.
+2. **Financial trust audit** (cross-cutting, mostly free): read the actual
+   stored document text vs. the extracted `FinancialRecord`s by hand on a few
+   projects to find the systematic cause of the $0 / $millions failures, instead
+   of tuning heuristics blind.
+3. **§3 remaining usability wins** + the small UX/robustness backlog —
+   opportunistic.
+4. **§5 acquisition intelligence** — the north star, as a SEPARATE app sharing
+   the canonical data; begin when the lot-data feed is stable AND the ops brain
+   is in real PM use.
 
 The test for all of it (rule N8): *does a PM/owner open ALTA sooner, and can you
 point at dollars it saved?* If an idea fails that, it doesn't ship.

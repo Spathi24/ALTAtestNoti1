@@ -4,14 +4,14 @@ v0.2: dispatches to canned reports (Tier 1 per STRATEGY.md).  Now supports
 parameter extraction -- ``"overview of project 923 Rockland"`` resolves the
 project ref and calls the report with it.
 
-Mode 2 (text-to-SQL) is intentionally deferred per STRATEGY.md / ROADMAP.md
-Phase 3 -- the strategic path is to build a structured Proposal-driven LLM
-layer first, and only consider text-to-SQL once that proves valuable. The
-stub remains so the dispatch shape doesn't change; do not extend it
-without revisiting the strategy.
+Mode 2 (text-to-SQL) is intentionally deferred per STRATEGY.md (rule N6) --
+the strategic path is to build a structured Proposal-driven LLM layer first,
+and only consider text-to-SQL once that proves valuable. The stub remains so
+the dispatch shape doesn't change; do not extend it without revisiting the
+strategy.
 
-Mode 3 (RAG over DocumentText) is the actual next AI surface -- see
-docs/ROADMAP.md Phase 3 for the prompts and table designs.
+Mode 3 (RAG over DocumentText) is now implemented -- see ai/rag.py and the
+CHANGELOG.
 """
 from __future__ import annotations
 

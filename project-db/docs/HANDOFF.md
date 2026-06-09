@@ -3,16 +3,16 @@
 **For the next Claude instance.** You have NO memory of prior sessions — only
 this file and the repo docs. This document is the consolidated context so you
 don't have to re-derive it from the code. It captures what ISN'T in
-README / ROADMAP / CHANGELOG / STRATEGY: invariants, the financial layer (the
+README / CHANGELOG / STRATEGY: invariants, the financial layer (the
 current centre of gravity), worked-through problems and their solutions, and
 guidance for working on this project well.
 
-**Read these first, in order:** `docs/EVALUATION.md` (the honest current-state
-assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
-(plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
-but give the mission framing.
+**Read these first, in order:** `docs/STRATEGY.md` (mission + the standing
+ALWAYS/NEVER rules + owner clarifications), `docs/FEATURES.md` (plain-language
+feature list), then this; `docs/INTENTIONS.md` is the forward roadmap.
 
-Last updated: 2026-06-09, at **829 tests**.  The two newest things below
+Last updated: 2026-06-09. (Current test count: see the latest CHANGELOG entry —
+it is the single source, not repeated across docs.)  The two newest things below
 (structured extraction + provider fallback) are the ones a fresh instance most
 needs; then RAG, the briefing, and the financial layer.  The obligations layer
 is now structured + live-validated too (see below).
@@ -98,7 +98,7 @@ force):** cross-copy duplication of a settlement across EN/FR/"Copy of" file
 copies inflates the per-project panel total (the briefing aggregates + excludes
 no-date "conditional" items, so the headline stays clean); and agency-buyout
 direction (some tenant settlements come back owed_to_us instead of owed_by_us --
-EVALUATION #12). Both are the financial layer's already-solved problem classes
+a documented known-hard limit). Both are the financial layer's already-solved problem classes
 (dedup / direction-from-client-name) -- pick up only when a PM uses the layer.
 See [[project-obligations]] memory.
 
@@ -114,13 +114,14 @@ See [[project-obligations]] memory.
    — `report_project_money_line` + `money-line` CLI + a project-page banner.
    Headlines the CONFIRMED view (agrees with the Financials panel); when revenue
    is unconfirmed quotes it says so instead of printing a quote-inflated margin.
-4a. **Coming after a job-site visit (owner, 2026-06-09): LIVE TRANSCRIPTION &
-   CONSOLIDATION.** A PM describes what was done / what's left -> classify ->
-   update timeline/scope dependency-aware -> Proposal write-back. The framework
-   exists (DailyLog, the classify-then-extract pattern, `assemble_project_
-   context`, the Proposal engine). Design + the open questions to resolve on-site
-   are in **`docs/TRANSCRIPTION_FEATURE.md`**. DO NOT build it before the
-   requirements land.
+4a. **THE CORE PURPOSE, coming after a job-site visit (owner, 2026-06-09): LIVE
+   TRANSCRIPTION / ACTIVE ADAPTATION.** A worker reports (chat / voice / later
+   photo) what was done / what's left -> classify -> update timeline/scope
+   dependency-aware -> Proposal write-back. Chat/voice/image are ONE pipeline
+   with three input adapters. The framework exists (DailyLog, the
+   classify-then-extract pattern, `assemble_project_context`, the Proposal
+   engine). Full design + the open questions to resolve on-site are in
+   **`docs/INTENTIONS.md` §0**. DO NOT build it before the requirements land.
 4. **Then STOP building and put it in front of the PM** (STRATEGY §9 adoption
    test) — the data is finally clean; the PM's reaction drives the next
    iteration. **← WE ARE HERE (2026-06-09): #1-3 done; next is adoption + the
@@ -155,8 +156,9 @@ project-db/
     web/         app.py, deps.py, ui_views.py, routes/, templates/, static/
     cli.py       single entry point
     config.py    selective .env loader
-  tests/         pytest; conftest.py has fixtures + env stubs (685 tests)
-  docs/          EVALUATION.md, FEATURES.md, STRATEGY.md, ROADMAP.md, HANDOFF.md
+  tests/         pytest; conftest.py has fixtures + env stubs
+  docs/          STRATEGY.md, HANDOFF.md, INTENTIONS.md, FEATURES.md, CHANGELOG.md
+                 + MONDAY_USAGE.md / adding-a-connector.md (reference)
 ```
 
 **Python / running things (Windows):** the project runs on **Python 3.13**,
@@ -216,6 +218,32 @@ models in **`db/models/finance.py`**.
 Drive doc -> extract-content (DocumentText) -> extract-financials (FinancialRecord)
           -> report_project_financials  -> CLI / web Financials panel / ask
 ```
+
+**Full extraction pipeline (financials + obligations), as a diagram.** The one
+rule that makes it legible: the LLM only *classifies + extracts evidence*; every
+NUMBER is computed by deterministic code at the chokepoints
+(`report_project_financials`, `report_commitments`) — invariant N2.
+
+```mermaid
+flowchart TD
+  GD[Google Drive file] -->|gdrive connector| DOC[Document]
+  DOC -->|extract-content| DT[DocumentText: extracted_text]
+  DT -->|"extract-financials --structured"| DE["ai/doc_extraction.py<br/>OpenAI structured outputs:<br/>classify document_type + is_transactional"]
+  DE -->|"per amount: parse, VERIFY vs source text,<br/>direction, money_type (code, not LLM)"| FR[(FinancialRecord)]
+  DT -->|"extract-obligations --structured"| OE["ai/obligation_extraction.py<br/>classify + extract obligations"]
+  OE --> CO[(ContractObligation)]
+  HUMAN[Human confirmed/quoted toggle] --> DFS[(DocumentFinancialStatus)]
+  FR --> RPF["report_project_financials<br/>*** DETERMINISTIC CHOKEPOINT ***"]
+  DFS --> RPF
+  CO --> RC["report_commitments<br/>deterministic"]
+  RPF --> P1[Financials panel + money-line]
+  RPF --> BR[Attention briefing]
+  RC --> VC[value-caught tally]
+  RC --> BR
+```
+
+(Renders on GitHub / mermaid.live. Source of truth for "how extraction works" —
+update this if the pipeline changes.)
 
 Drive is the canonical financial source (per the owner: the CEO gets quotes /
 invoices by email and files them in Drive; QuickBooks will NOT have the full
@@ -384,7 +412,7 @@ fails closed.
 queryable via `/db`). But the prompt INJECTION into the proposal bots was
 removed: it pushed an architect design-phase workflow into contractor-execution
 prompts and produced template-derived flags the PM had to second-guess
-(flagged as slop in EVALUATION §3). Do NOT re-add roadmap content to
+(flagged as slop in the former architecture review). Do NOT re-add roadmap content to
 `_build_timeline_prompt` / `_build_scope_prompt`. Versions: `timeline-v5-quoted`,
 `scope-v4-quoted`.
 
@@ -607,7 +635,7 @@ these are defaults, not a cage.
 - **When you change something, run the suite and push.** `py -3.13 -m pytest
   <abs>/tests -q` must stay green; commit to `main` (Co-Authored-By trailer);
   `git push origin main`. Don't accumulate uncommitted work.
-- **Read EVALUATION.md §6** for the standing ALWAYS/NEVER rules — they encode the
+- **Read STRATEGY.md's "Standing Rules (ALWAYS/NEVER)" section** — they encode the
   load-bearing decisions (advisor-not-actor, deterministic identity, read-value-
   before-write-value, no premature connectors). Don't re-litigate them without
   the owner.
@@ -625,6 +653,9 @@ judgment. The owner values quality of decisions over rule-following.
 - Commit messages: imperative, group by concern, mention test count. Co-author
   trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` (use the
   model actually running; older commits used Sonnet 4.6).
-- Strategic docs to keep current: **EVALUATION.md** (the honest assessment +
-  rules), **FEATURES.md** (plain-language features). Both were accurate as of
-  2026-06-01.
+- Strategic docs to keep current: **STRATEGY.md** (mission + standing rules),
+  **INTENTIONS.md** (forward roadmap), **FEATURES.md** (plain-language features).
+- **Doc set is intentionally lean** (consolidated 2026-06-09): STRATEGY, HANDOFF,
+  INTENTIONS, FEATURES, CHANGELOG + two reference how-tos. Don't add a new
+  top-level doc — fold into one of these. The test count lives ONLY in the latest
+  CHANGELOG entry.

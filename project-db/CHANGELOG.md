@@ -9,6 +9,34 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-09 (later 3) -- Documentation consolidation (kill the sprawl)
+
+The doc set had grown to 14 markdown files in project-db/docs/, each a partial
+source of truth -- a handoff took too long and facts (the test count) drifted
+across files. Consolidated to a lean set so a fresh instance ramps fast and
+there's ONE home per kind of information.
+
+- **Deleted 8 docs** (content folded into keepers or already there; all in git
+  history): design-v0.1, OPTIMIZATION_v0.2, ROADMAP, GOOGLE_DRIVE_PLAN,
+  ALTA_refocus_plan, EVALUATION, TRANSCRIPTION_FEATURE, docs/README (the index).
+- **Folded:** EVALUATION's load-bearing ALWAYS/NEVER rules (A1-A9, N1-N8) +
+  owner clarifications -> STRATEGY.md ("Standing Rules" + "Owner Clarifications").
+  TRANSCRIPTION_FEATURE -> INTENTIONS.md "§0 Active adaptation" (the core
+  purpose). refocus-plan's UX ideas -> INTENTIONS §3 backlog.
+- **Lean core (6 prose docs):** STRATEGY (mission + rules), HANDOFF (engineering
+  state + a new extraction-pipeline Mermaid diagram), INTENTIONS (forward
+  roadmap), FEATURES (plain-language), CHANGELOG (history) + MONDAY_USAGE /
+  adding-a-connector (reference). README points to them in read-order.
+- **Single source for the test count: this CHANGELOG.** Other docs no longer
+  hardcode a number (they drifted; now they point here).
+- Updated all cross-references (README, HANDOFF, CLAUDE.md, adding-a-connector);
+  no dangling doc links remain.
+
+Docs only -- no code touched. **Test suite: 829 passing** (unchanged from the
+money-line work earlier today).
+
+---
+
 ## 2026-06-09 (later 2) -- Plain-English money one-liner (INTENTIONS #3)
 
 A one-sentence per-project money summary: deterministic template over
@@ -795,9 +823,8 @@ surfaces (propose / ask / manual task date edit), E this closeout.
 LOC added.  The full read+decision+action loop is in the browser;
 the CLI surface stays intact and authoritative.
 
-See **[docs/ROADMAP.md M5 RETROSPECTIVE](docs/ROADMAP.md)** for the
-extended writeup: what worked, footguns to know about, ideas
-revisited later, and the path forward.
+The M5 RETROSPECTIVE writeup lived in the former `docs/ROADMAP.md` (removed in
+the 2026-06-09 doc consolidation; recoverable from git history).
 
 ### State at EOD
 - **578 tests** passing.

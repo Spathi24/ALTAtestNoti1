@@ -305,3 +305,74 @@ check it against these:
    schema elegance matters.
 
 10. **Stop building plumbing. Start building the brain.**
+
+---
+
+## Owner Clarifications (durable — these win where they conflict)
+
+*(Consolidated from the former EVALUATION.md, 2026-06-09.)*
+
+- **Google Drive is the canonical, most complete FINANCIAL source — not
+  QuickBooks.** The CEO gets quotes/invoices by email and files them in Drive.
+  Financial reconciliation centers on Drive-document extraction.
+- **Every project is a TWO-SIDED ledger with an upcharge.** Client side (money
+  IN — what we invoice the client) vs. contractor side (money OUT — what subs/
+  suppliers bill us). The spread/margin is the business. Represent both
+  directions and the margin, never a single money column.
+- **Schema-light, content-driven.** Do not hardcode a rigid financial schema to
+  today's filename/folder conventions (they vary and change). The LLM reads the
+  doc; folder/filename are weak priors; raw kept in JSON; queryable fields
+  promoted to columns.
+- **Reveal/bookkeep now; act later.** Hands-on financial actions (drafting
+  invoices, pushing to QB) are deferred. The target is a scannable money picture,
+  not an action console.
+- **Automation is the point.** The original purpose is automatic management
+  (read field reality → reconcile against the plan → update timeline/scope);
+  financial reconciliation is valuable but secondary to that automation.
+
+## Standing Rules (ALWAYS / NEVER)
+
+The load-bearing decisions — each earned the hard way. Don't re-litigate without
+the owner. *(Consolidated from the former EVALUATION.md §6.)*
+
+**ALWAYS**
+- **A1** LLM proposes, human disposes; the LLM never computes money. AI field
+  changes land in `Proposal` PENDING; financial totals/margins are SQL/Python.
+- **A2** Every Monday-touching mutation writes externally FIRST, flips local
+  state SECOND (a failed external write leaves canonical state untouched).
+- **A3** Every mutation route re-reads entity state immediately before mutating;
+  renders a stale fragment if it is no longer actionable.
+- **A4** Identity is deterministic; uncertainty surfaces in `doctor`, never
+  guessed. Project identity = Drive folder ancestry; Monday matches in via
+  `ProjectMatcher` (civic-number then exact-name, unique-hit-only).
+- **A5** No business logic in templates/routes — it lives in a service module
+  (`ai/views.py`, `web/ui_views.py`) consumed identically by CLI + web.
+- **A6** Every LLM extraction carries verifiable evidence (verbatim
+  `quoted_excerpt` + document name). Summaries are rejected.
+- **A7** Prompt-philosophy boundary is permanent: askbot = assertive, recommends;
+  proposal + extraction bots = conservative, "returning none is correct".
+- **A8** Read value before write value — prefer features that REVEAL a
+  cross-system truth over features that WRITE back.
+- **A9** Keep the suite green; ASCII-only in CLI/script `print()` (cp1252);
+  commit to `main` + push; never `git add -A` (the egg-info trap).
+
+**NEVER**
+- **N1** Never make a proposal/extraction bot "smarter" with the askbot's
+  assertive style. Fix weak proposals with better evidence, never by loosening
+  the anti-hallucination posture.
+- **N2** Never let the LLM do financial arithmetic SQL can do (sums, margins,
+  over/under, %). The LLM extracts evidence and narrates; code computes.
+- **N3** Never reinstate substring/fuzzy PROJECT matching (the "Rockland matches
+  927 Rockland" corruption).
+- **N4** Never add a UI write route without A2 + A3; never add bulk-accept to the
+  UI (bulk stays CLI-only).
+- **N5** Never expand the (frozen) roadmap-injection machinery, and don't add AI
+  surface a PM must second-guess ("does this apply here?").
+- **N6** Never pick up deferred plumbing before the brain is in daily PM use:
+  CompanyCam, Monday webhook receivers, Postgres + Alembic, text-to-SQL,
+  multi-user/auth/hosting. (`sqlite-vec` for RAG is the one sanctioned exception.)
+- **N7** Never break the single-user / localhost / no-auth posture (multi-user is
+  a different product).
+- **N8** Never build a feature because it is tractable, demonstrable, or
+  interesting. The test: *does a PM open the app sooner because of it?* If not,
+  stop.
