@@ -5,7 +5,13 @@ A unified data layer that pulls live data from all of the company's SaaS tools
 you query across all of them — or have an LLM read your contracts and propose
 corrections to what Monday says is happening.
 
-**Current status (2026-05-26):**
+> **New here?** Read **[docs/README.md](docs/README.md)** first — it is the
+> documentation map (what to read, in what order, which docs are live vs.
+> historical). Current state: **806 tests passing**; the brain is built; the
+> next focus is adoption, not more features (Anthropic credits at $0 — see
+> the budget note in [docs/HANDOFF.md](docs/HANDOFF.md)).
+
+**Status timeline (latest detail 2026-06-04):**
 - Phase 1 (Brain foundation): DocumentText sidecar + Proposal table +
   content extractors + Drive reconciliation. **Done.**
 - Phase 2 (Tier-1 deterministic reports): 5 canned reports wired into
