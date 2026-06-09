@@ -57,6 +57,7 @@ LLM run as a deliberate, budgeted action (now OpenAI cents).
 | Doc | Purpose |
 |---|---|
 | [ALTA_refocus_plan.md](ALTA_refocus_plan.md) | A demo-prep / scope-convergence plan (job-site demo framing). Useful feature-by-feature triage; the demo framing is paused unless a demo is scheduled. |
+| [TRANSCRIPTION_FEATURE.md](TRANSCRIPTION_FEATURE.md) | Design notes + open questions for the upcoming live transcription & consolidation feature (gather requirements at the job site before building). |
 | [MONDAY_USAGE.md](MONDAY_USAGE.md) | Monday push/pull/add workflow. |
 | [adding-a-connector.md](adding-a-connector.md) | Playbook for a new source connector. |
 

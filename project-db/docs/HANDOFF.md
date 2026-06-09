@@ -111,6 +111,13 @@ See [[project-obligations]] memory.
    `report_value_caught` + `value-caught` CLI + the `/` headline card. Live:
    "$1,926 surfaced across 2 projects". v1 tallies commitments dollars only.
 3. **Plain-English per-project money one-liner** (free). ← next
+4a. **Coming after a job-site visit (owner, 2026-06-09): LIVE TRANSCRIPTION &
+   CONSOLIDATION.** A PM describes what was done / what's left -> classify ->
+   update timeline/scope dependency-aware -> Proposal write-back. The framework
+   exists (DailyLog, the classify-then-extract pattern, `assemble_project_
+   context`, the Proposal engine). Design + the open questions to resolve on-site
+   are in **`docs/TRANSCRIPTION_FEATURE.md`**. DO NOT build it before the
+   requirements land.
 4. **Then STOP building and put it in front of the PM** (STRATEGY §9 adoption
    test) — the data is finally clean; the PM's reaction drives the next iteration.
 5. Horizon: **acquisition / lead-gen intelligence** (INTENTIONS §5 — partner's
