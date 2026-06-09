@@ -334,6 +334,35 @@ as truth (they say "confirm awarded quotes"), so this is an enhancement, not a
 fire. Sequence it after active adaptation, or sooner if financial trust blocks
 adoption.
 
+## 7. Acquisition/development project-type money model (the "$0" failure mode)
+
+**What.** The mirror of §6, found by hand-auditing 6554 (2026-06-09): a project
+reads **$0 revenue** not because extraction broke but because ALTA has **no money
+model for acquisition/development deals**. 6554's `SIGNED PSA.pdf` states a
+**$1,500,000 purchase price + $50,000 deposit** — the biggest number on the
+project — and it is captured NOWHERE. The structured extractor correctly classes
+a Purchase & Sale Agreement as not-a-construction-transaction, then drops it.
+
+**The subtle honesty hole:** the low-confidence guard did NOT fire for 6554,
+because it can only flag money that landed in the `other` bucket — and here the
+$1.5M was *skipped*, not mis-bucketed. **The guard can't flag money it never
+extracted.** So 6554 masquerades as a clean $9k-cost project. This is the real
+defect behind "the $0 is obviously wrong."
+
+**Fix (when development deals matter enough):**
+- New money-types: `acquisition_price`, `deposit_held`, `financing/loan`,
+  `lease_income` — and a doc class for purchase/sale agreements that EXTRACTS the
+  headline figures instead of skipping the doc.
+- A project-type signal (construction vs acquisition/development) so the report
+  uses the right model and the confidence guard fires when an
+  acquisition-shaped project has no acquisition figures captured.
+- Keep the deterministic posture: the LLM extracts the PSA's stated price with a
+  quoted excerpt; code computes. (This was the former EVALUATION known-issue #14.)
+
+**Build-when:** when development/acquisition projects matter to a PM. Until then,
+at minimum the confidence guard should flag "this looks like an acquisition (PSA
+present) but no acquisition money captured" so a $1.5M deal can't read as clean.
+
 ---
 
 ## Sequencing (intention, not commitment)

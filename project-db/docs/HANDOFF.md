@@ -507,8 +507,14 @@ In rough priority. None are urgent; the dominant cases (renovation, buyout) work
   "Client ID: <name>". Needs re-extraction of the affected project to validate —
   hence gated on API budget.
 - **#14 — Development/investment project-type money model.** 6554-style deals
-  need buckets for acquisition / financing / lease income. For now the
-  confidence guard honestly flags them. Build when this type matters enough.
+  need buckets for acquisition / financing / lease income. **CORRECTION
+  (2026-06-09 hand-audit): the confidence guard does NOT flag 6554** — its
+  `SIGNED PSA.pdf` states a $1.5M purchase price + $50k deposit that the extractor
+  SKIPS (a Purchase & Sale Agreement isn't a construction transaction), so the
+  $1.5M never reaches the `other` bucket and the guard (which only measures
+  extracted money) sees a "clean" $9k-cost project. The guard can't flag money it
+  never extracted. Full writeup + fix in INTENTIONS §7. Build when this type
+  matters enough.
 - **`budget` roll-up keyword (free, but it's keyword-tuning).** 3940's "C61
   revamp budget.xlsx" is an internal budget tracker that isn't caught by
   `_name_is_rollup`, so its $400k+ aggregations pollute `other` and tank 3940's

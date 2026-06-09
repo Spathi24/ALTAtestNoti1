@@ -9,6 +9,29 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-09 (later 5) -- $0-revenue audit: the missing acquisition money model
+
+Hand-audited 6554 (57 docs, only 5 records, $0 revenue) to confirm the mirror
+failure mode. Finding: the $0 is NOT dropped extraction -- the 5 records (small
+plumbing supplier invoices) are correct, and the structured extractor correctly
+declines to read the big docs (mechanical/electrical PLANS + a Purchase & Sale
+Agreement) as construction revenue. The real defect: ALTA has **no money model
+for acquisition/development deals**, so the `SIGNED PSA.pdf`'s stated
+**$1,500,000 purchase price + $50,000 deposit** -- the biggest number on the
+project -- is captured NOWHERE.
+
+Subtle honesty hole found + corrected in the docs: the low-confidence guard did
+NOT fire for 6554 (HANDOFF previously claimed it did). The guard only measures
+money that reached the `other` bucket; the $1.5M was SKIPPED, so the guard sees a
+"clean" $9k-cost project. **The guard can't flag money it never extracted.**
+Captured as INTENTIONS §7 (+ a HANDOFF #14 correction). No code built.
+
+Both failure modes are now understood: "huge number" = cross-document quote
+duplication (§6); "$0" = unmodeled acquisition money + a guard blind to skipped
+money (§7). Docs only. 829 tests unchanged.
+
+---
+
 ## 2026-06-09 (later 4) -- Financial trust audit + the dedup strategy (no blind patch)
 
 Hand-audited 1455's financials by reading the actual stored document text vs the
