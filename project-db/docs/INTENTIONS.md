@@ -2,15 +2,16 @@
 
 **Date:** 2026-06-03 (status note 2026-06-04). **Status:** durable intentions.
 
-> **STATUS 2026-06-04:** #1 (Money-at-Risk) is BUILT — `ContractObligation` +
-> `extract-obligations` + `report_commitments` + the briefing `commitments`
-> category — but its extraction still uses the old conservative-prompt approach
-> and has NOT been run live. **Next agreed task: re-do that extraction with the
-> structured classify-then-extract pattern (`ai/doc_extraction.py` style,
-> OpenAI) and run it live**, then build #2 (value-caught tally), then show the
-> PM. The financial extraction itself was rebuilt this way already (see
-> CHANGELOG 2026-06-04). Provider is now Anthropic-primary / OpenAI-fallback
-> (Anthropic credits at $0).
+> **STATUS 2026-06-09:** #1 (Money-at-Risk) is now BUILT **and structured + run
+> live**. `ai/obligation_extraction.py` (OpenAI structured outputs,
+> `extract-obligations --structured`) replaced the keyword-gated batched
+> approach; live-validated on 2150 Tupper + 5768 St-Laurent (the "$8,000 on key
+> return" settlement surfaces, verified). Known residual limits (deferred, not
+> forced): cross-copy settlement duplication + agency-buyout direction — see the
+> CHANGELOG 2026-06-09 entry and HANDOFF. **Next agreed task: #2 (value-caught
+> tally)**, then the per-project money one-liner (#3), then show the PM. The
+> financial extraction was rebuilt the same way earlier (CHANGELOG 2026-06-04).
+> Provider is Anthropic-primary / OpenAI-fallback (Anthropic credits at $0).
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
 usable, and informative, not just clever. Every intention below is judged by

@@ -9,6 +9,45 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-09 -- Obligations rebuilt on structured extraction + run live
+
+Closed the last loose end in the "brain": the Money-at-Risk obligations layer was
+built (2026-06-03) but had NEVER been run live and still used the old generic
+ask-and-parse provider with a bilingual KEYWORD GATE -- the same design that
+silently dropped real docs on the financial side. Re-did it with the
+classify-then-extract structured pattern (`ai/doc_extraction.py` style).
+
+- **`ai/obligation_extraction.py`** (OpenAI structured outputs, strict JSON
+  schema): the LLM classifies each document + extracts obligations; deterministic
+  code verifies amounts against the source text, enforces the dated-or-dollar
+  rule, and snapshots all-or-nothing. NO keyword gate -- a MIME-level filter
+  selects prose-carrying docs (a contract PDF is never dropped for its name).
+  `MockObligationExtractor` for offline tests. CLI `extract-obligations
+  --structured` (mirrors `extract-financials --structured`; legacy path kept).
+- **Live-validated** (OpenAI gpt-4o-mini, ~$0.17 total): 2150 Tupper (smoke) +
+  5768 St-Laurent. The canonical **"$8,000 due upon return of all keys"
+  settlement surfaces, verified, with the verbatim clause**, alongside the
+  other tenant buyouts (~$45k real owed-by-us exposure on the buyout project).
+- Two general quality fixes from the live run (not per-project rules): treat
+  `$0.00` as no-amount (template noise, mirrors the financial layer); prompt now
+  excludes STANDARD/STATUTORY lease boilerplate (generic rent terms, C.c.Q.
+  restatements) -- extract only non-standard project-specific commitments. False
+  "overdue to collect" went $517 -> $0; overdue 22 -> 15. Prompt -> v2.
+- **Known limits (documented, NOT forced -- match EVALUATION's 5768 notes):**
+  cross-copy duplication (same tenant settlement counted across EN/FR/"Copy of"
+  file copies inflates the per-project panel total; the briefing aggregates and
+  excludes the no-date "conditional" ones, so the headline stays clean), and
+  agency-buyout direction (2 of ~17 settlements came back owed_to_us; EVALUATION
+  #12). Both are the financial layer's already-solved problem classes (dedup /
+  direction-from-client-name) -- pick up only if/when a PM uses the layer.
+- +9 tests (`test_obligation_extraction_structured.py`). **815 passing.**
+
+DIRECTION FOR NEXT SESSION: structured is the recommended obligation path; the
+legacy `ai/obligations.py` + the legacy `ai/financials.py` extractors can be
+retired TOGETHER in one clean follow-up once structured is proven in use.
+
+---
+
 ## 2026-06-04 (later 2) -- Anthropic primary, OpenAI automatic fallback
 
 Owner's Anthropic credits hit $0, stranding ask/propose/extract. FallbackProvider

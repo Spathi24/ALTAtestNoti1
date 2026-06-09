@@ -12,9 +12,10 @@ assessment + standing rules — the single most useful doc), `docs/FEATURES.md`
 (plain-language feature list), then this. STRATEGY.md and ROADMAP.md are older
 but give the mission framing.
 
-Last updated: 2026-06-04, at **806 tests**.  The two newest things below
+Last updated: 2026-06-09, at **815 tests**.  The two newest things below
 (structured extraction + provider fallback) are the ones a fresh instance most
-needs; then RAG, the briefing, and the financial layer.
+needs; then RAG, the briefing, and the financial layer.  The obligations layer
+is now structured + live-validated too (see below).
 
 **⚠ BUDGET / PROVIDER REALITY (read first).** The owner's **Anthropic credits
 are at $0**; **OpenAI has ~$4** left. So: `get_default_provider` / `get_fast_
@@ -87,14 +88,25 @@ briefing` and as the web `/` landing (`ui_views.attention_briefing`). Detectors
 penalties, deposits, settlements, insurance/permit deadlines) into
 `ContractObligation`; `report_commitments` deterministically computes status
 (overdue/due-soon/conditional) + money-at-risk; a `commitments` category on the
-briefing surfaces overdue receivables / obligations we owe. Built + unit-tested,
-but the extraction still uses the OLD conservative-prompt approach and has NOT
-been run live (it used Anthropic). See [[project-obligations]] memory.
+briefing surfaces overdue receivables / obligations we owe. **Now rebuilt on the
+structured classify-then-extract pattern and run live (2026-06-09):**
+`ai/obligation_extraction.py` (OpenAI structured outputs, `extract-obligations
+--structured`) replaces the keyword-gated batched approach; the legacy
+`ai/obligations.py` is kept but deprecated. Live-validated on 5768 (the
+"$8,000 on key return" settlement surfaces, verified). **Known limits (don't
+force):** cross-copy duplication of a settlement across EN/FR/"Copy of" file
+copies inflates the per-project panel total (the briefing aggregates + excludes
+no-date "conditional" items, so the headline stays clean); and agency-buyout
+direction (some tenant settlements come back owed_to_us instead of owed_by_us --
+EVALUATION #12). Both are the financial layer's already-solved problem classes
+(dedup / direction-from-client-name) -- pick up only when a PM uses the layer.
+See [[project-obligations]] memory.
 
-**WHAT'S NEXT (the plan, owner-agreed 2026-06-04), in order:**
-1. **Re-do the obligations extraction with the structured classify-then-extract
-   pattern** (`ai/doc_extraction.py` style, OpenAI) and RUN IT LIVE so the
-   briefing shows real flagged dollars. This is the agreed next task.
+**WHAT'S NEXT (the plan, owner-agreed 2026-06-04; #1 done 2026-06-09), in order:**
+1. ~~**Re-do the obligations extraction with the structured classify-then-extract
+   pattern** and RUN IT LIVE.~~ **DONE 2026-06-09** — `ai/obligation_extraction.py`,
+   live-validated; the $8k key-return settlement surfaces. (Residual: cross-copy
+   dedup + agency direction, documented above, deferred.)
 2. **"Value caught" tally** (INTENTIONS #2) — count the $ ALTA surfaced; the
    pay-justification scoreboard the boss wants. Cheap, deterministic.
 3. **Plain-English per-project money one-liner** (free).
