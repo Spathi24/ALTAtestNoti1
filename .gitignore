@@ -31,6 +31,7 @@ secrets/
 .idea/
 *.swp
 *.swo
+*.code-workspace
 
 # OS
 .DS_Store
@@ -41,4 +42,7 @@ Thumbs.db
 
 # Node (presentation build only)
 node_modules/
-presentation/node_modules/
+
+# Slide-deck side-project — generated artifacts, not part of the Python package.
+# Files stay on disk; un-ignore if the deck should be version-controlled.
+presentation/
