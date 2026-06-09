@@ -9,6 +9,30 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-09 (later 4) -- Financial trust audit + the dedup strategy (no blind patch)
+
+Hand-audited 1455's financials by reading the actual stored document text vs the
+extracted records (free -- text is in the DB). Found the precise cause of the
+"huge number" failure: the reported $931k revenue is ~3x inflated because the
+Richard Geller job is counted across R1.pdf, R2.pdf, and a renamed "Penthouse"
+copy, plus competing quotes summed. Per-document dedup works; the missing layer
+is CROSS-document.
+
+Researched the established solution rather than hand-rolling: this is **entity
+resolution / record linkage + near-duplicate detection + MDM golden-record /
+survivorship** (block -> match -> cluster -> survivorship -> human review;
+MinHash/LSH/SimHash/Fellegi-Sunter; dedupe/Splink/recordlinkage/datasketch).
+Key finding: ALTA already implements most of it -- `identity/resolver.py` IS a
+record-linkage engine, `DocumentChunk` embeddings are the similarity signal, and
+the confirmed/quoted toggle is golden-record survivorship with a human in the
+loop. Captured as INTENTIONS §6 (extend, don't bolt on). No code built -- it's a
+focused build of its own, and the money-line already declines to present the
+inflated all-in number as truth, so this is an enhancement, not a fire.
+
+Docs only. 829 tests unchanged.
+
+---
+
 ## 2026-06-09 (later 3) -- Documentation consolidation (kill the sprawl)
 
 The doc set had grown to 14 markdown files in project-db/docs/, each a partial

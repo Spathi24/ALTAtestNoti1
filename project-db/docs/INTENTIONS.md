@@ -294,6 +294,48 @@ objectives). Aim at the right tool.
 
 ---
 
+## 6. Cross-document quote/version dedup — entity resolution (financial trust)
+
+**What.** The "huge number" failure mode (audited on 1455, 2026-06-09: reported
+revenue $931k, but ~3× of it is the Richard Geller job counted across R1.pdf,
+R2.pdf, and a renamed "Penthouse" copy, plus competing quotes summed). The
+per-document dedup works; what's missing is a **cross-document** view that
+recognizes "these N documents are versions/copies of the same quote." Same
+failure class as the obligations cross-copy duplication.
+
+**Don't hand-roll it — it's a textbook problem.** This is **entity resolution /
+record linkage** + **near-duplicate detection** + **MDM golden-record /
+survivorship**. Canonical pipeline: **block → match → cluster → survivorship →
+human review**. (Algorithms: MinHash/LSH, SimHash, Fellegi-Sunter. Libraries:
+`dedupe`, `Splink`, `recordlinkage`, `datasketch`.)
+
+**ALTA already has most of it — extend, don't bolt on:**
+- *Block* = within a project (already scoped).
+- *Match* = `identity/resolver.py` + matchers ARE a record-linkage engine; reuse
+  the pattern. Similarity signal = the existing `DocumentChunk` embeddings
+  (document cosine) — no MinHash/LSH infra needed at our scale (dozens of docs).
+  Precision order: near-equal total + same counterparty (deterministic) →
+  filename version pattern (R1/R2/"Copy of"/v2) → embedding cosine for fuzzy cases.
+- *Cluster* = connected components over matched pairs (small new code).
+- *Survivorship + human review* = the **confirmed/quoted toggle** ("the awarded
+  quote survives") routed through the **Proposal** table. Don't auto-merge.
+- *Resolve* = `report_project_financials` counts one representative per GROUP
+  instead of per document.
+- The `Deal` canonical entity is the natural home for a "quote group".
+
+**Cost/posture:** mostly deterministic + reuse existing embeddings (cheap). An
+LLM grouping pass (optional, for fuzzy cases) is bounded + lands as Proposals.
+At thousands-of-docs scale, `datasketch`/LSH is the documented upgrade (like
+`sqlite-vec` for RAG) — a deliberate, not blind, simplicity for now.
+
+**Build-when:** it's the real fix for financial trust, but a focused build of its
+own. The money-line/financials already DON'T present the inflated all-in number
+as truth (they say "confirm awarded quotes"), so this is an enhancement, not a
+fire. Sequence it after active adaptation, or sooner if financial trust blocks
+adoption.
+
+---
+
 ## Sequencing (intention, not commitment)
 
 **Done (2026-06-09):** §1 Commitments/Money-at-Risk (structured + live), §2
@@ -303,10 +345,10 @@ Value-caught tally, §3 money one-liner.
 1. **§0 Active adaptation** — the core purpose. Build the channel-agnostic
    field-note → classify → propose prototype AFTER the job-site requirements
    (esp. the Monday dependency-graph question). This now leads the roadmap.
-2. **Financial trust audit** (cross-cutting, mostly free): read the actual
-   stored document text vs. the extracted `FinancialRecord`s by hand on a few
-   projects to find the systematic cause of the $0 / $millions failures, instead
-   of tuning heuristics blind.
+2. **Financial trust** — the "huge number" cause was FOUND by a hand-audit
+   (2026-06-09): cross-document quote duplication. The fix is **§6** (entity
+   resolution), not blind heuristics. (Auditing a `$0` project to confirm the
+   mirror cause is a cheap follow-up.)
 3. **§3 remaining usability wins** + the small UX/robustness backlog —
    opportunistic.
 4. **§5 acquisition intelligence** — the north star, as a SEPARATE app sharing
