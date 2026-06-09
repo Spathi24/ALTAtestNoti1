@@ -509,13 +509,84 @@ def cmd_rag_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_extract_obligations_structured(args: argparse.Namespace) -> int:
+    """Structured (OpenAI, classify-then-extract) obligation extraction path."""
+    from project_db.ai.obligation_extraction import (
+        ObligationExtractorError,
+        OpenAIObligationExtractor,
+        extract_obligations_structured_for_project,
+    )
+    from project_db.ai.views import _resolve_project, report_commitments
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        extractor = OpenAIObligationExtractor()
+    except ObligationExtractorError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+        print(f"Extractor: {extractor.name} ({extractor.model})")
+        print(f"Project:   {project.name}  ({project.canonical_id})")
+        print("Classifying + extracting each document (OpenAI structured outputs)...")
+        try:
+            batch = extract_obligations_structured_for_project(
+                s, extractor, project.canonical_id)
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(batch.summary())
+        for e in batch.errors[:10]:
+            print(f"  - {e}")
+        if batch.classifications:
+            print("\n  Document classifications:")
+            for name, dtype, contractual in batch.classifications[:50]:
+                tag = "oblig" if contractual else "skip "
+                print(f"    [{tag}] {dtype:<26} {name[:45]}")
+        if batch.obligations:
+            print("\n  Obligations:")
+            for ob in batch.obligations[:40]:
+                amt = f"${ob.amount:,.2f}" if ob.amount is not None else "(no amount)"
+                when = ob.due_date.isoformat() if ob.due_date else (ob.trigger or "?")
+                verify = "" if ob.amount is None else (
+                    " [verified]" if ob.amount_verified else " [UNVERIFIED]")
+                print(f"    - [{ob.kind}/{ob.direction}] {amt} due {when}{verify}")
+
+        rep = report_commitments(s, str(project.canonical_id))
+        c = rep.get("counts", {})
+        mar = rep.get("money_at_risk", {})
+        print(f"\n  Commitments: {rep.get('obligation_count', 0)} total | "
+              f"overdue {c.get('overdue', 0)} | due-soon {c.get('due_soon', 0)} | "
+              f"conditional {c.get('conditional', 0)}")
+        print(f"  Money at risk: ${mar.get('owed_to_us_overdue', 0):,.2f} overdue to "
+              f"collect | ${mar.get('owed_to_us_total', 0):,.2f} owed to us total | "
+              f"${mar.get('owed_by_us_total', 0):,.2f} owed by us total")
+    return 0
+
+
 def cmd_extract_obligations(args: argparse.Namespace) -> int:
     """Extract dated/dollar obligations from a project's contract documents.
 
     Payment milestones, retainage, penalties, deposits, settlements, insurance/
     permit deadlines -> ContractObligation rows, each with the verbatim clause.
     Calls the LLM (batched); fresh-snapshot per run. Nothing leaves the local DB.
+
+    With --structured, uses the OpenAI structured-outputs extractor (classifies
+    each document, no keyword gate) -- the recommended path, mirroring
+    extract-financials --structured.
     """
+    if getattr(args, "structured", False):
+        return _cmd_extract_obligations_structured(args)
+
     from project_db.ai import LLMProviderError, get_default_provider
     from project_db.ai.obligations import extract_obligations_for_project
     from project_db.ai.views import _resolve_project
@@ -2126,6 +2197,11 @@ def build_parser() -> argparse.ArgumentParser:
              "contract documents. Calls the LLM; fresh-snapshot per run.",
     )
     eo.add_argument("project", help="Project canonical UUID or name fragment")
+    eo.add_argument(
+        "--structured", action="store_true",
+        help="Use the OpenAI structured-outputs extractor (classifies each doc; "
+             "no keyword gate). Needs OPENAI_API_KEY. Recommended.",
+    )
     eo.set_defaults(func=cmd_extract_obligations)
 
     ed = sub.add_parser(
