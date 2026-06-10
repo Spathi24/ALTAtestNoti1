@@ -2358,15 +2358,26 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    # Windows consoles default stdout to a legacy code page (cp1252) that
-    # mangles the em-dashes / arrows LLM `ask` answers are full of.  Force
-    # UTF-8 so prose output renders correctly; harmless for ASCII output.
+def force_utf8_output() -> None:
+    """Make console output crash-proof against the bilingual (FR) dataset.
+
+    Windows consoles default stdout to a legacy code page (cp1252) that hard-
+    CRASHES (UnicodeEncodeError) on accented French text and the em-dashes /
+    arrows LLM answers are full of.  Reconfiguring to UTF-8 with
+    ``errors="replace"`` fixes both: prose renders correctly, and any char the
+    terminal still can't encode degrades to '?' instead of raising.  This is the
+    once-and-for-all fix -- call it at every entry point (CLI + scripts) so no
+    `print()` anywhere has to stay paranoid about non-ASCII.
+    """
     for _stream in (sys.stdout, sys.stderr):
         try:
-            _stream.reconfigure(encoding="utf-8")
+            _stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    force_utf8_output()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)

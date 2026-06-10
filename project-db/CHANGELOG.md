@@ -9,6 +9,34 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-10 -- External review integration: fix the cp1252 footgun once + strategy
+
+An external review (Claude "Mythos") of the docs surfaced sharp points; acted on
+the highest-value ones.
+
+- **Fixed the cp1252/Unicode crash class ONCE (the overdue correctness fix).**
+  `cli.force_utf8_output()` now reconfigures stdout/stderr to UTF-8 with
+  `errors="replace"` (was: utf-8, no errors handler -> still crashed on edge
+  chars). Called at every entry point (CLI + `monday_demo.py`). Accented FR data
+  / em-dashes no longer hard-crash; worst case degrades to '?'. CLAUDE.md rule #5
+  relaxed accordingly (stop being perpetually paranoid about every print()).
+- **Strategy folded into INTENTIONS** (no new docs): named the two Honest
+  Tensions (adoption is the unchecked box while building never stops; the project
+  is a financial-truth tool wearing an active-adaptation mission -- both are
+  owner decisions, now named not drifting); reframed §0's job-site questions to
+  LEAD with the deployment/N7 contradiction (field workers texting = multi-user/
+  networked, breaks the localhost posture -- the real hard part, not transcription
+  accuracy); added §8 **extraction eval harness** (the highest-leverage missing
+  infra -- production silently runs gpt-4o-mini but prompts were tuned on Sonnet
+  and nothing measures regression; minimal ~5-doc gold set + scorer) and §9
+  bootstrap-the-confirmed-default (correct a guess, not curate from scratch).
+- Sequencing updated: eval harness gates extraction changes; financial trust
+  (§6/§7/§9) reframed as gating the PM's first impression, not "after adoption".
+
+Code change is the cp1252 fix only (cli.py + monday_demo.py). 829 tests passing.
+
+---
+
 ## 2026-06-09 (later 5) -- $0-revenue audit: the missing acquisition money model
 
 Hand-audited 6554 (57 docs, only 5 records, $0 revenue) to confirm the mirror

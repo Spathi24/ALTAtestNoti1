@@ -408,6 +408,13 @@ Typical workflow
 
 
 def main() -> None:
+    # Crash-proof console output against the bilingual (FR) Monday data
+    # (cp1252 UnicodeEncodeError). Shared fix -- see cli.force_utf8_output.
+    try:
+        from project_db.cli import force_utf8_output
+        force_utf8_output()
+    except Exception:  # noqa: BLE001 -- output hardening must never block the command
+        pass
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
         print(USAGE)

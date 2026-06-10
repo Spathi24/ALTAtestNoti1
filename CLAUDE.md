@@ -135,12 +135,20 @@ When validating a fix, **actually run the command** the user would run, from
 the main repo path, against the real Monday workspace. Don't just `pytest` and
 declare victory — the user has called this out by name.
 
-### 5. Windows console = ASCII only in script output.
+### 5. Windows console output is hardened — but prefer ASCII for clean display.
 
-The default Windows code page is cp1252. Unicode arrows (`→`), bullets (`✓`,
-`✗`), box-drawing chars (`─`), and ellipses (`…`) crash with
-`UnicodeEncodeError` in scripts the user runs. Use `->`, `OK:`, `FAIL:`, `-`,
-`...` in any `print()` that lands in `scripts/` or `cli.py`.
+The default Windows code page is cp1252, which historically CRASHED
+(`UnicodeEncodeError`) on the accented French dataset and on Unicode arrows /
+bullets / box-drawing chars. **Fixed once (2026-06-09):
+`cli.force_utf8_output()` reconfigures stdout/stderr to UTF-8 with
+`errors="replace"` and is called at every entry point (CLI + `monday_demo.py`),
+so non-ASCII no longer crashes** — it renders as UTF-8 or degrades to `?`. So you
+no longer need to be paranoid about every `print()`. Still prefer ASCII (`->`,
+`OK:`, `FAIL:`, `-`, `...`) for box-drawing / arrows so output renders cleanly on
+any terminal — but a stray accent or em-dash is no longer a crash.
+**One-off scripts you write (`py -3.13 - <<…`) do NOT inherit this** — call
+`force_utf8_output()` (or `sys.stdout.reconfigure(encoding="utf-8")`) at the top
+if they print DB text.
 
 ### 6. Don't make redundant API calls.
 

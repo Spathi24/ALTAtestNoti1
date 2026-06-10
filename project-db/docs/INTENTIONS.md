@@ -36,6 +36,30 @@ recurring, cross-system leaks a human lets slip. LLM **extracts evidence once**
 
 ---
 
+## Honest tensions — name them so they don't become drift (external review, 2026-06-09)
+
+Two mismatches between what the docs SAY and what's actually happening. Naming
+them is not resolving them — the owner should make these calls consciously.
+
+1. **Adoption is the one unchecked box, while building never stops.** The whole
+   thesis is "a PM opens this before Monday" (STRATEGY §9 / N8), yet the
+   "one-PM-two-week-trial" has never run and 2026-06-09 alone is ~9 build/audit
+   commits. The owner has *deliberately* chosen internal-dev mode (no demo) for
+   now — that's legitimate, but it must be a **dated decision, not a permanent
+   excuse.** Risk #1 by far: beautifully-engineered infra with zero users.
+   *Mitigation:* pick a target date to put it in front of one PM; treat further
+   building before then as borrowing against that.
+2. **The project is a financial-truth tool wearing an active-adaptation mission.**
+   The owner says automation (§0) is the core purpose and financials are
+   "secondary," yet ~all recent effort is financial ("the current centre of
+   gravity"). That may be the right pragmatic call (financials are tractable +
+   the boss wants demonstrable ROI), but the **unnamed** mismatch confuses the
+   team. *Decision needed:* either recommit effort to §0, or rename the mission
+   to "contractor financial-truth + money-at-risk brain" with active-adaptation
+   as an explicit Phase 2. Pick one; align the docs.
+
+---
+
 ## 0. Active adaptation — automatic field-update management  ⭐⭐ (THE core purpose)
 
 **Status:** design only; requirements gathered at a job-site visit (~2026-06-10).
@@ -73,13 +97,32 @@ paradigm):** `DailyLog` (storage; bare today — add a structured sidecar like
 write-back engine (`ai/proposals.py`; `_ACCEPTABLE_FIELDS` extends *carefully* —
 A2/A3, advisor-not-actor).
 
-**Gaps to build (post-requirements):** a channel-agnostic field-note ingest
-(CLI/web text-in first; WhatsApp/webhook later — blocked on hosting, like Monday
-webhooks); `ai/field_note_extraction.py`; proposal generation from a note; and
-the hard part, **dependency-aware timeline cascade** (deterministic graph math) —
-which **gates on whether Monday actually stores the task-dependency graph** (the
-#1 question to answer at the job site). Bring back 1–2 real, messy field notes as
-test fixtures.
+**⚠ The hard part is DEPLOYMENT, not transcription accuracy — and it collides
+with rule N7.** Field workers texting updates from their phones is inherently
+**multi-user, networked, concurrent** — which breaks the single-user / localhost
+/ no-auth posture N7 holds sacred (and it's the same "needs a public HTTPS
+endpoint" blocker as Monday webhooks). The classify→propose *brain* is easy (the
+framework exists); the *ingestion deployment* is the real design problem and it
+contradicts a NEVER. **Resolve this ON PAPER before building.** Likely shape: a
+small SEPARATE hosted service (the only thing exposed to the internet) that
+receives messages and writes them to a queue/table the localhost brain polls — so
+the brain stays single-user/localhost and only the thin intake is networked.
+
+**THE job-site questions, in priority order** (the visit is about #1–2, not
+transcription quality):
+1. **Deployment/ownership:** whose phone/number, how many workers, who hosts the
+   intake endpoint? (Decides the N7-safe architecture above.)
+2. **Dependency graph:** does Monday actually STORE task dependencies, or is
+   sequencing in people's heads? (Gates the dependency-aware cascade — the
+   deterministic graph math has nothing to walk if deps aren't populated.)
+3. Update granularity (task done / new task / date shift / scope / blocker);
+   write-back appetite (advisory proposals vs auto-apply — prior: proposals).
+4. Bring back **1–2 real, messy field notes** as test fixtures.
+
+**Then-gaps to build (post-requirements):** the N7-safe intake service; a
+channel-agnostic field-note ingest (CLI/web text-in first); `ai/
+field_note_extraction.py`; proposal generation from a note; the dependency-aware
+cascade. `_ACCEPTABLE_FIELDS` extends *carefully* (A2/A3, advisor-not-actor).
 
 **Build-when:** after the job-site requirements. Prototype the channel-agnostic
 core (typed text → classify → proposals) first; prove it; then add WhatsApp +
@@ -363,6 +406,45 @@ defect behind "the $0 is obviously wrong."
 at minimum the confidence guard should flag "this looks like an acquisition (PSA
 present) but no acquisition money captured" so a $1.5M deal can't read as clean.
 
+## 8. Extraction eval harness ⭐ (do BEFORE more extraction features)
+
+**What.** The core capability — does the extractor get the money RIGHT on real
+documents — is validated by HAND (the 1455/5768/6554 audits). That's anecdotal,
+not regression-protected. There's no labeled gold set, no precision/recall on
+amounts + directions. **Acutely dangerous right now:** production quietly runs on
+`gpt-4o-mini` via the OpenAI fallback, but the prompts were tuned on Sonnet, and
+NOTHING measures whether extraction degraded on that swap. This is the
+highest-leverage missing infrastructure in the project (external review,
+2026-06-09) and a "should-have-existed-long-ago" gap.
+
+**Realistic, minimal implementation (don't overbuild):**
+- Turn the existing hand-audits into a small **gold set** (`evals/`): for ~5 real
+  documents, the known-correct key figures (e.g. 1455 Richard Geller quote total
+  $159,120; 6554 PSA purchase price $1.5M *should be captured*; 5768 settlement
+  $8,000 owed_by_us). YAML/JSON, hand-labeled once.
+- A **scorer** that runs extraction on those docs and reports precision/recall on
+  amounts + direction-correctness vs the gold. Run it on every prompt/model
+  change. Cheap (5 docs).
+- Catches: the gpt-4o-mini regression, future prompt edits, and (once §6/§7 land)
+  whether dedup/acquisition-capture actually improved the numbers.
+
+**Build-when:** before ANY further extraction-prompt or model change — it's the
+guardrail that makes those changes safe. Note: this is infra, not a feature; keep
+it to ~5 docs so it doesn't become its own project.
+
+## 9. Bootstrap the confirmed/quoted default (lower the trust-curation friction)
+
+**What.** A trustworthy margin only appears once a PM curates the confirmed/quoted
+toggle — but that's chicken-and-egg (won't curate until they trust it, won't
+trust it until it shows a real number). The smart default already confirms
+invoice/receipt-role docs; extend it so the PM **corrects a guess** instead of
+**curating from scratch**: infer "awarded" from a signed-contract doc, from a
+quote that matches a later invoice, eventually from QuickBooks. Surface a
+best-guess contract value with a one-click "confirm/correct", not a $0.
+
+**Build-when:** pairs with §6 (which quote is the awarded one is the same
+question). Small, high-adoption-leverage.
+
 ---
 
 ## Sequencing (intention, not commitment)
@@ -370,19 +452,25 @@ present) but no acquisition money captured" so a $1.5M deal can't read as clean.
 **Done (2026-06-09):** §1 Commitments/Money-at-Risk (structured + live), §2
 Value-caught tally, §3 money one-liner.
 
-**Next, in order:**
-1. **§0 Active adaptation** — the core purpose. Build the channel-agnostic
-   field-note → classify → propose prototype AFTER the job-site requirements
-   (esp. the Monday dependency-graph question). This now leads the roadmap.
-2. **Financial trust** — the "huge number" cause was FOUND by a hand-audit
-   (2026-06-09): cross-document quote duplication. The fix is **§6** (entity
-   resolution), not blind heuristics. (Auditing a `$0` project to confirm the
-   mirror cause is a cheap follow-up.)
-3. **§3 remaining usability wins** + the small UX/robustness backlog —
-   opportunistic.
-4. **§5 acquisition intelligence** — the north star, as a SEPARATE app sharing
-   the canonical data; begin when the lot-data feed is stable AND the ops brain
-   is in real PM use.
+**Decide first (not code — the two Honest Tensions above):** a date for the
+one-PM trial, and the mission framing (financial-truth brain vs active-adaptation).
+
+**Then, in order:**
+0. **§8 Extraction eval harness** — the guardrail. Cheap (~5 docs), and it gates
+   everything in #2/#3 safely (catches the live gpt-4o-mini regression). Do this
+   before touching any extraction prompt/model.
+1. **§0 Active adaptation** — the core purpose. Resolve the **deployment/N7
+   question on paper** at the job site (the real hard part), then build the
+   channel-agnostic field-note → classify → propose prototype. Leads the roadmap.
+2. **Financial trust = §6 (dedup) + §7 (acquisition model) + §9 (bootstrap the
+   confirmed default).** Both failure modes are root-caused (huge number =
+   cross-doc dup; $0 = unmodeled acquisition + a guard blind to skipped money).
+   These **gate the PM's first impression of "it knows my money"** — so they may
+   be more urgent than "after adoption," not less. At minimum make the honesty
+   loud + early so a wrong/absent total never looks clean.
+3. **§3 usability wins** + UX/robustness backlog — opportunistic.
+4. **§5 acquisition intelligence** — separate app, shared data; when the lead
+   feed is stable AND the ops brain is in daily PM use.
 
 The test for all of it (rule N8): *does a PM/owner open ALTA sooner, and can you
 point at dollars it saved?* If an idea fails that, it doesn't ship.
