@@ -112,6 +112,21 @@ picks the partial that matches current status.  POSTs to /dry-run /accept
 /reject swap this section in place via hx-target="#decision".
 ============================================================ -->
 {% if p.status == "PENDING" %}
+  {% set age_days = p.created_at | days_since %}
+  {% if age_days is not none and age_days > 14 %}
+  <article style="background: #fff3cd; border-color: #f6c343; margin-bottom: 1rem">
+    <strong>! This proposal is {{ age_days }} day{{ "s" if age_days != 1 }} old.</strong><br>
+    <small>
+      {% if age_days > 60 %}
+        It is over 2 months old.  The task may have been resolved manually.
+        Consider dismissing it rather than accepting if you cannot verify the current state.
+      {% else %}
+        The target task may have been updated since this was generated.
+        Verify the current status before accepting to avoid duplicating a change already filed in Monday.
+      {% endif %}
+    </small>
+  </article>
+  {% endif %}
   {% with proposal_id=p.proposal_id,
           field_name=p.field_name,
           can_accept=p.can_accept,

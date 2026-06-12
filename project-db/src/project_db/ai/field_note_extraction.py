@@ -77,9 +77,17 @@ FIELD_NOTE_SCHEMA: dict[str, Any] = {
                         "classification", "quoted_excerpt", "task_index",
                         "proposed_status", "proposed_start_date",
                         "proposed_end_date", "new_task_title",
-                        "workers", "hours_worked", "confidence",
+                        "workers", "hours_worked", "confidence", "reasoning",
                     ],
                     "properties": {
+                        "reasoning": {
+                            "type": "string",
+                            "description": (
+                                "1-2 sentences explaining WHY you chose this "
+                                "classification and which task you matched (if any). "
+                                "Be specific about what words in the note drove the decision."
+                            ),
+                        },
                         "classification": {
                             "type": "string",
                             "enum": _CLASSIFICATION_VOCAB,
@@ -167,7 +175,10 @@ def _system_prompt() -> str:
         "   - new_task_title: a short imperative title only for new_task; null "
         "otherwise.\n"
         "   - workers / hours_worked: fill only when the note mentions them.\n"
-        "   - confidence: your confidence in this signal [0.0, 1.0].\n\n"
+        "   - confidence: your confidence in this signal [0.0, 1.0].\n"
+        "   - reasoning: 1-2 sentences explaining WHY you chose this classification "
+        "and which task you matched (cite the specific words from the note and the "
+        "task title/status that drove your decision).\n\n"
         "CONSERVATIVE RULES:\n"
         "- Return no signals (empty array) if the note is too vague to classify.\n"
         "- A declined task match (null task_index) is fine -- do not guess.\n"
@@ -318,6 +329,20 @@ def _parse_date_str(v: Any):
         return None
 
 
+def _task_context_line(t: Task) -> str:
+    """One-line task description for the LLM prompt: title + status + dates."""
+    status_label = (
+        t.monday_status_label
+        or (t.status.value if hasattr(t.status, "value") else str(t.status))
+    )
+    parts = [t.title or "(untitled)", f"[{status_label}]"]
+    if t.start_date:
+        parts.append(f"start:{t.start_date.isoformat()}")
+    if t.end_date:
+        parts.append(f"end:{t.end_date.isoformat()}")
+    return " ".join(parts)
+
+
 def _supersede_prior(session: Session, entity_type: str, entity_id: Any, field_name: str) -> int:
     """Mark prior PENDING proposals for the same target as SUPERSEDED."""
     count = 0
@@ -378,7 +403,7 @@ def ingest_field_note(
         .order_by(Task.created_at)
         .all()
     )
-    task_lines = [t.title for t in tasks]
+    task_lines = [_task_context_line(t) for t in tasks]
     task_ids = [t.canonical_id for t in tasks]
 
     # One structured-output call: classify + match tasks.
@@ -444,6 +469,7 @@ def _process_signal(
         return
 
     conf = _clamp_conf(sig.get("confidence", 0.5))
+    reasoning = (sig.get("reasoning") or "").strip()
 
     # Resolve task_index -> canonical Task id.
     task_idx = sig.get("task_index")
@@ -487,7 +513,7 @@ def _process_signal(
     # Create Proposal rows for actionable signals.
     _maybe_create_proposal(
         session, batch, sig, note_class, fn, project_id, matched_task_id,
-        task_ids, task_lines, conf, quoted,
+        task_ids, task_lines, conf, quoted, reasoning,
     )
 
 
@@ -503,6 +529,7 @@ def _maybe_create_proposal(
     task_lines: list[str],
     conf: float,
     quoted: str,
+    reasoning: str = "",
 ) -> None:
     """Emit a Proposal for actionable signals (A1: always PENDING, never auto-apply)."""
 
@@ -524,10 +551,13 @@ def _maybe_create_proposal(
         _status_map = {"Done": "DONE", "In Progress": "IN_PROGRESS", "Blocked": "BLOCKED"}
         canonical_status = _status_map.get(proposed_status, "IN_PROGRESS")
 
-        proposed_value = json.dumps({
+        pv: dict[str, Any] = {
             "status": canonical_status,
             "monday_label": proposed_status,
-        })
+        }
+        if reasoning:
+            pv["reasoning"] = reasoning
+        proposed_value = json.dumps(pv)
 
         # A2/A3: supersede prior PENDING task_status proposals for same target.
         _supersede_prior(session, "Task", matched_task_id, "task_status")
@@ -559,11 +589,14 @@ def _maybe_create_proposal(
             )
             return
 
-        proposed_value = json.dumps({
+        pv_dates: dict[str, Any] = {
             "start_date": start.isoformat() if start else None,
             "end_date": end.isoformat() if end else None,
             "evidence": quoted,
-        })
+        }
+        if reasoning:
+            pv_dates["reasoning"] = reasoning
+        proposed_value = json.dumps(pv_dates)
         _supersede_prior(session, "Task", matched_task_id, "timeline")
         p = Proposal(
             entity_type="Task",
@@ -580,10 +613,10 @@ def _maybe_create_proposal(
 
     elif note_class == NoteClass.NEW_TASK:
         title = (sig.get("new_task_title") or "").strip() or "(untitled new task)"
-        proposed_value = json.dumps({
-            "title": title,
-            "evidence": quoted,
-        })
+        pv_new: dict[str, Any] = {"title": title, "evidence": quoted}
+        if reasoning:
+            pv_new["reasoning"] = reasoning
+        proposed_value = json.dumps(pv_new)
         p = Proposal(
             entity_type="Project",
             entity_id=project_id,
@@ -598,7 +631,10 @@ def _maybe_create_proposal(
         batch.proposals.append(p)
 
     elif note_class == NoteClass.SCOPE_CHANGE:
-        proposed_value = json.dumps({"description": quoted})
+        pv_scope: dict[str, Any] = {"description": quoted}
+        if reasoning:
+            pv_scope["reasoning"] = reasoning
+        proposed_value = json.dumps(pv_scope)
         p = Proposal(
             entity_type="Project",
             entity_id=project_id,

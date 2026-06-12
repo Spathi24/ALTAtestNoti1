@@ -110,6 +110,32 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             status_code=303,
         )
 
+    @router.post(
+        "/projects/{project_id}/proposals/dismiss-stale",
+        response_class=HTMLResponse,
+    )
+    def dismiss_stale_proposals(
+        project_id: str,
+        request: Request,
+        days_old: int = Form(30),
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Bulk-reject PENDING proposals older than days_old for this project.
+
+        History is preserved (REJECTED rows stay); future proposals for the
+        same targets are unaffected (supersession only looks at PENDING rows).
+        """
+        from fastapi.responses import RedirectResponse
+
+        from project_db.ai.proposals import bulk_dismiss_stale
+
+        bulk_dismiss_stale(session, project_id, days_old=days_old)
+        session.commit()
+        return RedirectResponse(
+            url=f"/projects/{project_id}#proposals",
+            status_code=303,
+        )
+
     @router.get("/documents/{document_id}", response_class=HTMLResponse)
     def document_show(
         document_id: str,

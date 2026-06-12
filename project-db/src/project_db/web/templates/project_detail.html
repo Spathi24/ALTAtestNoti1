@@ -199,20 +199,53 @@
   <details open>
     <summary><strong>{{ pending|length }} PENDING</strong> -- needs review</summary>
     <table>
-      <thead><tr><th>Kind</th><th>Target</th><th>Confidence</th><th>Created</th><th></th></tr></thead>
+      <thead><tr><th>Kind</th><th>Target</th><th>Confidence</th><th>Age</th><th></th></tr></thead>
       <tbody>
         {% for p in pending %}
-        <tr>
+        {% set age = p.created_at | days_since %}
+        <tr {% if age is not none and age > 30 %}style="opacity:0.8"{% endif %}>
           <td><code>{{ p.field_name }}</code></td>
           <td>{{ p.entity_label or p.entity_type }}</td>
-          <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
-          <td><small>{{ p.created_at or "-" }}</small></td>
+          <td>
+            {% if p.confidence is not none %}
+              {% set c = p.confidence %}
+              <span class="pill {% if c >= 0.8 %}pill-accepted{% elif c >= 0.5 %}pill-pending{% else %}pill-warn{% endif %}"
+                    title="{{ '%.2f'|format(c) }}">
+                {% if c >= 0.8 %}High{% elif c >= 0.5 %}Med{% else %}Low{% endif %}
+              </span>
+            {% else %}-{% endif %}
+          </td>
+          <td>
+            {% if age is not none %}
+              <small {% if age > 30 %}style="color:#856404"{% endif %}>{{ age }}d ago</small>
+            {% else %}-{% endif %}
+          </td>
           <td><a href="/proposals/{{ p.proposal_id }}" role="button" class="secondary outline">Review</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </details>
+
+  {# Bulk-dismiss stale proposals -- sets REJECTED with reason, preserves history. #}
+  {% set stale_count = pending | selectattr("created_at") | list | length %}
+  <form method="POST"
+        action="/projects/{{ d.project.canonical_id }}/proposals/dismiss-stale"
+        onsubmit="return confirm('This will bulk-reject all PENDING proposals older than the selected threshold. History is preserved and future proposals are unaffected.');"
+        style="margin: 0.5rem 0 1rem">
+    <fieldset role="group" style="max-width: 28rem; margin-bottom: 0">
+      <select name="days_old" style="max-width: 10rem">
+        <option value="14">older than 14 days</option>
+        <option value="30" selected>older than 30 days</option>
+        <option value="60">older than 60 days</option>
+      </select>
+      <button type="submit" class="secondary outline">Dismiss stale</button>
+    </fieldset>
+    <small style="color: #6c757d">
+      Dismissed proposals are marked REJECTED with a dated reason -- not deleted.
+      Accepting a stale proposal is still possible via the Review page.
+    </small>
+  </form>
   {% endif %}
 
   {% for status_key in ["ACCEPTED", "REJECTED", "SUPERSEDED"] %}
@@ -227,8 +260,16 @@
           <tr>
             <td><code>{{ p.field_name }}</code></td>
             <td>{{ p.entity_label or p.entity_type }}</td>
-            <td>{{ "%.2f"|format(p.confidence) if p.confidence is not none else "-" }}</td>
-            <td><small>{{ p.created_at or "-" }}</small></td>
+            <td>
+              {% if p.confidence is not none %}
+                {% set c = p.confidence %}
+                <span class="pill {% if c >= 0.8 %}pill-accepted{% elif c >= 0.5 %}pill-pending{% else %}pill-warn{% endif %}"
+                      title="{{ '%.2f'|format(c) }}">
+                  {% if c >= 0.8 %}High{% elif c >= 0.5 %}Med{% else %}Low{% endif %}
+                </span>
+              {% else %}-{% endif %}
+            </td>
+            <td><small>{{ p.created_at[:10] if p.created_at else "-" }}</small></td>
             <td><a href="/proposals/{{ p.proposal_id }}">show</a></td>
           </tr>
           {% endfor %}

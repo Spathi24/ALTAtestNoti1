@@ -82,6 +82,21 @@ def create_app() -> FastAPI:
 
     templates.env.filters["from_json"] = _from_json
 
+    def _days_since(iso_string: str | None) -> int | None:
+        """Return integer days elapsed since an ISO datetime string (UTC)."""
+        if not iso_string:
+            return None
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            return max(0, (datetime.utcnow() - dt).days)
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    templates.env.filters["days_since"] = _days_since
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)

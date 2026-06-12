@@ -935,3 +935,115 @@ class TestProposalCLIParsing:
         assert ns.proposals_action == "reject"
         assert ns.proposal_id == "all"
         assert ns.yes is True
+
+
+# ---------------------------------------------------------------------------
+# bulk_dismiss_stale
+# ---------------------------------------------------------------------------
+
+
+class TestBulkDismissStale:
+    """bulk_dismiss_stale: reject PENDING proposals older than N days."""
+
+    def _old_proposal(self, session, project, task, *, days: int = 31) -> Proposal:
+        from datetime import datetime, timedelta
+        p = Proposal(
+            entity_type="Task",
+            entity_id=task.canonical_id,
+            field_name="task_status",
+            proposed_value=json.dumps({"status": "DONE", "monday_label": "Done"}),
+            confidence=0.8,
+            prompt_version="field-note-v1",
+            status=ProposalStatus.PENDING,
+        )
+        p.created_at = datetime.utcnow() - timedelta(days=days)
+        p.updated_at = p.created_at
+        session.add(p)
+        session.commit()
+        return p
+
+    def test_dismisses_old_pending(self, session, timeline_fixture):
+        from project_db.ai.proposals import bulk_dismiss_stale
+        task = session.query(Task).filter_by(project_id=timeline_fixture.canonical_id).first()
+        old_p = self._old_proposal(session, timeline_fixture, task, days=31)
+
+        count = bulk_dismiss_stale(session, timeline_fixture.canonical_id, days_old=30)
+        session.commit()
+
+        assert count == 1
+        session.refresh(old_p)
+        assert old_p.status == ProposalStatus.REJECTED
+        assert "stale" in old_p.rejection_reason
+
+    def test_skips_fresh_proposals(self, session, timeline_fixture):
+        from project_db.ai.proposals import bulk_dismiss_stale
+        task = session.query(Task).filter_by(project_id=timeline_fixture.canonical_id).first()
+        fresh_p = Proposal(
+            entity_type="Task",
+            entity_id=task.canonical_id,
+            field_name="task_status",
+            proposed_value=json.dumps({"status": "DONE", "monday_label": "Done"}),
+            confidence=0.8,
+            prompt_version="field-note-v1",
+            status=ProposalStatus.PENDING,
+        )
+        session.add(fresh_p)
+        session.commit()
+
+        count = bulk_dismiss_stale(session, timeline_fixture.canonical_id, days_old=30)
+        assert count == 0
+        session.refresh(fresh_p)
+        assert fresh_p.status == ProposalStatus.PENDING
+
+    def test_skips_non_pending(self, session, timeline_fixture):
+        from datetime import datetime, timedelta
+        from project_db.ai.proposals import bulk_dismiss_stale
+        task = session.query(Task).filter_by(project_id=timeline_fixture.canonical_id).first()
+        accepted_p = Proposal(
+            entity_type="Task",
+            entity_id=task.canonical_id,
+            field_name="task_status",
+            proposed_value=json.dumps({"status": "DONE", "monday_label": "Done"}),
+            confidence=0.8,
+            prompt_version="field-note-v1",
+            status=ProposalStatus.ACCEPTED,
+        )
+        accepted_p.created_at = datetime.utcnow() - timedelta(days=60)
+        accepted_p.updated_at = accepted_p.created_at
+        session.add(accepted_p)
+        session.commit()
+
+        count = bulk_dismiss_stale(session, timeline_fixture.canonical_id, days_old=30)
+        assert count == 0
+
+    def test_project_level_proposals_dismissed(self, session, timeline_fixture):
+        from datetime import datetime, timedelta
+        from project_db.ai.proposals import bulk_dismiss_stale
+        old_p = Proposal(
+            entity_type="Project",
+            entity_id=timeline_fixture.canonical_id,
+            field_name="new_task",
+            proposed_value=json.dumps({"title": "Old task", "evidence": "old note"}),
+            confidence=0.7,
+            prompt_version="field-note-v1",
+            status=ProposalStatus.PENDING,
+        )
+        old_p.created_at = datetime.utcnow() - timedelta(days=45)
+        old_p.updated_at = old_p.created_at
+        session.add(old_p)
+        session.commit()
+
+        count = bulk_dismiss_stale(session, timeline_fixture.canonical_id, days_old=30)
+        assert count >= 1
+        session.refresh(old_p)
+        assert old_p.status == ProposalStatus.REJECTED
+
+    def test_empty_project_returns_zero(self, session, timeline_fixture):
+        from project_db.ai.proposals import bulk_dismiss_stale
+        count = bulk_dismiss_stale(session, timeline_fixture.canonical_id, days_old=30)
+        assert count == 0
+
+    def test_bad_project_id_returns_zero(self, session):
+        from project_db.ai.proposals import bulk_dismiss_stale
+        count = bulk_dismiss_stale(session, "not-a-uuid", days_old=30)
+        assert count == 0

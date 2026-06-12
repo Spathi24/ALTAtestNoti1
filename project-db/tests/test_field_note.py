@@ -576,3 +576,96 @@ class TestAcceptTaskStatus:
         result = accept_proposal(session, bad_proposal.canonical_id, dry_run=True)
         assert result["ok"] is False
         assert "unknown canonical status" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Reasoning field + richer task context (Win 3 improvements)
+# ---------------------------------------------------------------------------
+
+
+class TestReasoningField:
+    """reasoning in proposed_value propagated from extractor response."""
+
+    def test_reasoning_stored_in_task_status_proposal(self, session, project, tasks):
+        ext = MockFieldNoteExtractor(responses=[{"signals": [{
+            "classification": "task_done",
+            "quoted_excerpt": "silicone done",
+            "task_index": 0,
+            "proposed_status": "Done",
+            "proposed_start_date": None,
+            "proposed_end_date": None,
+            "new_task_title": None,
+            "workers": None,
+            "hours_worked": None,
+            "confidence": 0.9,
+            "reasoning": "Note says silicone done, matches task 0.",
+        }]}])
+        batch = ingest_field_note(session, ext, project.canonical_id, "silicone done")
+        assert batch.proposal_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv.get("reasoning") == "Note says silicone done, matches task 0."
+
+    def test_no_reasoning_omitted_from_proposed_value(self, session, project, tasks):
+        """Extractor without reasoning key: proposal created without reasoning key."""
+        batch = ingest_field_note(
+            session, _mock_done(0), project.canonical_id, "finished the silicone"
+        )
+        assert batch.proposal_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "reasoning" not in pv
+
+    def test_reasoning_in_new_task_proposal(self, session, project, tasks):
+        ext = MockFieldNoteExtractor(responses=[{"signals": [{
+            "classification": "new_task",
+            "quoted_excerpt": "need to paint the door",
+            "task_index": None,
+            "proposed_status": None,
+            "proposed_start_date": None,
+            "proposed_end_date": None,
+            "new_task_title": "Paint the door",
+            "workers": None,
+            "hours_worked": None,
+            "confidence": 0.75,
+            "reasoning": "Painting not in existing task list; new_task is correct.",
+        }]}])
+        batch = ingest_field_note(session, ext, project.canonical_id, "need to paint the door")
+        assert batch.proposal_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv.get("reasoning") == "Painting not in existing task list; new_task is correct."
+
+
+class TestTaskContextLine:
+    """_task_context_line produces richer lines with status + dates."""
+
+    def test_includes_status_label_and_dates(self, session, project):
+        from datetime import date as _date
+        from project_db.ai.field_note_extraction import _task_context_line
+        t = Task(
+            title="Pour concrete",
+            status=TaskStatus.TODO,
+            monday_status_label="Working on it",
+            start_date=_date(2026, 6, 1),
+            end_date=_date(2026, 6, 15),
+            project_id=project.canonical_id,
+        )
+        session.add(t)
+        session.flush()
+        line = _task_context_line(t)
+        assert "Pour concrete" in line
+        assert "Working on it" in line
+        assert "2026-06-01" in line
+        assert "2026-06-15" in line
+
+    def test_no_dates_omitted(self, session, project):
+        from project_db.ai.field_note_extraction import _task_context_line
+        t = Task(
+            title="Paint walls",
+            status=TaskStatus.TODO,
+            project_id=project.canonical_id,
+        )
+        session.add(t)
+        session.flush()
+        line = _task_context_line(t)
+        assert "Paint walls" in line
+        assert "start:" not in line
+        assert "end:" not in line

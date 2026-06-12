@@ -416,7 +416,9 @@ def test_resolve_project_id_no_match(session, rockland, worker_marco):
     assert pid == str(rockland.canonical_id)
 
 
-def test_resolve_project_id_none_without_worker(session, rockland):
+def test_resolve_project_id_none_without_worker(session, rockland, monkeypatch):
+    # GMAIL_DEFAULT_PROJECT_ID from .env must not pollute this test.
+    monkeypatch.delenv("GMAIL_DEFAULT_PROJECT_ID", raising=False)
     pid = _resolve_project_id(
         session,
         to_address="fieldnotes@company.com",
@@ -686,8 +688,10 @@ def test_poll_mailbox_empty_body_fails(session, rockland, worker_marco):
 # ---------------------------------------------------------------------------
 
 
-def test_poll_mailbox_no_project_resolved_fails(session, rockland):
+def test_poll_mailbox_no_project_resolved_fails(session, rockland, monkeypatch):
     """Worker with no default_project + no matching plus-tag -> failed."""
+    # GMAIL_DEFAULT_PROJECT_ID from .env must not act as a fallback here.
+    monkeypatch.delenv("GMAIL_DEFAULT_PROJECT_ID", raising=False)
     w = Worker(display_name="Orphan", email="orphan@example.com")
     session.add(w)
     session.commit()

@@ -1064,6 +1064,70 @@ def reject_proposal(
     }
 
 
+def bulk_dismiss_stale(
+    session: Session,
+    project_id: Any,
+    *,
+    days_old: int = 30,
+    decided_by: str = "pm-bulk-dismiss",
+) -> int:
+    """Reject all PENDING proposals older than days_old days for a project.
+
+    Never deletes rows -- sets status=REJECTED with a timestamped reason so
+    history is preserved and future proposals for the same target are not
+    penalized (supersession only looks at PENDING rows, not REJECTED ones).
+    Returns the number of proposals dismissed.
+    """
+    from datetime import datetime, timedelta
+
+    from project_db.db.models.work import Task as _Task  # avoid shadowing
+
+    try:
+        pid = uuid.UUID(str(project_id))
+    except (ValueError, TypeError):
+        return 0
+
+    cutoff = datetime.utcnow() - timedelta(days=days_old)
+    # entity_id is UUID(as_uuid=True); use UUID objects in all filters.
+    task_uuids = [
+        row[0]
+        for row in session.query(_Task.canonical_id).filter(_Task.project_id == pid).all()
+    ]
+
+    stale: list[Proposal] = []
+    if task_uuids:
+        stale.extend(
+            session.query(Proposal)
+            .filter(
+                Proposal.entity_type == "Task",
+                Proposal.entity_id.in_(task_uuids),
+                Proposal.status == ProposalStatus.PENDING,
+                Proposal.created_at < cutoff,
+            )
+            .all()
+        )
+    stale.extend(
+        session.query(Proposal)
+        .filter(
+            Proposal.entity_type == "Project",
+            Proposal.entity_id == pid,
+            Proposal.status == ProposalStatus.PENDING,
+            Proposal.created_at < cutoff,
+        )
+        .all()
+    )
+
+    now = datetime.utcnow()
+    for p in stale:
+        p.status = ProposalStatus.REJECTED
+        p.rejection_reason = f"bulk-dismissed: stale (>{days_old} days old)"
+        p.decided_at = now
+        p.decided_by = decided_by
+
+    session.flush()
+    return len(stale)
+
+
 # Proposal field_names the approval loop knows how to ACT on (write back).
 # "timeline"     -> Monday timeline column (start + end dates).
 # "task_status"  -> Monday status column (Done / In Progress / Blocked).
