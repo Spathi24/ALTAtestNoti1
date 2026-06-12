@@ -262,6 +262,13 @@ SQLITE_EMAIL_INGEST_INDEXES = (
     "ON email_ingest (gmail_message_id)",
 )
 
+# Columns added to worker after initial DDL (role/tags/verified for PM categorization).
+SQLITE_WORKER_COLUMNS: dict[str, str] = {
+    "role": "VARCHAR",
+    "tags": "VARCHAR",
+    "verified": "BOOLEAN NOT NULL DEFAULT 0",
+}
+
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
@@ -312,6 +319,8 @@ def ensure_sqlite_schema(engine) -> None:
         # worker must exist before email_ingest (email_ingest has no FK to worker,
         # but both must exist before field_note references email_ingest).
         _create_table_if_missing(conn, tables, "worker", SQLITE_WORKER_DDL)
+        if "worker" in tables:
+            _add_missing_columns(conn, inspector, "worker", SQLITE_WORKER_COLUMNS)
         _create_table_if_missing(conn, tables, "email_ingest", SQLITE_EMAIL_INGEST_DDL)
         for _idx_ddl in SQLITE_EMAIL_INGEST_INDEXES:
             conn.execute(text(_idx_ddl))

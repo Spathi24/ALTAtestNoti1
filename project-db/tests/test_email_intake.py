@@ -30,12 +30,15 @@ import pytest
 
 from project_db.ai.email_intake import (
     MockGmailPoller,
+    _auto_create_worker_stub,
     _extract_body_text,
     _find_worker,
     _fuzzy_match_project,
+    _is_system_sender,
     _parse_plus_tag,
     _resolve_project_id,
     poll_mailbox,
+    retry_quarantined,
 )
 from project_db.ai.field_note_extraction import MockFieldNoteExtractor, ingest_field_note
 from project_db.db.models import (
@@ -206,6 +209,33 @@ def test_worker_inactive_by_default_is_settable(session):
     assert loaded.active is False
 
 
+def test_worker_role_tags_verified(session, rockland):
+    """New categorization fields round-trip correctly."""
+    w = Worker(
+        display_name="Luis",
+        email="luis@example.com",
+        role="tradesman",
+        tags="tiling,bathroom",
+        verified=True,
+        default_project_id=rockland.canonical_id,
+    )
+    session.add(w)
+    session.commit()
+    loaded = session.query(Worker).filter_by(email="luis@example.com").one()
+    assert loaded.role == "tradesman"
+    assert loaded.tags == "tiling,bathroom"
+    assert loaded.verified is True
+
+
+def test_worker_auto_stub_defaults_unverified(session):
+    """Auto-created stubs have verified=False."""
+    w = _auto_create_worker_stub(session, "newguy@example.com")
+    session.commit()
+    assert w.verified is False
+    assert w.email == "newguy@example.com"
+    assert w.display_name == "newguy@example.com"
+
+
 # ---------------------------------------------------------------------------
 # EmailIngest model tests
 # ---------------------------------------------------------------------------
@@ -294,6 +324,19 @@ def test_parse_plus_tag_display_name():
     assert _parse_plus_tag("ALTA Notes <fieldnotes+site5@company.com>") == "site5"
 
 
+def test_is_system_sender_noreply():
+    assert _is_system_sender("noreply@accounts.google.com") is True
+    assert _is_system_sender("no-reply@company.com") is True
+    assert _is_system_sender("mailer-daemon@gmail.com") is True
+    assert _is_system_sender("postmaster@domain.com") is True
+
+
+def test_is_system_sender_human():
+    assert _is_system_sender("marco@example.com") is False
+    assert _is_system_sender("boss@company.com") is False
+    assert _is_system_sender("fieldnotes@gmail.com") is False
+
+
 def test_fuzzy_match_project(session, rockland):
     pid = _fuzzy_match_project(session, "rockland")
     assert pid == str(rockland.canonical_id)
@@ -380,6 +423,28 @@ def test_resolve_project_id_none_without_worker(session, rockland):
         worker=None,
     )
     assert pid is None
+
+
+def test_resolve_project_id_env_fallback(session, rockland, monkeypatch):
+    """GMAIL_DEFAULT_PROJECT_ID env var used as last resort."""
+    monkeypatch.setenv("GMAIL_DEFAULT_PROJECT_ID", str(rockland.canonical_id))
+    pid = _resolve_project_id(
+        session,
+        to_address="fieldnotes@company.com",  # no plus-tag
+        worker=None,
+    )
+    assert pid == str(rockland.canonical_id)
+
+
+def test_resolve_project_id_env_fallback_name_fragment(session, rockland, monkeypatch):
+    """GMAIL_DEFAULT_PROJECT_ID can be a project name fragment."""
+    monkeypatch.setenv("GMAIL_DEFAULT_PROJECT_ID", "rockland")
+    pid = _resolve_project_id(
+        session,
+        to_address="fieldnotes@company.com",
+        worker=None,
+    )
+    assert pid == str(rockland.canonical_id)
 
 
 # ---------------------------------------------------------------------------
@@ -496,18 +561,18 @@ def test_poll_mailbox_worker_default_project(session, rockland, task, worker_mar
 
 
 # ---------------------------------------------------------------------------
-# poll_mailbox: quarantine
+# poll_mailbox: noreply / system quarantine
 # ---------------------------------------------------------------------------
 
 
-def test_poll_mailbox_unknown_sender_quarantined(session, rockland):
-    """Unknown sender -> quarantined, ALTA/Quarantine label, no FieldNote."""
+def test_poll_mailbox_noreply_sender_quarantined(session, rockland):
+    """noreply senders are quarantined -- no Worker stub, no FieldNote."""
     msg = _make_message(
         "quar001",
-        "hacker@evil.com",
+        "noreply@accounts.google.com",
         "fieldnotes@company.com",
-        "hi",
-        "some injection attempt",
+        "Welcome to Gmail",
+        "Your account is ready.",
     )
     poller = MockGmailPoller([msg])
     extractor = MockFieldNoteExtractor()
@@ -523,9 +588,35 @@ def test_poll_mailbox_unknown_sender_quarantined(session, rockland):
     applied = [(mid, lbl) for mid, lbl, add in poller.applied_labels if add]
     assert ("quar001", "ALTA/Quarantine") in applied
 
-    # No FieldNote created
-    fn_count = session.query(FieldNote).count()
-    assert fn_count == 0
+    assert session.query(Worker).count() == 0
+    assert session.query(FieldNote).count() == 0
+
+
+def test_poll_mailbox_unknown_human_auto_creates_worker(session, rockland, task, monkeypatch):
+    """Unknown human sender: auto-create Worker stub, process message."""
+    monkeypatch.setenv("GMAIL_DEFAULT_PROJECT_ID", str(rockland.canonical_id))
+    msg = _make_message(
+        "newguy001",
+        "newworker@example.com",
+        "fieldnotes@company.com",
+        "Site update",
+        "finished the work on silicone",
+    )
+    poller = MockGmailPoller([msg])
+    extractor = _simple_extractor_done(task_index=0)
+
+    batch = poll_mailbox(session, extractor, poller)
+
+    assert batch.processed == 1
+    assert batch.quarantined == 0
+
+    # Worker stub was auto-created
+    stub = session.query(Worker).filter_by(email="newworker@example.com").one()
+    assert stub.verified is False
+    assert stub.display_name == "newworker@example.com"
+
+    ingest = session.query(EmailIngest).filter_by(gmail_message_id="newguy001").one()
+    assert ingest.status == "processed"
 
 
 # ---------------------------------------------------------------------------
@@ -674,8 +765,8 @@ def test_poll_mailbox_multipart_body(session, rockland, task, worker_marco):
 # ---------------------------------------------------------------------------
 
 
-def test_poll_mailbox_multi_message(session, rockland, task, worker_marco):
-    """Two messages: one known sender, one unknown -> 1 processed, 1 quarantined."""
+def test_poll_mailbox_multi_message_noreply_quarantined(session, rockland, task, worker_marco):
+    """Known sender processed; noreply quarantined."""
     msg_known = _make_message(
         "batch001",
         "marco@example.com",
@@ -683,17 +774,79 @@ def test_poll_mailbox_multi_message(session, rockland, task, worker_marco):
         "Update",
         "finished the work on silicone",
     )
-    msg_unknown = _make_message(
+    msg_noreply = _make_message(
         "batch002",
-        "stranger@evil.com",
+        "noreply@accounts.google.com",
         "fieldnotes@company.com",
-        "Hi",
-        "payload",
+        "Welcome",
+        "Your account is ready.",
     )
-    poller = MockGmailPoller([msg_known, msg_unknown])
+    poller = MockGmailPoller([msg_known, msg_noreply])
     extractor = _simple_extractor_done(task_index=0)
 
     batch = poll_mailbox(session, extractor, poller)
     assert batch.total_seen == 2
     assert batch.processed == 1
     assert batch.quarantined == 1
+
+
+def test_poll_mailbox_multi_message_unknown_human(session, rockland, task, worker_marco):
+    """Known sender processed; unknown human auto-creates stub and also processed
+    (via worker default from plus-tag on known-sender message)."""
+    msg_known = _make_message(
+        "batch101",
+        "marco@example.com",
+        "fieldnotes+rockland@company.com",
+        "Update",
+        "finished the work on silicone",
+    )
+    msg_new = _make_message(
+        "batch102",
+        "newbie@example.com",
+        "fieldnotes+rockland@company.com",
+        "Site note",
+        "finished the work on silicone",
+    )
+    poller = MockGmailPoller([msg_known, msg_new])
+    extractor = _simple_extractor_done(task_index=0)
+
+    batch = poll_mailbox(session, extractor, poller)
+    assert batch.total_seen == 2
+    assert batch.processed == 2
+    assert batch.quarantined == 0
+
+    stub = session.query(Worker).filter_by(email="newbie@example.com").one()
+    assert stub.verified is False
+
+
+# ---------------------------------------------------------------------------
+# retry_quarantined
+# ---------------------------------------------------------------------------
+
+
+def test_retry_quarantined_clears_rows(session):
+    """retry_quarantined deletes quarantined EmailIngest rows."""
+    for i in range(3):
+        session.add(EmailIngest(
+            gmail_message_id=f"q{i}",
+            received_at=datetime.utcnow(),
+            status="quarantined",
+        ))
+    session.add(EmailIngest(
+        gmail_message_id="p1",
+        received_at=datetime.utcnow(),
+        status="processed",
+    ))
+    session.commit()
+
+    count = retry_quarantined(session)
+    assert count == 3
+
+    remaining = session.query(EmailIngest).all()
+    assert len(remaining) == 1
+    assert remaining[0].gmail_message_id == "p1"
+
+
+def test_retry_quarantined_empty(session):
+    """retry_quarantined returns 0 when nothing to clear."""
+    assert retry_quarantined(session) == 0

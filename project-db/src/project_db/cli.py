@@ -1666,6 +1666,31 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
     return 0 if batch.ok else 1
 
 
+def cmd_retry_quarantined(_: argparse.Namespace) -> int:
+    """Clear quarantined EmailIngest rows so the next poll-mail reprocesses them.
+
+    Quarantined messages have ALTA/Quarantine label but NOT ALTA/Processed, so
+    poll-mail will pick them up again once their DB row is cleared.  Run this
+    once after upgrading to the open-roster behaviour so previously quarantined
+    messages from real workers get processed.
+
+    Does NOT call poll-mail automatically -- run it separately after this.
+    """
+    from project_db.ai.email_intake import retry_quarantined
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        count = retry_quarantined(s)
+
+    print(f"[retry-quarantined] Cleared {count} quarantined message(s).")
+    if count:
+        print("Run: project_db poll-mail   to reprocess them now.")
+    return 0
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     """Audit canonical-data integrity (read-only).
 
@@ -2532,6 +2557,13 @@ def build_parser() -> argparse.ArgumentParser:
              "Safe to re-run (Message-ID dedup). Needs OPENAI_API_KEY + gmail-auth done.",
     )
     poll.set_defaults(func=cmd_poll_mail)
+
+    retry = sub.add_parser(
+        "retry-quarantined",
+        help="Clear quarantined EmailIngest rows so poll-mail reprocesses them. "
+             "Run once after upgrading to the open-roster behaviour.",
+    )
+    retry.set_defaults(func=cmd_retry_quarantined)
 
     serve = sub.add_parser(
         "serve",

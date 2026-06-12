@@ -38,6 +38,11 @@ class Worker(Base, CanonicalMixin):
         nullable=True,
     )
     active = Column(Boolean, nullable=False, default=True)
+    # Categorization filled in by the PM after reviewing recurring senders.
+    role = Column(String, nullable=True)    # PM / tradesman / crew / subcontractor
+    tags = Column(String, nullable=True)    # comma-separated free-text labels
+    # False = auto-created from first email; True = manually added / confirmed.
+    verified = Column(Boolean, nullable=False, default=False)
 
 
 class EmailIngest(Base, CanonicalMixin):

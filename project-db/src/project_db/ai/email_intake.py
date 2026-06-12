@@ -3,20 +3,26 @@
 Architecture contract:
   - N7: outbound-only poller; nothing listens on the public internet.
   - A1: email content is untrusted; produces Proposals only, never direct writes.
-  - Unknown senders are QUARANTINED (EmailIngest.status="quarantined"), never processed.
+  - Unknown HUMAN senders: auto-create an unverified Worker stub, then process
+    normally.  The PM reviews recurring senders via the roster and assigns
+    role/tags (PM / tradesman / crew).
+  - System / noreply senders: quarantined immediately, no processing.
   - Message-ID dedup: gmail_message_id is the unique key; repeated runs are idempotent.
   - Plus-addressing routing: fieldnotes+rockland@company.com -> fuzzy-match project names.
+    Fallback: GMAIL_DEFAULT_PROJECT_ID env var (name fragment or UUID).
   - Attachments are stored raw (path list in attachment_refs_json) for Win 3 (photos).
 
 Auth:
-  - GDRIVE_SA_KEY_PATH  -- path to OAuth client_secret JSON (same file as Drive auth).
-  - GMAIL_TOKEN_PATH    -- where to save/load the Gmail OAuth token
-                          (default: secrets/gmail_token.json next to client_secret).
-  - Run `project_db gmail-auth` once to open the consent screen for Gmail scopes.
+  - GDRIVE_SA_KEY_PATH           -- OAuth client_secret JSON (same file as Drive auth).
+  - GMAIL_TOKEN_PATH             -- Gmail OAuth token file (default: secrets/gmail_token.json).
+  - GMAIL_MAILBOX_ADDRESS        -- address to filter messages to (optional).
+  - GMAIL_DEFAULT_PROJECT_ID     -- fallback project (name fragment or UUID) when no
+                                    plus-address tag and no worker default_project_id.
+  - Run `project_db gmail-auth` once for the one-time browser consent.
 
 Gmail labels applied server-side:
-  - ALTA/Processed   -- ingest ran; Proposals created.
-  - ALTA/Quarantine  -- sender not in Worker roster.
+  - ALTA/Processed   -- ingest ran; Proposals created or note too vague.
+  - ALTA/Quarantine  -- system/noreply sender; not processed.
   - ALTA/Failed      -- extraction or DB error.
 """
 from __future__ import annotations
@@ -55,6 +61,14 @@ _LABEL_FAILED = "ALTA/Failed"
 
 # How many messages to retrieve per poll (max 500 per Gmail API page).
 _BATCH_SIZE = 100
+
+# Senders that are definitively non-human (Google welcome emails, bounce
+# notifications, automated alerts).  These are quarantined without processing.
+_SYSTEM_SENDER_RE = re.compile(
+    r"^(no[-_.]?reply|noreply|mailer-daemon|postmaster|do-not-reply|donotreply"
+    r"|bounce|alert|notification|automated)@",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -375,13 +389,41 @@ def _find_worker(session: Session, sender_email: str) -> Worker | None:
     )
 
 
+def _is_system_sender(email: str) -> bool:
+    """Return True for noreply/bounce/automated senders that should be quarantined."""
+    return bool(_SYSTEM_SENDER_RE.match(email.strip()))
+
+
+def _auto_create_worker_stub(session: Session, sender_email: str) -> "Worker":
+    """Create an unverified Worker stub for a first-time human sender.
+
+    The PM reviews recurring senders in the Worker roster and fills in
+    display_name, role, and tags at their leisure.  Processing is NOT blocked
+    on verification -- all output still goes through Proposals (A1).
+    """
+    w = Worker(
+        display_name=sender_email,   # placeholder; PM can rename later
+        email=sender_email.lower().strip(),
+        verified=False,
+        active=True,
+    )
+    session.add(w)
+    session.flush()
+    logger.info("[GMAIL] Auto-created unverified Worker stub for: %s", sender_email)
+    return w
+
+
 def _resolve_project_id(
     session: Session,
     *,
     to_address: str,
-    worker: Worker | None,
+    worker: "Worker | None",
 ) -> str | None:
-    """Determine project_id via plus-address tag, then worker default."""
+    """Determine project_id: plus-tag first, then worker default, then env fallback.
+
+    GMAIL_DEFAULT_PROJECT_ID (env) can be a canonical UUID or a project name
+    fragment.  Set it when most emails arrive without plus-addressing.
+    """
     tag = _parse_plus_tag(to_address)
     if tag:
         project_id = _fuzzy_match_project(session, tag)
@@ -389,6 +431,18 @@ def _resolve_project_id(
             return project_id
     if worker and worker.default_project_id:
         return str(worker.default_project_id)
+    # Last resort: system-wide default from environment.
+    default_ref = os.environ.get("GMAIL_DEFAULT_PROJECT_ID", "").strip()
+    if default_ref:
+        try:
+            uid = uuid.UUID(default_ref)
+            proj = session.query(Project).filter_by(canonical_id=uid).one_or_none()
+            if proj:
+                return str(proj.canonical_id)
+        except ValueError:
+            pass
+        # Treat as name fragment.
+        return _fuzzy_match_project(session, default_ref)
     return None
 
 
@@ -537,13 +591,19 @@ def _process_one(
     session.flush()  # persist so canonical_id is real; not yet committed
 
     if worker is None:
-        ingest.status = "quarantined"
-        session.flush()
-        session.commit()
-        batch.quarantined += 1
-        poller.apply_label(gmail_id, _LABEL_QUARANTINE)
-        logger.info("[GMAIL] Quarantined message from unknown sender: %s", sender_email)
-        return
+        if _is_system_sender(sender_email):
+            # noreply / bounce / automated: quarantine without processing.
+            ingest.status = "quarantined"
+            ingest.failure_reason = "system/noreply sender"
+            session.flush()
+            session.commit()
+            batch.quarantined += 1
+            poller.apply_label(gmail_id, _LABEL_QUARANTINE)
+            logger.info("[GMAIL] Quarantined system sender: %s", sender_email)
+            return
+        # Unknown human: auto-create an unverified Worker stub so the PM can
+        # review and tag them later.  Content still goes through Proposals (A1).
+        worker = _auto_create_worker_stub(session, sender_email)
 
     # ----- Project resolution -----
     project_id = _resolve_project_id(session, to_address=to_raw, worker=worker)
@@ -633,6 +693,25 @@ def _mark_ingest_failed(session: Session, gmail_id: str, reason: str) -> None:
         session.commit()
     except Exception:
         session.rollback()
+
+
+def retry_quarantined(session: Session) -> int:
+    """Delete quarantined EmailIngest rows so poll-mail reprocesses them.
+
+    The underlying Gmail messages still exist (they have ALTA/Quarantine but
+    NOT ALTA/Processed), so the next poll-mail run picks them up fresh.
+    Returns the number of rows deleted.
+
+    Use after upgrading to the auto-create-worker-stub behaviour so previously
+    quarantined human-sender messages get a second chance.
+    """
+    rows = session.query(EmailIngest).filter_by(status="quarantined").all()
+    count = len(rows)
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    logger.info("[GMAIL] Cleared %d quarantined EmailIngest row(s) for retry", count)
+    return count
 
 
 def _uuid_or_none(val: str | None) -> Any:
