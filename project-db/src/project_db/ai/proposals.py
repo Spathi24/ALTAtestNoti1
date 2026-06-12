@@ -1502,11 +1502,17 @@ def get_proposal_detail(
             doc_ids = json.loads(p.source_doc_ids)
         except (json.JSONDecodeError, TypeError):
             doc_ids = []
-        if doc_ids:
+        valid_doc_uuids: list[uuid.UUID] = []
+        for x in doc_ids:
+            try:
+                valid_doc_uuids.append(uuid.UUID(str(x)))
+            except (ValueError, AttributeError, TypeError):
+                pass
+        if valid_doc_uuids:
             from project_db.db.models import Document
             for d in (
                 session.query(Document)
-                .filter(Document.canonical_id.in_([uuid.UUID(x) for x in doc_ids]))
+                .filter(Document.canonical_id.in_(valid_doc_uuids))
                 .all()
             ):
                 source_docs.append({
