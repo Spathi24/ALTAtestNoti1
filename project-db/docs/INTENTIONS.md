@@ -13,11 +13,19 @@
 > live: "$1,926 surfaced across 2 projects"). **#3 (the plain-English
 > per-project money one-liner) is now also DONE** (`report_project_money_line`
 > + `money-line` CLI + a project-page banner; reworked to headline the CONFIRMED
-> view rather than a quote-inflated margin). **Next: STOP building and show the
-> PM** (STRATEGY §9), plus the live transcription feature after the job-site
-> requirements visit. The
+> view rather than a quote-inflated margin). The
 > financial extraction was rebuilt the same way earlier (CHANGELOG 2026-06-04).
 > Provider is Anthropic-primary / OpenAI-fallback (Anthropic credits at $0).
+>
+> **STATUS 2026-06-12: §0 requirements have LANDED.** The job-site visit +
+> planning session produced **`docs/FIELD_NOTES_BRIEF.md`** — the settled
+> implementation spec for the field-note MVP (pilot: 923-927 Rockland; email
+> intake, polled, N7-safe; no dependency cascade — the graph is empty;
+> capture-only man-hours). **That brief now leads the roadmap.** Where this
+> file's §0 sketch and the brief disagree, the brief wins. Also: the Drive
+> source was switched to the team shared Drive with a clean-slate rebuild
+> (2026-06-10) — 1081 docs, 439 financial records, 170 obligations, all
+> team-only.
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
 usable, and informative, not just clever. Every intention below is judged by
@@ -36,35 +44,33 @@ recurring, cross-system leaks a human lets slip. LLM **extracts evidence once**
 
 ---
 
-## Honest tensions — name them so they don't become drift (external review, 2026-06-09)
+## Honest tensions — named 2026-06-09, BOTH DECIDED 2026-06-12
 
-Two mismatches between what the docs SAY and what's actually happening. Naming
-them is not resolving them — the owner should make these calls consciously.
+Two mismatches between what the docs said and what was actually happening.
+Both got their owner decision via the field-note planning session
+(`FIELD_NOTES_BRIEF.md`):
 
-1. **Adoption is the one unchecked box, while building never stops.** The whole
-   thesis is "a PM opens this before Monday" (STRATEGY §9 / N8), yet the
-   "one-PM-two-week-trial" has never run and 2026-06-09 alone is ~9 build/audit
-   commits. The owner has *deliberately* chosen internal-dev mode (no demo) for
-   now — that's legitimate, but it must be a **dated decision, not a permanent
-   excuse.** Risk #1 by far: beautifully-engineered infra with zero users.
-   *Mitigation:* pick a target date to put it in front of one PM; treat further
-   building before then as borrowing against that.
-2. **The project is a financial-truth tool wearing an active-adaptation mission.**
-   The owner says automation (§0) is the core purpose and financials are
-   "secondary," yet ~all recent effort is financial ("the current centre of
-   gravity"). That may be the right pragmatic call (financials are tractable +
-   the boss wants demonstrable ROI), but the **unnamed** mismatch confuses the
-   team. *Decision needed:* either recommit effort to §0, or rename the mission
-   to "contractor financial-truth + money-at-risk brain" with active-adaptation
-   as an explicit Phase 2. Pick one; align the docs.
+1. **Adoption (was: the one unchecked box).** DECIDED: the **923-927 Rockland
+   field-note pilot IS the one-PM trial** (STRATEGY §9). A beginner PM on a
+   live job is committed to reviewing proposals a few times per week. The
+   brief makes PM-facing friction a bug, not a backlog item. Building beyond
+   the MVP wins before the pilot produces feedback = borrowing against this
+   decision.
+2. **Mission framing (was: financial-truth tool wearing an automation
+   mission).** DECIDED: **recommitted to §0 active adaptation as the core
+   line.** The financial layer is the supporting truth substrate, not the
+   product. The field-note MVP is the first real §0 build; financial-trust
+   work (§6/§7/§9) continues opportunistically behind it.
 
 ---
 
 ## 0. Active adaptation — automatic field-update management  ⭐⭐ (THE core purpose)
 
-**Status:** design only; requirements gathered at a job-site visit (~2026-06-10).
-**Do not build before those requirements land** (building blind = the drift trap,
-N8). This consolidates the former `TRANSCRIPTION_FEATURE.md`.
+**Status: REQUIREMENTS LANDED (2026-06-12) → BUILD PHASE.** The settled
+implementation spec is **`docs/FIELD_NOTES_BRIEF.md`** (pilot, provider,
+intake transport, scope cuts, three-win build order). This section remains the
+design rationale; **the brief overrides it wherever they differ.** This
+consolidates the former `TRANSCRIPTION_FEATURE.md`.
 
 **What.** A worker on site reports — by chat (WhatsApp to a number), voice, or
 later a photo — *what was done / what's left*. ALTA classifies it, matches it to
@@ -97,36 +103,37 @@ paradigm):** `DailyLog` (storage; bare today — add a structured sidecar like
 write-back engine (`ai/proposals.py`; `_ACCEPTABLE_FIELDS` extends *carefully* —
 A2/A3, advisor-not-actor).
 
-**⚠ The hard part is DEPLOYMENT, not transcription accuracy — and it collides
-with rule N7.** Field workers texting updates from their phones is inherently
-**multi-user, networked, concurrent** — which breaks the single-user / localhost
-/ no-auth posture N7 holds sacred (and it's the same "needs a public HTTPS
-endpoint" blocker as Monday webhooks). The classify→propose *brain* is easy (the
-framework exists); the *ingestion deployment* is the real design problem and it
-contradicts a NEVER. **Resolve this ON PAPER before building.** Likely shape: a
-small SEPARATE hosted service (the only thing exposed to the internet) that
-receives messages and writes them to a queue/table the localhost brain polls — so
-the brain stays single-user/localhost and only the thin intake is networked.
+**⚠ The deployment/N7 collision — RESOLVED (2026-06-12), cheaper than the
+original sketch.** This section originally predicted a small separate hosted
+intake service as the likely shape. The settled answer is better: **email,
+polled.** Workers text/photo a dedicated mailbox; the brain POLLS it via
+IMAP/Gmail API — an outbound-only connection, so **nothing listens on the
+public internet and N7 is never touched.** The mailbox itself is the durable
+queue (retries, ordering, attachments for free). Plus-addressing
+(`address+rockland@...`) gives deterministic project routing; the classifier
+infers the project otherwise. No hosting, no webhook receiver, no new infra.
 
-**THE job-site questions, in priority order** (the visit is about #1–2, not
-transcription quality):
-1. **Deployment/ownership:** whose phone/number, how many workers, who hosts the
-   intake endpoint? (Decides the N7-safe architecture above.)
-2. **Dependency graph:** does Monday actually STORE task dependencies, or is
-   sequencing in people's heads? (Gates the dependency-aware cascade — the
-   deterministic graph math has nothing to walk if deps aren't populated.)
-3. Update granularity (task done / new task / date shift / scope / blocker);
-   write-back appetite (advisory proposals vs auto-apply — prior: proposals).
-4. Bring back **1–2 real, messy field notes** as test fixtures.
+**The job-site questions — ANSWERED (recorded in the brief):**
+1. *Deployment/ownership:* email intake as above; roster table maps sender →
+   person → default project; unknown senders quarantined (untrusted input —
+   prompt-injection surface).
+2. *Dependency graph:* **empirically empty** — dependency columns exist on 139
+   tasks but only ~11 are populated; Owner/people 0/209; 74/209 dated
+   (verified against the canonical DB 2026-06-12). There is no graph to walk →
+   **no dependency cascade in the MVP.** Inverted into a win: the LLM
+   PROPOSES dependency edges (human-approved, written to Monday's "Dependent
+   On" column) so the graph gets built over time.
+3. *Granularity:* `task_done | task_progress | blocker | new_task | date_shift
+   | scope_change | other`. Write-back appetite: advisory Proposals only (A1).
+4. *Real field notes:* to be collected as the pilot runs — they seed the
+   module's gold set (§8 posture).
 
-**Then-gaps to build (post-requirements):** the N7-safe intake service; a
-channel-agnostic field-note ingest (CLI/web text-in first); `ai/
-field_note_extraction.py`; proposal generation from a note; the dependency-aware
-cascade. `_ACCEPTABLE_FIELDS` extends *carefully* (A2/A3, advisor-not-actor).
-
-**Build-when:** after the job-site requirements. Prototype the channel-agnostic
-core (typed text → classify → proposals) first; prove it; then add WhatsApp +
-vision.
+**Build order = the brief's three wins:** Win 1 channel-agnostic core (CLI +
+web text box → `FieldNote` sidecar → `ai/field_note_extraction.py` → task
+match → Proposals); Win 2 email intake adapter (+ roster, Message-ID dedup);
+Win 3 photos through the same pipe (vision, same schema). Plus the 1-hour
+deterministic **chaos report** (board-hygiene stats) anytime.
+`_ACCEPTABLE_FIELDS` extends *carefully* (A2/A3, advisor-not-actor).
 
 ---
 
@@ -447,29 +454,32 @@ question). Small, high-adoption-leverage.
 
 ---
 
-## Sequencing (intention, not commitment)
+## Sequencing (updated 2026-06-12 — the field-note MVP leads)
 
 **Done (2026-06-09):** §1 Commitments/Money-at-Risk (structured + live), §2
-Value-caught tally, §3 money one-liner.
+Value-caught tally, §3 money one-liner. **Decided (2026-06-12):** both Honest
+Tensions (pilot = the one-PM trial; mission = active adaptation).
 
-**Decide first (not code — the two Honest Tensions above):** a date for the
-one-PM trial, and the mission framing (financial-truth brain vs active-adaptation).
-
-**Then, in order:**
-0. **§8 Extraction eval harness** — the guardrail. Cheap (~5 docs), and it gates
-   everything in #2/#3 safely (catches the live gpt-4o-mini regression). Do this
-   before touching any extraction prompt/model.
-1. **§0 Active adaptation** — the core purpose. Resolve the **deployment/N7
-   question on paper** at the job site (the real hard part), then build the
-   channel-agnostic field-note → classify → propose prototype. Leads the roadmap.
-2. **Financial trust = §6 (dedup) + §7 (acquisition model) + §9 (bootstrap the
-   confirmed default).** Both failure modes are root-caused (huge number =
-   cross-doc dup; $0 = unmodeled acquisition + a guard blind to skipped money).
-   These **gate the PM's first impression of "it knows my money"** — so they may
-   be more urgent than "after adoption," not less. At minimum make the honesty
-   loud + early so a wrong/absent total never looks clean.
-3. **§3 usability wins** + UX/robustness backlog — opportunistic.
-4. **§5 acquisition intelligence** — separate app, shared data; when the lead
+**Now, in order:**
+1. **§0 field-note MVP per `FIELD_NOTES_BRIEF.md`** — Win 1 (channel-agnostic
+   core) → Win 2 (email intake) → Win 3 (photos). Each win ships complete
+   (code + tests + live demo path) before the next starts. The **chaos
+   report** (1 hour, deterministic) can land anytime. This IS the adoption
+   trial — the Rockland PM's reaction after Win 1, not more features, drives
+   what comes next.
+2. **§8 eval harness, split honestly:** the *field-note* gold set is built
+   into the MVP (freeze the first ~5 real notes + labels, per the brief). The
+   *financial-extraction* gold set (1455 Geller $159,120; 6554 PSA $1.5M
+   should-capture; 5768 $8k settlement) is **still owed** — required before
+   the next financial prompt/model change, lower urgency now that the whole
+   portfolio was re-extracted on the current model and spot-audited
+   (2026-06-10 clean-slate rebuild).
+3. **Financial trust = §6 (dedup) + §7 (acquisition model) + §9 (bootstrap the
+   confirmed default).** Root-caused, not fires (the money-line already
+   refuses to present inflated totals as truth). Sequence behind the MVP wins;
+   pull forward only if financial trust blocks the pilot PM's confidence.
+4. **§3 usability wins** + UX/robustness backlog — opportunistic.
+5. **§5 acquisition intelligence** — separate app, shared data; when the lead
    feed is stable AND the ops brain is in daily PM use.
 
 The test for all of it (rule N8): *does a PM/owner open ALTA sooner, and can you
