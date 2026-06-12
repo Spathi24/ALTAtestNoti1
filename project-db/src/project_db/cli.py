@@ -1483,6 +1483,68 @@ def cmd_daily(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_field_note(args: argparse.Namespace) -> int:
+    """Submit a plain-language field note for a project.
+
+    Classifies the note, matches signals to project tasks, and writes PENDING
+    Proposals for human review.  Uses OpenAI structured outputs (gpt-4o-mini).
+    """
+    from project_db.ai.field_note_extraction import (
+        FieldNoteExtractorError,
+        NoteChannel,
+        OpenAIFieldNoteExtractor,
+        ingest_field_note,
+    )
+    from project_db.ai.views import _resolve_project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    note_text = args.note if isinstance(args.note, str) else " ".join(args.note)
+    project_ref = args.project
+
+    try:
+        extractor = OpenAIFieldNoteExtractor()
+    except FieldNoteExtractorError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        project = _resolve_project(s, project_ref)
+        if project is None:
+            print(f"FAIL: no project matched {project_ref!r}", file=sys.stderr)
+            return 2
+
+        print(f"[field-note] project: {project.name}")
+        print(f"[field-note] note:    {note_text[:120]}")
+        print()
+
+        batch = ingest_field_note(
+            s, extractor, project.canonical_id, note_text,
+            channel=NoteChannel.CLI,
+        )
+
+    if batch.skipped_reason:
+        print(f"SKIP: {batch.skipped_reason}")
+        return 0
+
+    for err in batch.errors:
+        print(f"WARN: {err}")
+
+    print(batch.summary())
+    for fn in batch.field_notes:
+        print(
+            f"  signal: {fn.classification.value if fn.classification else '?'}"
+            f"  conf={fn.confidence:.2f}"
+            f"  excerpt: {(fn.quoted_excerpt or '')[:60]}"
+        )
+    if batch.proposals:
+        print(f"  -> {len(batch.proposals)} proposal(s) created (PENDING review)")
+        print("  Review with: project_db proposals list --status pending")
+    return 0
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     """Audit canonical-data integrity (read-only).
 
@@ -2326,6 +2388,15 @@ def build_parser() -> argparse.ArgumentParser:
              "each roadmap_task row.  Single LLM call.  Re-runnable.",
     )
     classify.set_defaults(func=cmd_classify_roadmap)
+
+    fn = sub.add_parser(
+        "field-note",
+        help="Submit a plain-language field note -- classifies, task-matches, and "
+             "creates PENDING Proposals for human review. Needs OPENAI_API_KEY.",
+    )
+    fn.add_argument("project", help="Project name fragment or canonical UUID")
+    fn.add_argument("note", nargs="+", help="The field note text (quoted or multiple words)")
+    fn.set_defaults(func=cmd_field_note)
 
     serve = sub.add_parser(
         "serve",

@@ -59,6 +59,52 @@ def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     return report_attention_briefing(session, limit=limit)
 
 
+def submit_field_note(
+    session: Session,
+    project_id: str,
+    note_text: str,
+) -> dict[str, Any]:
+    """Ingest a field note from the web UI (A5: same service path as the CLI).
+
+    Returns a dict with keys:
+      ok         bool
+      summary    one-line result string
+      proposals  list of {field_name, entity_type, proposal_id} for created proposals
+      errors     list of warning strings
+    """
+    from project_db.ai.field_note_extraction import (
+        FieldNoteExtractorError,
+        NoteChannel,
+        OpenAIFieldNoteExtractor,
+        ingest_field_note,
+    )
+
+    if not note_text or not note_text.strip():
+        return {"ok": False, "summary": "Empty note -- nothing to process.", "proposals": [], "errors": []}
+
+    try:
+        extractor = OpenAIFieldNoteExtractor()
+    except FieldNoteExtractorError as exc:
+        return {"ok": False, "summary": f"Extractor unavailable: {exc}", "proposals": [], "errors": [str(exc)]}
+
+    batch = ingest_field_note(
+        session, extractor, project_id, note_text.strip(),
+        channel=NoteChannel.WEB,
+    )
+
+    proposals_out = [
+        {"field_name": p.field_name, "entity_type": p.entity_type,
+         "proposal_id": str(p.canonical_id)}
+        for p in batch.proposals
+    ]
+    return {
+        "ok": True,
+        "summary": batch.summary(),
+        "proposals": proposals_out,
+        "errors": batch.errors,
+    }
+
+
 def value_caught(session: Session) -> dict[str, Any]:
     """ROI scoreboard for the landing page (INTENTIONS #2).
 

@@ -88,6 +88,28 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             request, "_partials/financials_body.html", {"d": data}
         )
 
+    @router.post("/projects/{project_id}/field-note", response_class=HTMLResponse)
+    def project_field_note_submit(
+        project_id: str,
+        request: Request,
+        note_text: str = Form(""),
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        """Accept a plain-language field note, classify it, create PENDING proposals.
+
+        Returns a small HTML fragment (HTMX swap target) reporting the outcome.
+        The session is committed here -- the service function flushes but the
+        route owns the transaction boundary.
+        """
+        result = ui_views.submit_field_note(session, project_id, note_text)
+        session.commit()
+        # Redirect back to the project proposals section so the PM sees the queue.
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"/projects/{project_id}#proposals",
+            status_code=303,
+        )
+
     @router.get("/documents/{document_id}", response_class=HTMLResponse)
     def document_show(
         document_id: str,

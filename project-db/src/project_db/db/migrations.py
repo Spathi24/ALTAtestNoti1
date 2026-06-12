@@ -192,6 +192,29 @@ CREATE TABLE document_financial_status (
 """
 
 
+SQLITE_FIELD_NOTE_DDL = """
+CREATE TABLE field_note (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    raw_text TEXT NOT NULL,
+    received_at DATETIME NOT NULL,
+    channel VARCHAR NOT NULL DEFAULT 'cli',
+    sender_ref VARCHAR,
+    project_id TEXT NOT NULL,
+    classification VARCHAR,
+    quoted_excerpt TEXT,
+    workers VARCHAR,
+    hours_worked NUMERIC(8, 2),
+    matched_task_id TEXT,
+    confidence FLOAT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (matched_task_id) REFERENCES task(canonical_id)
+)
+"""
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -238,6 +261,7 @@ def ensure_sqlite_schema(engine) -> None:
         )
         for _idx_ddl in SQLITE_DOCUMENT_CHUNK_INDEXES:
             conn.execute(text(_idx_ddl))
+        _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
         # Post-DDL columns on roadmap_task (for DB files created before
         # the actor column landed).
         if "roadmap_task" in tables:

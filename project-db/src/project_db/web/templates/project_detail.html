@@ -244,6 +244,26 @@
   {% endif %}
 </section>
 
+<!-- ============================ FIELD NOTE ============================
+Submit a plain-language site note.  The brain classifies it, matches it
+to a task, and creates PENDING proposals for review in section E above.
+================================================================ -->
+<section id="field-note">
+  <h3>F. Field note <small>(submit a site observation)</small></h3>
+  <p><small>
+    Type what happened on site.  ALTA will classify it, match it to a task,
+    and add a <strong>PENDING proposal</strong> for your review above.
+    Nothing is written to Monday until you accept the proposal.
+  </small></p>
+  <form method="POST" action="/projects/{{ d.project.canonical_id }}/field-note">
+    <label for="note_text">Note</label>
+    <textarea id="note_text" name="note_text" rows="4"
+              placeholder='e.g. "finished silicone in bathroom, glass door still sticking, me and Marco did 6 hours"'
+              style="width:100%"></textarea>
+    <button type="submit" style="margin-top:0.5rem">Submit note (uses OpenAI)</button>
+  </form>
+</section>
+
 <!-- ============================ GENERATE PROPOSALS ============================
 The two LLM-spending actions.  Each carries an hx-confirm dialog so the
 user has to explicitly acknowledge the token cost before each click.

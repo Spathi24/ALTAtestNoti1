@@ -1065,9 +1065,10 @@ def reject_proposal(
 
 
 # Proposal field_names the approval loop knows how to ACT on (write back).
-# A "timeline" proposal maps to a Monday timeline column.  scope/anomaly
-# proposals are advisory-only and are not in this set.
-_ACCEPTABLE_FIELDS = {"timeline"}
+# "timeline"     -> Monday timeline column (start + end dates).
+# "task_status"  -> Monday status column (Done / In Progress / Blocked).
+# scope / anomaly / new_task / scope_change proposals are advisory-only.
+_ACCEPTABLE_FIELDS = {"timeline", "task_status"}
 
 
 def accept_proposal(
@@ -1142,6 +1143,40 @@ def accept_proposal(
         value = json.loads(p.proposed_value)
     except (json.JSONDecodeError, TypeError):
         return {"ok": False, "error": "proposed_value is not valid JSON"}
+
+    # Dispatch to field-specific accept handler.
+    if p.field_name == "timeline":
+        return _accept_timeline(
+            session, p, task, value, writeback=writeback, dry_run=dry_run,
+            decided_by=decided_by,
+        )
+    if p.field_name == "task_status":
+        return _accept_task_status(
+            session, p, task, value, writeback=writeback, dry_run=dry_run,
+            decided_by=decided_by,
+        )
+    # Guard: should be unreachable because _ACCEPTABLE_FIELDS is checked above,
+    # but defend against future additions that forget to add a handler.
+    return {
+        "ok": False,
+        "error": (
+            f"accept handler for {p.field_name!r} is not yet implemented "
+            f"(field is in _ACCEPTABLE_FIELDS but has no dispatch branch)"
+        ),
+    }
+
+
+def _accept_timeline(
+    session: Session,
+    p: Any,
+    task: Any,
+    value: dict,
+    *,
+    writeback: Any,
+    dry_run: bool,
+    decided_by: str | None,
+) -> dict[str, Any]:
+    """Accept handler for field_name='timeline' (A2/A3: Monday first, mirror second)."""
     start = _parse_date(value.get("start_date"))
     end = _parse_date(value.get("end_date"))
     if start is None or end is None:
@@ -1152,34 +1187,21 @@ def accept_proposal(
                 f"start={value.get('start_date')!r} end={value.get('end_date')!r}"
             ),
         }
-
-    # Monday timeline column value shape: {"from": "...", "to": "..."}.
     field_updates = {"timeline": {"from": start.isoformat(), "to": end.isoformat()}}
-
-    # --- dry run: preview, touch nothing ---------------------------------
     if dry_run:
         return {
-            "ok": True,
-            "dry_run": True,
+            "ok": True, "dry_run": True,
             "proposal_id": str(p.canonical_id),
-            "task_title": task.title,
-            "field": "timeline",
+            "task_title": task.title, "field": "timeline",
             "would_write": field_updates,
             "note": "Nothing written. Re-run without --dry-run to apply.",
         }
-
-    # --- real accept: write to Monday FIRST ------------------------------
     if writeback is None:
         return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
-
     try:
         wrote = writeback.sync_back(task, field_updates)
     except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "error": f"write-back raised ({exc}) -- proposal left PENDING",
-        }
-
+        return {"ok": False, "error": f"write-back raised ({exc}) -- proposal left PENDING"}
     if not wrote:
         return {
             "ok": False,
@@ -1189,25 +1211,88 @@ def accept_proposal(
                 "no Monday mapping (ExternalId) exists for this task."
             ),
         }
-
-    # --- write succeeded: flip status + mirror onto the canonical Task ---
     p.status = ProposalStatus.ACCEPTED
     p.decided_at = datetime.utcnow()
     p.decided_by = decided_by
-    # Keep the canonical store honest immediately; the next Monday sync
-    # re-confirms these exact values (idempotent), so this can't drift.
     task.start_date = start
     task.end_date = end
     session.flush()
-
     return {
-        "ok": True,
-        "dry_run": False,
+        "ok": True, "dry_run": False,
         "proposal_id": str(p.canonical_id),
-        "previous_status": "PENDING",
-        "new_status": "ACCEPTED",
-        "task_title": task.title,
-        "wrote_to_monday": field_updates,
+        "previous_status": "PENDING", "new_status": "ACCEPTED",
+        "task_title": task.title, "wrote_to_monday": field_updates,
+        "decided_by": decided_by,
+    }
+
+
+def _accept_task_status(
+    session: Session,
+    p: Any,
+    task: Any,
+    value: dict,
+    *,
+    writeback: Any,
+    dry_run: bool,
+    decided_by: str | None,
+) -> dict[str, Any]:
+    """Accept handler for field_name='task_status' (A2/A3: Monday first, mirror second)."""
+    from project_db.db.models.work import TaskStatus
+
+    monday_label = value.get("monday_label")
+    canonical_status_str = value.get("status")
+    if not monday_label or not canonical_status_str:
+        return {
+            "ok": False,
+            "error": (
+                "proposed_value must have 'monday_label' and 'status' keys; "
+                f"got: {list(value.keys())}"
+            ),
+        }
+    try:
+        canonical_status = TaskStatus(canonical_status_str)
+    except ValueError:
+        return {
+            "ok": False,
+            "error": f"unknown canonical status {canonical_status_str!r}",
+        }
+
+    field_updates = {"status": {"label": monday_label}}
+
+    if dry_run:
+        return {
+            "ok": True, "dry_run": True,
+            "proposal_id": str(p.canonical_id),
+            "task_title": task.title, "field": "task_status",
+            "would_write": field_updates,
+            "note": "Nothing written. Re-run without --dry-run to apply.",
+        }
+    if writeback is None:
+        return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
+    try:
+        wrote = writeback.sync_back(task, field_updates)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"write-back raised ({exc}) -- proposal left PENDING"}
+    if not wrote:
+        return {
+            "ok": False,
+            "error": (
+                "Monday write-back returned False -- proposal left PENDING. "
+                "Likely causes: the task's board has no status column, or "
+                "no Monday mapping (ExternalId) exists for this task."
+            ),
+        }
+    p.status = ProposalStatus.ACCEPTED
+    p.decided_at = datetime.utcnow()
+    p.decided_by = decided_by
+    task.status = canonical_status
+    task.monday_status_label = monday_label
+    session.flush()
+    return {
+        "ok": True, "dry_run": False,
+        "proposal_id": str(p.canonical_id),
+        "previous_status": "PENDING", "new_status": "ACCEPTED",
+        "task_title": task.title, "wrote_to_monday": field_updates,
         "decided_by": decided_by,
     }
 
