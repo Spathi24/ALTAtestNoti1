@@ -63,6 +63,7 @@ def run_refresh(
     *,
     delta: bool = True,
     embed: bool = True,
+    poll_mail: bool = False,
     embedding_provider: Any | None = None,
     sources: list[SourceSystem] | None = None,
     log: Callable[[str], None] | None = None,
@@ -133,6 +134,26 @@ def run_refresh(
             session.rollback()
             report.steps.append(RefreshStep("embed", False, error=str(exc)))
             emit(f"[refresh] embed FAILED: {exc}")
+
+    if poll_mail:
+        try:
+            from project_db.ai.email_intake import GmailPoller, poll_mailbox
+            from project_db.ai.field_note_extraction import OpenAIFieldNoteExtractor
+            extractor = OpenAIFieldNoteExtractor()
+            poller = GmailPoller()
+            mail_batch = poll_mailbox(session, extractor, poller)
+            summary = (
+                f"{mail_batch.total_seen} seen, "
+                f"{mail_batch.processed} processed, "
+                f"{mail_batch.quarantined} quarantined, "
+                f"{mail_batch.failed} failed"
+            )
+            report.steps.append(RefreshStep("poll-mail", mail_batch.ok, summary=summary))
+            emit(f"[refresh] poll-mail: {summary}")
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            report.steps.append(RefreshStep("poll-mail", False, error=str(exc)))
+            emit(f"[refresh] poll-mail FAILED: {exc}")
 
     report.finished_at = datetime.now(timezone.utc).isoformat()
     report.duration_seconds = round(time.monotonic() - t0, 2)

@@ -345,6 +345,7 @@ def ingest_field_note(
     *,
     channel: NoteChannel = NoteChannel.CLI,
     sender_ref: str | None = None,
+    email_ingest_id: str | None = None,
 ) -> FieldNoteBatch:
     """Classify a field note, persist signals + proposals.  The entry point for
     CLI and web (A5).  Flushes but does not commit -- caller owns the transaction.
@@ -394,12 +395,19 @@ def ingest_field_note(
 
     received_at = datetime.utcnow()
 
+    eid: Any = None
+    if email_ingest_id:
+        try:
+            eid = uuid.UUID(str(email_ingest_id))
+        except (ValueError, TypeError):
+            eid = None
+
     for sig in signals:
         try:
             _process_signal(
                 session, batch, sig, pid, raw_text,
                 channel, sender_ref, received_at,
-                task_ids, task_lines,
+                task_ids, task_lines, eid,
             )
         except Exception as exc:  # noqa: BLE001
             batch.errors.append(f"signal processing error: {exc}")
@@ -419,6 +427,7 @@ def _process_signal(
     received_at: datetime,
     task_ids: list,
     task_lines: list[str],
+    email_ingest_id: Any = None,
 ) -> None:
     """Persist one signal as a FieldNote row and (if actionable) a Proposal."""
     raw_class = sig.get("classification", "other")
@@ -470,6 +479,7 @@ def _process_signal(
         hours_worked=hours,
         matched_task_id=matched_task_id,
         confidence=conf,
+        email_ingest_id=email_ingest_id,
     )
     session.add(fn)
     batch.field_notes.append(fn)

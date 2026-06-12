@@ -1545,6 +1545,127 @@ def cmd_field_note(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gmail_auth(_: argparse.Namespace) -> int:
+    """One-time OAuth browser flow to authorize Gmail access.
+
+    Uses the same GDRIVE_SA_KEY_PATH client_secret JSON as Drive auth, but
+    saves a SEPARATE token to GMAIL_TOKEN_PATH (default: secrets/gmail_token.json
+    next to the client_secret file).  Run this once; the poller refreshes silently
+    on subsequent runs.
+
+    N7: this is outbound-only consent.  Nothing listens on the internet.
+    """
+    import json
+    import os
+
+    from project_db.ai.email_intake import GMAIL_SCOPES
+
+    client_secret_path = os.environ.get("GDRIVE_SA_KEY_PATH")
+    if not client_secret_path:
+        print("FAIL: GDRIVE_SA_KEY_PATH is not set in your .env file.", file=sys.stderr)
+        return 2
+
+    if not os.path.exists(client_secret_path):
+        print(f"FAIL: File not found: {client_secret_path}", file=sys.stderr)
+        return 2
+
+    with open(client_secret_path) as fh:
+        cred_data = json.load(fh)
+
+    if cred_data.get("type") == "service_account":
+        print("This credential is a service account -- no browser auth needed.")
+        print("Service accounts do not support Gmail user-data OAuth.")
+        return 2
+
+    if "installed" not in cred_data and "web" not in cred_data:
+        print(f"FAIL: Unrecognized credential format in {client_secret_path}", file=sys.stderr)
+        return 2
+
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+    except ImportError:
+        print(
+            "FAIL: google-auth-oauthlib is not installed.\n"
+            "Run: pip install google-auth-oauthlib",
+            file=sys.stderr,
+        )
+        return 2
+
+    token_path = os.environ.get("GMAIL_TOKEN_PATH") or os.path.join(
+        os.path.dirname(os.path.abspath(client_secret_path)), "gmail_token.json"
+    )
+
+    print("Opening browser for Gmail authorization...")
+    print("Sign in with the Google account that OWNS the fieldnotes mailbox.\n")
+    print(f"Scopes requested: {', '.join(GMAIL_SCOPES)}\n")
+
+    flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, GMAIL_SCOPES)
+    creds = flow.run_local_server(port=0, open_browser=True)
+
+    with open(token_path, "w") as fh:
+        fh.write(creds.to_json())
+
+    print(f"\nOK: Gmail token saved to {token_path}")
+    print("You can now run: project_db poll-mail")
+    return 0
+
+
+def cmd_poll_mail(args: argparse.Namespace) -> int:
+    """Poll the Gmail fieldnotes mailbox and ingest any new notes as Proposals.
+
+    Runs once and exits (not a daemon).  Messages from unknown senders are
+    QUARANTINED (not processed); known senders must be in the Worker roster.
+    Message-ID dedup: safe to re-run -- duplicate messages are skipped.
+
+    N7: outbound-only poller; nothing listens on the public internet.
+    A1: email content produces PENDING Proposals only, never direct writes.
+    """
+    from project_db.ai.email_intake import GmailPoller, poll_mailbox
+    from project_db.ai.field_note_extraction import (
+        FieldNoteExtractorError,
+        OpenAIFieldNoteExtractor,
+    )
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        extractor = OpenAIFieldNoteExtractor()
+    except FieldNoteExtractorError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        mailbox = os.environ.get("GMAIL_MAILBOX_ADDRESS", "")
+        poller = GmailPoller(mailbox_address=mailbox or None)
+    except RuntimeError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        print("Run: project_db gmail-auth  to complete OAuth setup.", file=sys.stderr)
+        return 2
+
+    print(f"[poll-mail] mailbox: {mailbox or '(all unprocessed)'}")
+    print("[poll-mail] polling...")
+
+    with session_scope() as s:
+        batch = poll_mailbox(s, extractor, poller)
+
+    print(
+        f"[poll-mail] done: {batch.total_seen} seen, "
+        f"{batch.processed} processed, "
+        f"{batch.quarantined} quarantined, "
+        f"{batch.duplicate} duplicate, "
+        f"{batch.failed} failed"
+    )
+    for err in batch.errors:
+        print(f"  WARN: {err}")
+    total_proposals = sum(len(fb.proposals) for fb in batch.field_note_batches)
+    if total_proposals:
+        print(f"  -> {total_proposals} proposal(s) created (PENDING review)")
+        print("  Review with: project_db proposals list --status pending")
+    return 0 if batch.ok else 1
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     """Audit canonical-data integrity (read-only).
 
@@ -2397,6 +2518,20 @@ def build_parser() -> argparse.ArgumentParser:
     fn.add_argument("project", help="Project name fragment or canonical UUID")
     fn.add_argument("note", nargs="+", help="The field note text (quoted or multiple words)")
     fn.set_defaults(func=cmd_field_note)
+
+    gauth = sub.add_parser(
+        "gmail-auth",
+        help="One-time OAuth browser flow to authorize Gmail access (fieldnotes mailbox). "
+             "Run once; subsequent poll-mail runs refresh silently.",
+    )
+    gauth.set_defaults(func=cmd_gmail_auth)
+
+    poll = sub.add_parser(
+        "poll-mail",
+        help="Poll the Gmail fieldnotes mailbox; ingest new notes as PENDING Proposals. "
+             "Safe to re-run (Message-ID dedup). Needs OPENAI_API_KEY + gmail-auth done.",
+    )
+    poll.set_defaults(func=cmd_poll_mail)
 
     serve = sub.add_parser(
         "serve",

@@ -12,6 +12,7 @@ from project_db.db.models.core import Client, Property, User, Vendor
 from project_db.db.models.crm import Deal, Lead, LeadStage
 from project_db.db.models.docs import Document, DocumentText
 from project_db.db.models.field_notes import FieldNote, NoteChannel, NoteClass
+from project_db.db.models.workers import EmailIngest, Worker
 from project_db.db.models.finance import (
     FINANCIAL_DIRECTIONS,
     FINANCIAL_DOC_ROLES,
@@ -54,9 +55,11 @@ __all__ = [
     "DocumentFinancialStatus",
     "DocumentText",
     "ExternalId",
+    "EmailIngest",
     "FieldNote",
     "NoteChannel",
     "NoteClass",
+    "Worker",
     "FINANCIAL_DIRECTIONS",
     "FINANCIAL_DOC_ROLES",
     "FINANCIAL_RECORD_KINDS",

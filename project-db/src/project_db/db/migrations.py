@@ -209,10 +209,58 @@ CREATE TABLE field_note (
     hours_worked NUMERIC(8, 2),
     matched_task_id TEXT,
     confidence FLOAT,
+    email_ingest_id TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
-    FOREIGN KEY (matched_task_id) REFERENCES task(canonical_id)
+    FOREIGN KEY (matched_task_id) REFERENCES task(canonical_id),
+    FOREIGN KEY (email_ingest_id) REFERENCES email_ingest(canonical_id)
 )
 """
+
+# Columns added to field_note after the initial DDL shipped.
+SQLITE_FIELD_NOTE_COLUMNS: dict[str, str] = {
+    "email_ingest_id": "TEXT",
+}
+
+SQLITE_WORKER_DDL = """
+CREATE TABLE worker (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    display_name VARCHAR NOT NULL,
+    email VARCHAR,
+    phone_gateway_email VARCHAR,
+    default_project_id TEXT,
+    active BOOLEAN NOT NULL DEFAULT 1,
+    FOREIGN KEY (default_project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_EMAIL_INGEST_DDL = """
+CREATE TABLE email_ingest (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    gmail_message_id VARCHAR NOT NULL,
+    rfc_message_id VARCHAR,
+    thread_id VARCHAR,
+    sender_email VARCHAR,
+    subject VARCHAR,
+    received_at DATETIME NOT NULL,
+    processed_at DATETIME,
+    status VARCHAR NOT NULL DEFAULT 'pending',
+    failure_reason TEXT,
+    project_id TEXT,
+    attachment_refs_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_EMAIL_INGEST_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_email_ingest_gmail_message_id "
+    "ON email_ingest (gmail_message_id)",
+)
 
 
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
@@ -261,7 +309,16 @@ def ensure_sqlite_schema(engine) -> None:
         )
         for _idx_ddl in SQLITE_DOCUMENT_CHUNK_INDEXES:
             conn.execute(text(_idx_ddl))
+        # worker must exist before email_ingest (email_ingest has no FK to worker,
+        # but both must exist before field_note references email_ingest).
+        _create_table_if_missing(conn, tables, "worker", SQLITE_WORKER_DDL)
+        _create_table_if_missing(conn, tables, "email_ingest", SQLITE_EMAIL_INGEST_DDL)
+        for _idx_ddl in SQLITE_EMAIL_INGEST_INDEXES:
+            conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
+        # Post-DDL columns on field_note (email_ingest_id added after initial DDL).
+        if "field_note" in tables:
+            _add_missing_columns(conn, inspector, "field_note", SQLITE_FIELD_NOTE_COLUMNS)
         # Post-DDL columns on roadmap_task (for DB files created before
         # the actor column landed).
         if "roadmap_task" in tables:

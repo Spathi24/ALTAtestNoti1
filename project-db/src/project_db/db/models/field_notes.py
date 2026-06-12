@@ -64,3 +64,9 @@ class FieldNote(Base, CanonicalMixin):
         nullable=True,
     )
     confidence = Column(Float, nullable=True)
+    # Nullable: only set when this note arrived via email (Win 2).
+    email_ingest_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("email_ingest.canonical_id"),
+        nullable=True,
+    )
