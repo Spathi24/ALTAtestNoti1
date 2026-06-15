@@ -43,6 +43,7 @@ from sqlalchemy.orm import Session
 
 from project_db.ai.field_note_extraction import (
     FieldNoteBatch,
+    _IMAGE_EXTS,
     ingest_field_note,
 )
 from project_db.db.models import EmailIngest, NoteChannel, Project, Worker
@@ -612,10 +613,14 @@ def _process_one(
     project_id = _resolve_project_id(session, to_address=to_raw, worker=worker)
     ingest.project_id = _uuid_or_none(project_id)
 
-    # ----- Attachments (Win 3 prep) -----
+    # ----- Attachments (Win 3: photos through the same pipe) -----
     attachment_paths = _store_attachment(payload, str(ingest.canonical_id), attachment_dir)
     if attachment_paths:
         ingest.attachment_refs_json = json.dumps(attachment_paths)
+    image_paths = [
+        p for p in attachment_paths
+        if os.path.splitext(p)[1].lower() in _IMAGE_EXTS
+    ] or None
 
     # Commit the ingest row with known sender BEFORE extraction so crash is idempotent.
     session.flush()
@@ -623,7 +628,8 @@ def _process_one(
 
     # ----- Body extraction -----
     body_text = _extract_body_text(payload).strip()
-    if not body_text:
+    if not body_text and not image_paths:
+        # Truly empty: no text AND no photos -> fail.
         ingest.status = "failed"
         ingest.failure_reason = "empty body"
         ingest.processed_at = datetime.utcnow()
@@ -653,6 +659,7 @@ def _process_one(
         sender_ref=sender_email,
         email_ingest_id=str(ingest.canonical_id),
         received_at=received_at,
+        image_paths=image_paths,
         embedding_provider=embedding_provider,
     )
     batch.field_note_batches.append(fn_batch)

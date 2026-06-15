@@ -52,6 +52,48 @@ logger = logging.getLogger(__name__)
 FIELD_NOTE_PROMPT_VERSION = "field-note-v1"
 
 # ---------------------------------------------------------------------------
+# Image helpers (Win 3 -- photos through the same pipe)
+# ---------------------------------------------------------------------------
+
+_IMAGE_EXTS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+_MIME_BY_EXT: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _load_image_b64(path: str) -> str | None:
+    """Read an image file and return a data-URL string, or None if unsupported/oversized."""
+    import base64 as _base64
+
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in _IMAGE_EXTS:
+        logger.debug("[field-note] %s is not a supported image type -- skipped", path)
+        return None
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        logger.warning("[field-note] cannot stat image %s -- skipped", path)
+        return None
+    if size > _MAX_IMAGE_BYTES:
+        logger.warning(
+            "[field-note] image %s (%d bytes) exceeds 10 MB limit -- skipped", path, size
+        )
+        return None
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        mime = _MIME_BY_EXT.get(ext, "image/jpeg")
+        return f"data:{mime};base64,{_base64.b64encode(data).decode()}"
+    except OSError as exc:
+        logger.warning("[field-note] cannot read image %s: %s -- skipped", path, exc)
+        return None
+
+# ---------------------------------------------------------------------------
 # Strict JSON schema for structured outputs
 # ---------------------------------------------------------------------------
 
@@ -155,8 +197,8 @@ FIELD_NOTE_SCHEMA: dict[str, Any] = {
 }
 
 
-def _system_prompt() -> str:
-    return (
+def _system_prompt(*, has_images: bool = False) -> str:
+    base = (
         "You are a construction-site note analyst.  A field worker or PM sends "
         "a short plain-language report of what happened on site.  Your job:\n\n"
         "1. Read the note carefully.\n"
@@ -197,6 +239,21 @@ def _system_prompt() -> str:
         "at processing time -- use it to judge how recent the note is and whether "
         "a mentioned date is in the past or future."
     )
+    if has_images:
+        base += (
+            "\n- SITE PHOTOS: One or more job-site photos are attached alongside "
+            "the text note.  Treat the photo(s) as visual evidence of the SAME "
+            "field report -- analyse them together with the text to understand "
+            "what work was done, what materials are present, and the state of the "
+            "site.  Visible completed work supports task_done; visible materials "
+            "or ongoing activity supports task_progress.  If the FIELD NOTE is "
+            "empty, derive signals from the photo(s) alone.  For the quoted_excerpt "
+            "field, use a brief plain-English description of what the photo shows "
+            "(e.g. 'photo: silicone joint completed along window frame') -- this "
+            "is the only case where quoted_excerpt does not come from text.  "
+            "Never claim to see something not visible in the photo."
+        )
+    return base
 
 
 def _render_note_timestamp(ts: datetime) -> str:
@@ -252,6 +309,7 @@ class FieldNoteExtractor(ABC):
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
         note_timestamp: datetime | None = None,
+        image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return a dict conforming to FIELD_NOTE_SCHEMA's schema.
 
@@ -262,6 +320,12 @@ class FieldNoteExtractor(ABC):
         email).  When provided it is rendered as a NOTE SENT header in the
         user message so the model can resolve relative date expressions
         ('yesterday', 'next Friday') into concrete ISO dates.
+
+        ``image_paths`` are local file paths to job-site photos attached to
+        the same field report.  When provided the extractor passes them as
+        base64 image_url blocks alongside the text (Win 3).  The same
+        FIELD_NOTE_SCHEMA is used; for photo-only notes the model derives
+        signals from the images and uses a photo description as quoted_excerpt.
         """
         raise NotImplementedError
 
@@ -299,6 +363,7 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
         note_timestamp: datetime | None = None,
+        image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         task_block = "\n".join(
             f"[{i}] {title}" for i, title in enumerate(task_lines)
@@ -310,7 +375,7 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         )
         excerpt_block = _render_context_excerpts(context_excerpts)
         timestamp_block = _render_note_timestamp(note_timestamp) if note_timestamp else ""
-        user = (
+        user_text = (
             f"{timestamp_block}"
             f"TASK LIST (0-based index):\n{task_block}\n\n"
             f"VALID STATUS LABELS (use one of these EXACTLY for proposed_status):\n"
@@ -318,13 +383,32 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
             f"{excerpt_block}"
             f"FIELD NOTE:\n{note_text}"
         )
+
+        # Build multimodal content when photos are attached (Win 3).
+        loaded_images: list[str] = []
+        if image_paths:
+            for p in image_paths:
+                url = _load_image_b64(p)
+                if url:
+                    loaded_images.append(url)
+
+        if loaded_images:
+            user_content: Any = [{"type": "text", "text": user_text}]
+            for url in loaded_images:
+                # detail="low" uses ~85 tokens/image -- budget-aware.
+                user_content.append(
+                    {"type": "image_url", "image_url": {"url": url, "detail": "low"}}
+                )
+        else:
+            user_content = user_text
+
         try:
             resp = self._client.chat.completions.create(
                 model=self.model,
                 temperature=0,
                 messages=[
-                    {"role": "system", "content": _system_prompt()},
-                    {"role": "user", "content": user},
+                    {"role": "system", "content": _system_prompt(has_images=bool(loaded_images))},
+                    {"role": "user", "content": user_content},
                 ],
                 response_format={"type": "json_schema", "json_schema": FIELD_NOTE_SCHEMA},
             )
@@ -352,6 +436,8 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         self.context_calls: list[list[str]] = []
         # Records the note_timestamp each call received, for timestamp threading tests.
         self.timestamp_calls: list[datetime | None] = []
+        # Records the image_paths each call received, for Win 3 photo tests.
+        self.image_calls: list[list[str]] = []
 
     def extract(
         self,
@@ -361,10 +447,12 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
         note_timestamp: datetime | None = None,
+        image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         self.calls.append((note_text, task_lines))
         self.context_calls.append(list(context_excerpts))
         self.timestamp_calls.append(note_timestamp)
+        self.image_calls.append(list(image_paths or []))
         if self._idx < len(self._responses):
             r = self._responses[self._idx]
             self._idx += 1
@@ -468,6 +556,7 @@ def ingest_field_note(
     sender_ref: str | None = None,
     email_ingest_id: str | None = None,
     received_at: datetime | None = None,
+    image_paths: list[str] | None = None,
     embedding_provider: Any | None = None,
     rag_top_k: int = 6,
     rag_min_similarity: float = 0.25,
@@ -498,7 +587,7 @@ def ingest_field_note(
         batch.skipped_reason = f"project {pid} not found"
         return batch
 
-    if not raw_text or not raw_text.strip():
+    if (not raw_text or not raw_text.strip()) and not image_paths:
         batch.skipped_reason = "empty note"
         return batch
 
@@ -539,7 +628,7 @@ def ingest_field_note(
     # Used both for FieldNote.received_at and as temporal context for the LLM.
     note_received_at = received_at or datetime.utcnow()
 
-    # One structured-output call: classify + match tasks.
+    # One structured-output call: classify + match tasks (+ photos when provided).
     try:
         result = extractor.extract(
             note_text=raw_text.strip(),
@@ -547,6 +636,7 @@ def ingest_field_note(
             status_labels=known_labels,
             context_excerpts=context_excerpts,
             note_timestamp=note_received_at,
+            image_paths=image_paths or None,
         )
     except FieldNoteExtractorError as exc:
         batch.errors.append(f"extraction failed: {exc}")

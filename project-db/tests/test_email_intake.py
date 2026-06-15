@@ -1,4 +1,4 @@
-"""Tests for Win 2 of the field-note MVP: Gmail API email intake.
+"""Tests for Win 2 and Win 3 of the field-note MVP: Gmail API email intake.
 
 Coverage:
   - Worker model creation (email + phone_gateway_email + default_project_id)
@@ -18,6 +18,7 @@ Coverage:
   - poll_mailbox: extractor returns no signals -> skipped (still processed row)
   - ingest_field_note: email_ingest_id set on FieldNote rows
   - MockGmailPoller: list_unprocessed / get_message / apply_label / ensure_labels
+  - Win 3: image attachment paths passed to extractor; photo-only email proceeds
 """
 from __future__ import annotations
 
@@ -117,6 +118,81 @@ def _make_multipart_message(
                     "body": {"data": _b64(body)},
                     "parts": [],
                     "filename": "",
+                }
+            ],
+        },
+    }
+
+
+def _make_message_with_image(
+    gmail_id: str,
+    sender: str,
+    to: str,
+    body: str,
+    *,
+    filename: str = "site_photo.jpg",
+    image_bytes: bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF",
+) -> dict:
+    """A multipart/mixed message with a text body and one image attachment."""
+    img_b64 = base64.urlsafe_b64encode(image_bytes).decode()
+    return {
+        "id": gmail_id,
+        "threadId": "timg",
+        "internalDate": "1700000002000",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "headers": [
+                {"name": "From", "value": sender},
+                {"name": "To", "value": to},
+                {"name": "Subject", "value": "Photo from site"},
+            ],
+            "body": {"data": ""},
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": {"data": _b64(body)},
+                    "parts": [],
+                    "filename": "",
+                },
+                {
+                    "mimeType": "image/jpeg",
+                    "filename": filename,
+                    "body": {"data": img_b64},
+                    "parts": [],
+                },
+            ],
+        },
+    }
+
+
+def _make_photo_only_message(
+    gmail_id: str,
+    sender: str,
+    to: str,
+    *,
+    filename: str = "site_photo.jpg",
+    image_bytes: bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF",
+) -> dict:
+    """A multipart/mixed message with ONLY an image attachment -- no text body."""
+    img_b64 = base64.urlsafe_b64encode(image_bytes).decode()
+    return {
+        "id": gmail_id,
+        "threadId": "tphoto",
+        "internalDate": "1700000003000",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "headers": [
+                {"name": "From", "value": sender},
+                {"name": "To", "value": to},
+                {"name": "Subject", "value": "Photo"},
+            ],
+            "body": {"data": ""},
+            "parts": [
+                {
+                    "mimeType": "image/jpeg",
+                    "filename": filename,
+                    "body": {"data": img_b64},
+                    "parts": [],
                 }
             ],
         },
@@ -916,3 +992,107 @@ def test_email_timestamp_flows_to_extractor_and_field_note(
     assert fn_delta < 1.0, (
         f"Expected FieldNote.received_at ~{expected_ts}, got {fn_rows[0].received_at}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Win 3 -- Photos through the same pipe
+# ---------------------------------------------------------------------------
+
+
+def test_poll_mailbox_image_attachment_paths_passed_to_extractor(
+    session, rockland, task, worker_marco, tmp_path
+):
+    """An email with a JPEG attachment: the saved path is passed to the extractor."""
+    msg = _make_message_with_image(
+        "img001",
+        "marco@example.com",
+        "fieldnotes+rockland@company.com",
+        "finished the silicone, see photo",
+    )
+    poller = MockGmailPoller([msg])
+    extractor = _simple_extractor_done(task_index=0)
+
+    batch = poll_mailbox(session, extractor, poller, attachment_dir=str(tmp_path))
+
+    assert batch.processed == 1
+
+    # Extractor received exactly one image path, ending with .jpg
+    assert len(extractor.image_calls) == 1
+    img_paths = extractor.image_calls[0]
+    assert len(img_paths) == 1
+    assert img_paths[0].endswith(".jpg") or img_paths[0].endswith(".jpeg")
+
+    # EmailIngest.attachment_refs_json was set
+    ingest = session.query(EmailIngest).filter_by(gmail_message_id="img001").one()
+    assert ingest.attachment_refs_json is not None
+    refs = json.loads(ingest.attachment_refs_json)
+    assert len(refs) == 1
+
+
+def test_poll_mailbox_photo_only_email_proceeds(
+    session, rockland, task, worker_marco, tmp_path
+):
+    """An email with NO text body but a JPEG attachment is processed (not failed)."""
+    msg = _make_photo_only_message(
+        "photo001",
+        "marco@example.com",
+        "fieldnotes+rockland@company.com",
+    )
+    poller = MockGmailPoller([msg])
+    extractor = _simple_extractor_done(task_index=0)
+
+    batch = poll_mailbox(session, extractor, poller, attachment_dir=str(tmp_path))
+
+    # Should be processed, not failed -- photo-only is valid (Win 3)
+    assert batch.processed == 1
+    assert batch.failed == 0
+
+    ingest = session.query(EmailIngest).filter_by(gmail_message_id="photo001").one()
+    assert ingest.status == "processed"
+
+    # Extractor was called with an image path
+    assert len(extractor.image_calls) == 1
+    assert len(extractor.image_calls[0]) == 1
+
+
+def test_poll_mailbox_non_image_attachment_not_passed_as_image(
+    session, rockland, task, worker_marco, tmp_path
+):
+    """A PDF attachment is stored on disk but NOT passed as an image to the extractor."""
+    img_b64 = base64.urlsafe_b64encode(b"%PDF-1.4 fake").decode()
+    msg = {
+        "id": "pdf001",
+        "threadId": "tpdf",
+        "internalDate": "1700000004000",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "headers": [
+                {"name": "From", "value": "marco@example.com"},
+                {"name": "To", "value": "fieldnotes+rockland@company.com"},
+                {"name": "Subject", "value": "Invoice"},
+            ],
+            "body": {"data": ""},
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": {"data": _b64("sent the invoice, see PDF")},
+                    "parts": [],
+                    "filename": "",
+                },
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "invoice.pdf",
+                    "body": {"data": img_b64},
+                    "parts": [],
+                },
+            ],
+        },
+    }
+    poller = MockGmailPoller([msg])
+    extractor = _simple_extractor_done(task_index=0)
+
+    batch = poll_mailbox(session, extractor, poller, attachment_dir=str(tmp_path))
+
+    assert batch.processed == 1
+    # PDF not passed as image
+    assert extractor.image_calls == [[]]

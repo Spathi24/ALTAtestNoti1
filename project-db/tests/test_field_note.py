@@ -1,4 +1,4 @@
-"""Tests for Win 1 of the field-note MVP.
+"""Tests for Win 1 and Win 3 of the field-note MVP.
 
 Coverage:
   - FieldNote model creation + SQLite round-trip
@@ -15,6 +15,8 @@ Coverage:
   - accept_proposal: task_status rejects unknown canonical status
   - accept_proposal: task_status mirrors onto task.status on success
   - _ACCEPTABLE_FIELDS now includes task_status
+  - Win 3 photos: image_paths flows to extractor; photo-only notes proceed;
+    _load_image_b64 size guard and extension filter
 """
 from __future__ import annotations
 
@@ -29,6 +31,8 @@ from project_db.ai.field_note_extraction import (
     MockFieldNoteExtractor,
     NoteChannel,
     NoteClass,
+    _IMAGE_EXTS,
+    _load_image_b64,
     ingest_field_note,
 )
 from project_db.ai.proposals import _ACCEPTABLE_FIELDS, accept_proposal
@@ -830,3 +834,98 @@ class TestFieldNoteSubtaskWindow:
         batch = ingest_field_note(session, ex, project.canonical_id, "Sub A mid-July")
         assert len(batch.proposals) == 1
         assert not any("outside parent" in w for w in batch.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Win 3 -- Photos through the same pipe
+# ---------------------------------------------------------------------------
+
+
+class TestPhotoIngestion:
+    """image_paths param threads from ingest_field_note to the extractor (Win 3)."""
+
+    def test_image_paths_passed_to_extractor(self, session, project, tasks):
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        ingest_field_note(
+            session, ex, project.canonical_id,
+            "see attached photo",
+            image_paths=["/fake/site_photo.jpg"],
+        )
+        assert ex.image_calls == [["/fake/site_photo.jpg"]]
+
+    def test_multiple_image_paths_all_passed(self, session, project, tasks):
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        paths = ["/fake/a.jpg", "/fake/b.png", "/fake/c.jpeg"]
+        ingest_field_note(
+            session, ex, project.canonical_id,
+            "three photos",
+            image_paths=paths,
+        )
+        assert ex.image_calls == [paths]
+
+    def test_photo_only_note_proceeds_to_extractor(self, session, project, tasks):
+        """empty text + image_paths -> extractor is called (not short-circuited)."""
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id,
+            "",  # no text body
+            image_paths=["/fake/photo.jpg"],
+        )
+        # extractor was called -- not skipped
+        assert len(ex.calls) == 1
+        assert batch.skipped_reason != "empty note"
+
+    def test_empty_text_no_images_still_skips(self, session, project, tasks):
+        """empty text with no images is still rejected (existing behaviour)."""
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id,
+            "   ",
+            image_paths=None,
+        )
+        assert batch.skipped_reason == "empty note"
+        assert ex.calls == []
+
+    def test_no_image_paths_extractor_gets_empty_list(self, session, project, tasks):
+        """When image_paths is None, extractor.image_calls entry is an empty list."""
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        ingest_field_note(session, ex, project.canonical_id, "some text")
+        assert ex.image_calls == [[]]
+
+
+class TestLoadImageB64:
+    """Unit tests for the _load_image_b64 helper."""
+
+    def test_unsupported_extension_returns_none(self):
+        assert _load_image_b64("/tmp/document.pdf") is None
+
+    def test_txt_extension_returns_none(self):
+        assert _load_image_b64("/tmp/note.txt") is None
+
+    def test_valid_jpeg_returns_data_url(self, tmp_path):
+        img = tmp_path / "photo.jpg"
+        img.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 10)  # minimal JPEG header bytes
+        result = _load_image_b64(str(img))
+        assert result is not None
+        assert result.startswith("data:image/jpeg;base64,")
+
+    def test_valid_png_returns_data_url(self, tmp_path):
+        img = tmp_path / "shot.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4)
+        result = _load_image_b64(str(img))
+        assert result is not None
+        assert result.startswith("data:image/png;base64,")
+
+    def test_size_too_large_returns_none(self, tmp_path, monkeypatch):
+        img = tmp_path / "big.jpg"
+        img.write_bytes(b"\xff\xd8\xff")
+        import os
+        monkeypatch.setattr(os.path, "getsize", lambda _: 11 * 1024 * 1024)
+        assert _load_image_b64(str(img)) is None
+
+    def test_missing_file_returns_none(self):
+        assert _load_image_b64("/nonexistent/path/photo.jpg") is None
+
+    def test_image_exts_constant_covers_common_formats(self):
+        for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+            assert ext in _IMAGE_EXTS
