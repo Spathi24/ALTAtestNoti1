@@ -61,7 +61,7 @@ from project_db.db.models import (
 
 logger = logging.getLogger(__name__)
 
-FIELD_NOTE_PROMPT_VERSION = "field-note-v2"
+FIELD_NOTE_PROMPT_VERSION = "field-note-v3"
 
 # ---------------------------------------------------------------------------
 # Image helpers (Win 3 -- photos through the same pipe)
@@ -317,6 +317,7 @@ FIELD_NOTE_SCHEMA: dict[str, Any] = {
                     "additionalProperties": False,
                     "required": [
                         "classification", "quoted_excerpt", "task_index",
+                        "parent_task_index",
                         "proposed_status", "proposed_start_date",
                         "proposed_end_date", "new_task_title",
                         "workers", "hours_worked", "confidence", "reasoning",
@@ -353,6 +354,15 @@ FIELD_NOTE_SCHEMA: dict[str, Any] = {
                                 "0-based index into the supplied TASK LIST.  "
                                 "null if no specific task matches (e.g. new_task, "
                                 "scope_change, or genuinely ambiguous)."
+                            ),
+                        },
+                        "parent_task_index": {
+                            "type": ["integer", "null"],
+                            "description": (
+                                "For new_task signals only: the 0-based index of the "
+                                "existing task this new work should be created under as "
+                                "a sub-step.  null if the new task is genuinely "
+                                "top-level work, or if classification is not new_task."
                             ),
                         },
                         "proposed_status": {
@@ -419,6 +429,11 @@ def _system_prompt(*, has_images: bool = False) -> str:
         "note implies a schedule change; null otherwise.\n"
         "   - new_task_title: a short imperative title only for new_task; null "
         "otherwise.\n"
+        "   - parent_task_index: for new_task signals only -- set to the 0-based "
+        "index of the existing task this new work belongs under as a sub-step "
+        "(e.g. a repair step inside a larger 'Flooring' task).  null when the "
+        "new task is genuinely top-level work with no clear parent in the list, "
+        "or when classification is not new_task.\n"
         "   - workers / hours_worked: fill only when the note mentions them.\n"
         "   - confidence: your confidence in this signal [0.0, 1.0].\n"
         "   - reasoning: 1-2 sentences explaining WHY you chose this classification "
@@ -1155,6 +1170,10 @@ def _maybe_create_proposal(
         pv_new: dict[str, Any] = {"title": title, "evidence": quoted}
         if reasoning:
             pv_new["reasoning"] = reasoning
+        # Resolve parent_task_index → UUID (same bounds-check as task_index).
+        pti = sig.get("parent_task_index")
+        if isinstance(pti, int) and 0 <= pti < len(task_ids):
+            pv_new["parent_task_id"] = str(task_ids[pti])
         proposed_value = json.dumps(pv_new)
         p = Proposal(
             entity_type="Project",

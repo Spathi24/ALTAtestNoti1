@@ -1089,3 +1089,102 @@ class TestRenderTaskBlock:
         assert len(ex.block_calls) == 1
         assert ex.block_calls[0] is not None
         assert "-- UPCOMING" in ex.block_calls[0]
+
+
+# ---------------------------------------------------------------------------
+# parent_task_index resolution
+# ---------------------------------------------------------------------------
+
+
+class TestParentTaskIndex:
+    """parent_task_index on new_task signals → parent_task_id in proposed_value."""
+
+    def _new_task_signal(self, parent_task_index=None) -> dict:
+        return {
+            "classification": "new_task",
+            "quoted_excerpt": "we also need to patch the ceiling",
+            "task_index": None,
+            "parent_task_index": parent_task_index,
+            "proposed_status": None,
+            "proposed_start_date": None,
+            "proposed_end_date": None,
+            "new_task_title": "Patch ceiling",
+            "workers": None,
+            "hours_worked": None,
+            "confidence": 0.9,
+        }
+
+    def test_in_range_adds_parent_task_id(self, session, project):
+        """parent_task_index=0 on a single-task project resolves to that task's UUID."""
+        parent = Task(
+            title="Drywall work", status=TaskStatus.TODO, project_id=project.canonical_id
+        )
+        session.add(parent)
+        session.commit()
+
+        ex = MockFieldNoteExtractor(responses=[{
+            "signals": [self._new_task_signal(parent_task_index=0)]
+        }])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "we also need to patch the ceiling"
+        )
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "parent_task_id" in pv
+        assert pv["parent_task_id"] == str(parent.canonical_id)
+
+    def test_null_omits_parent_task_id(self, session, project):
+        """parent_task_index=null → no parent_task_id key in proposed_value."""
+        session.add(Task(
+            title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id
+        ))
+        session.commit()
+
+        ex = MockFieldNoteExtractor(responses=[{
+            "signals": [self._new_task_signal(parent_task_index=None)]
+        }])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "we also need to patch the ceiling"
+        )
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "parent_task_id" not in pv
+
+    def test_out_of_range_silently_ignored(self, session, project):
+        """Out-of-range parent_task_index is silently dropped (no error, no parent key)."""
+        session.add(Task(
+            title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id
+        ))
+        session.commit()
+
+        ex = MockFieldNoteExtractor(responses=[{
+            "signals": [self._new_task_signal(parent_task_index=999)]
+        }])
+        batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "parent_task_id" not in pv
+        assert len(batch.errors) == 0
+
+    def test_negative_index_silently_ignored(self, session, project):
+        """Negative parent_task_index is out-of-bounds and silently dropped."""
+        session.add(Task(
+            title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id
+        ))
+        session.commit()
+
+        ex = MockFieldNoteExtractor(responses=[{
+            "signals": [self._new_task_signal(parent_task_index=-1)]
+        }])
+        batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "parent_task_id" not in pv
