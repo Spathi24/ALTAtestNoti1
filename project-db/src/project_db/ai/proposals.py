@@ -742,15 +742,22 @@ def _persist_scope_items(
         return
 
     doc_id_by_name = {d["name"]: d["document_id"] for d in ctx.document_texts}
+    # All titles (incl. subitems) -- used only to detect that *something* with
+    # this name already exists.
     existing_titles = {
         (t.get("title") or "").strip().lower() for t in ctx.tasks
     }
-    # lower-case title -> original-case title, so a collision can name the
-    # real parent task with its display casing.
-    existing_title_display = {
-        (t.get("title") or "").strip().lower(): (t.get("title") or "").strip()
-        for t in ctx.tasks
-    }
+    # lower-title -> list of TOP-LEVEL tasks with that title.  Only a top-level
+    # task can host a subitem (Monday forbids sub-subitems), and a title may map
+    # to >1 top-level task (a multi-address project has one "Structural
+    # Demolition" per building) -- an AMBIGUOUS parent we must not guess at.
+    top_level_by_title: dict[str, list[dict[str, Any]]] = {}
+    for _t in ctx.tasks:
+        if _t.get("is_subitem"):
+            continue
+        _key = (_t.get("title") or "").strip().lower()
+        if _key:
+            top_level_by_title.setdefault(_key, []).append(_t)
 
     # A scope run replaces the project's prior scope analysis.
     prior = (
@@ -802,15 +809,38 @@ def _persist_scope_items(
         # under that task and flag it for the reviewer.  (Was a hard reject
         # before 2026-06-15 -- it silently buried real specific gaps.)
         parent_task_title = ""
+        parent_task_id = ""
         child_title = suggested
         if suggested and suggested.lower() in existing_titles:
-            parent_task_title = existing_title_display.get(suggested.lower(), suggested)
+            top_matches = top_level_by_title.get(suggested.lower(), [])
             child_title = scope_item  # the specific work, not the colliding bucket
-            batch.warnings.append(
-                f"scope item {scope_item!r}: a task titled {suggested!r} already "
-                f"exists -- proposing this as a SUBITEM under it; verify the "
-                f"hierarchy before accepting"
-            )
+            if len(top_matches) == 1:
+                # Unambiguous parent -- nest under it and pin the exact id so
+                # accept never has to re-match by (possibly duplicated) title.
+                parent = top_matches[0]
+                parent_task_title = (parent.get("title") or "").strip()
+                parent_task_id = str(parent.get("canonical_id") or "")
+                batch.warnings.append(
+                    f"scope item {scope_item!r}: a task titled {suggested!r} "
+                    f"already exists -- proposing this as a SUBITEM under it; "
+                    f"verify the hierarchy before accepting"
+                )
+            elif len(top_matches) > 1:
+                # >1 top-level task shares this title -- cannot pick a parent
+                # safely.  Propose top-level and flag for manual re-parenting.
+                batch.warnings.append(
+                    f"scope item {scope_item!r}: {len(top_matches)} top-level "
+                    f"tasks are named {suggested!r} -- ambiguous parent; "
+                    f"proposing as a top-level item, re-parent in Monday if needed"
+                )
+            else:
+                # The only same-named task(s) are subitems -- a subitem cannot
+                # host another.  Propose top-level.
+                batch.warnings.append(
+                    f"scope item {scope_item!r}: a SUBITEM named {suggested!r} "
+                    f"exists but a subitem cannot host another -- proposing as a "
+                    f"top-level item"
+                )
 
         source_doc_ids: list[str] = []
         matched_id = _match_source_document(source_doc_name, doc_id_by_name)
@@ -840,6 +870,7 @@ def _persist_scope_items(
                 "scope_item": scope_item,
                 "suggested_task_title": child_title,
                 "parent_task_title": parent_task_title,
+                "parent_task_id": parent_task_id,
                 "reasoning": reasoning,
                 "source": source_label,
             }),
@@ -1421,24 +1452,64 @@ def _accept_create_task(
     # (case-insensitive) so the new task is created as a Monday subitem rather
     # than an orphan top-level item.
     parent_title = (value.get("parent_task_title") or "").strip()
+    parent_id_raw = (value.get("parent_task_id") or "").strip()
     parent_task = None
-    if parent_title:
-        parent_task = (
-            session.query(Task)
-            .filter(
-                Task.project_id == project.canonical_id,
-                func.lower(Task.title) == parent_title.lower(),
-            )
-            .first()
-        )
+    if parent_id_raw:
+        # Preferred: generation pinned the exact parent canonical_id, so there
+        # is no title ambiguity to resolve.
+        try:
+            parent_uuid = uuid.UUID(parent_id_raw)
+        except (ValueError, TypeError):
+            return {"ok": False, "error": f"bad parent_task_id {parent_id_raw!r}"}
+        parent_task = session.query(Task).filter_by(canonical_id=parent_uuid).one_or_none()
         if parent_task is None:
             return {
                 "ok": False,
                 "error": (
-                    f"parent task {parent_title!r} not found on project "
+                    f"parent task {parent_id_raw} no longer exists -- "
+                    f"cannot create subitem"
+                ),
+            }
+    elif parent_title:
+        # Legacy / title-only proposals: resolve among TOP-LEVEL tasks only
+        # (a subitem cannot host another) and REFUSE if the title is ambiguous
+        # rather than guessing the wrong parent.
+        matches = (
+            session.query(Task)
+            .filter(
+                Task.project_id == project.canonical_id,
+                func.lower(Task.title) == parent_title.lower(),
+                Task.is_subitem.is_(False),
+            )
+            .all()
+        )
+        if not matches:
+            return {
+                "ok": False,
+                "error": (
+                    f"no top-level parent task titled {parent_title!r} on project "
                     f"{project.name!r} -- cannot create subitem"
                 ),
             }
+        if len(matches) > 1:
+            return {
+                "ok": False,
+                "error": (
+                    f"{len(matches)} top-level tasks are named {parent_title!r} "
+                    f"-- ambiguous parent; re-file this subitem manually in Monday"
+                ),
+            }
+        parent_task = matches[0]
+
+    # A subitem cannot host another subitem (Monday forbids sub-subitems).
+    if parent_task is not None and parent_task.is_subitem:
+        return {
+            "ok": False,
+            "error": (
+                f"parent task {parent_task.title!r} is itself a subitem -- "
+                f"Monday cannot nest a subitem under a subitem"
+            ),
+        }
 
     if dry_run:
         return {

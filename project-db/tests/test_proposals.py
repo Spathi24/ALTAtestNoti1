@@ -501,6 +501,46 @@ class TestGenerateScopeProposals:
         assert pv["parent_task_title"] == "Demolition"
         assert pv["suggested_task_title"] == "demolition of interior walls"
 
+    def test_collision_with_duplicate_parents_proposes_top_level(
+        self, session, timeline_fixture
+    ):
+        """If >1 top-level task shares the suggested title, generation must NOT
+        pin a parent (it can't pick safely) -- it proposes top-level and warns."""
+        session.add(Task(title="Demolition", status=TaskStatus.TODO,
+                         project_id=timeline_fixture.canonical_id, is_subitem=False))
+        session.commit()
+        provider = _scope_mock([
+            {"scope_item": "haul away debris", "suggested_task_title": "Demolition",
+             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv["parent_task_id"] == ""        # no parent pinned
+        assert pv["parent_task_title"] == ""     # proposed top-level
+        assert any("ambiguous" in w.lower() for w in batch.warnings)
+
+    def test_collision_with_only_subitem_proposes_top_level(
+        self, session, timeline_fixture
+    ):
+        """If the only same-named task is a subitem (can't host another), the
+        gap is proposed top-level, not nested."""
+        session.add(Task(title="Closet shelving", status=TaskStatus.TODO,
+                         project_id=timeline_fixture.canonical_id, is_subitem=True))
+        session.commit()
+        provider = _scope_mock([
+            {"scope_item": "install sliding doors", "suggested_task_title": "Closet shelving",
+             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv["parent_task_id"] == ""
+        assert pv["parent_task_title"] == ""
+        assert any("subitem" in w.lower() for w in batch.warnings)
+
     def test_malformed_item_recorded_not_raised(self, session, timeline_fixture):
         provider = MockLLMProvider(
             responses=[json.dumps({"scope_gaps": ["just a string"]})])
@@ -911,6 +951,84 @@ class TestAcceptProposal:
         assert result["ok"] is False
         assert "parent task" in result["error"].lower()
         assert conn.create_calls == [], "must not write when parent is unresolved"
+
+    def test_accept_scope_subitem_resolves_by_pinned_id_not_title(
+        self, session, timeline_fixture
+    ):
+        """When a title is DUPLICATED, generation pins the exact parent id so
+        accept nests under the right one -- never an arbitrary same-named task."""
+        # Add a SECOND top-level "Demolition" (a multi-address project really
+        # has one per building).  The proposal must still target a specific one.
+        dup = Task(title="Demolition", status=TaskStatus.TODO,
+                   project_id=timeline_fixture.canonical_id, is_subitem=False)
+        session.add(dup)
+        session.commit()
+        intended = session.query(Task).filter_by(
+            project_id=timeline_fixture.canonical_id, title="Demolition"
+        ).first()  # whichever; we pin THIS one explicitly
+        prop = Proposal(
+            entity_type="Project", entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps({
+                "scope_item": "remove debris", "suggested_task_title": "remove debris",
+                "parent_task_title": "Demolition",
+                "parent_task_id": str(intended.canonical_id), "reasoning": "x",
+            }),
+            confidence=0.8, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+        )
+        session.add(prop); session.commit()
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, prop.canonical_id, writeback=conn)
+        assert result["ok"] is True
+        assert conn.create_calls[0]["parent_task"].canonical_id == intended.canonical_id
+
+    def test_accept_scope_subitem_ambiguous_title_refused(
+        self, session, timeline_fixture
+    ):
+        """A legacy proposal (title only, no pinned id) whose parent title is
+        duplicated must REFUSE -- never guess which same-named task to nest under."""
+        session.add(Task(title="Demolition", status=TaskStatus.TODO,
+                         project_id=timeline_fixture.canonical_id, is_subitem=False))
+        session.commit()
+        prop = Proposal(
+            entity_type="Project", entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps({
+                "scope_item": "y", "suggested_task_title": "y",
+                "parent_task_title": "Demolition", "reasoning": "x",  # no parent_task_id
+            }),
+            confidence=0.7, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+        )
+        session.add(prop); session.commit()
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, prop.canonical_id, writeback=conn)
+        assert result["ok"] is False
+        assert "ambiguous" in result["error"].lower()
+        assert conn.create_calls == []
+
+    def test_accept_scope_subitem_under_subitem_refused(
+        self, session, timeline_fixture
+    ):
+        """A parent that is itself a subitem must be refused -- Monday forbids
+        nesting a subitem under a subitem."""
+        child = Task(title="Closet shelving", status=TaskStatus.TODO,
+                     project_id=timeline_fixture.canonical_id, is_subitem=True)
+        session.add(child); session.commit()
+        prop = Proposal(
+            entity_type="Project", entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps({
+                "scope_item": "z", "suggested_task_title": "z",
+                "parent_task_id": str(child.canonical_id), "reasoning": "x",
+            }),
+            confidence=0.7, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+        )
+        session.add(prop); session.commit()
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, prop.canonical_id, writeback=conn)
+        assert result["ok"] is False
+        assert "subitem" in result["error"].lower()
+        assert conn.create_calls == []
 
     def test_nonexistent_id(self, session):
         result = accept_proposal(session, str(uuid.uuid4()), writeback=_FakeConnector())
