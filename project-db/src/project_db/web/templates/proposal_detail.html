@@ -108,8 +108,8 @@
 
 <!-- ============================ DECISION ============================
 The whole #decision section is HTMX-swappable.  Initial server render
-picks the partial that matches current status.  POSTs to /dry-run /accept
-/reject swap this section in place via hx-target="#decision".
+picks the partial that matches current status.  POSTs to /accept /reject
+swap this section in place via hx-target="#decision".
 ============================================================ -->
 {% if p.status == "PENDING" %}
   {% set age_days = p.created_at | days_since %}

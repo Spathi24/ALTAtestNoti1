@@ -1,13 +1,12 @@
 """Phase D: HTMX accept / reject decision actions.
 
 Coverage:
-  - dry-run happy path: preview fragment, no DB change
   - accept happy path: write-back called once, status flips, task dates
     mirror, decided fragment rendered
   - accept on already-ACCEPTED: stale fragment, NO double-write
   - accept with failing writeback (returns False or raises): proposal
     stays PENDING, idle fragment with error rendered
-  - scope_gap accept: refused with error (idle + error), proposal stays PENDING
+  - scope_gap accept: creates Monday item, proposal flips to ACCEPTED
   - reject happy path: REJECTED with reason, decided fragment rendered
   - reject scope_gap: works (advisory-only proposals can be rejected)
   - reject on already-decided: stale fragment
@@ -137,11 +136,10 @@ def timeline_proposal(session, org: Organization):
 
 @pytest.fixture
 def scope_proposal(session, org: Organization):
-    """A PENDING scope_gap proposal -- advisory-only (can_accept=False).
+    """A PENDING scope_gap proposal targeting the Project entity.
 
-    Per the data model, scope proposals target the Project, not a Task --
-    so entity_type="Project" here.  accept_proposal will refuse on the
-    field_name guard ('scope_gap' not in _ACCEPTABLE_FIELDS).
+    scope_gap is in _ACCEPTABLE_FIELDS, so accept creates a Monday item
+    and flips the proposal to ACCEPTED.
     """
     c = Client(name="Acme", organization_id=org.canonical_id)
     session.add(c)
@@ -168,63 +166,6 @@ def scope_proposal(session, org: Organization):
     session.add(proposal)
     session.commit()
     return {"proposal": proposal, "project": project}
-
-
-# ---------------------------------------------------------------------------
-# Dry-run
-# ---------------------------------------------------------------------------
-
-
-class TestDryRun:
-    def test_dry_run_returns_preview_fragment(self, client, timeline_proposal):
-        pid = str(timeline_proposal["proposal"].canonical_id)
-        resp = client.post(f"/proposals/{pid}/dry-run")
-        assert resp.status_code == 200
-        body = resp.text
-        # The preview fragment is visually distinct from the decided one:
-        # yellow PREVIEW banner, NOT a status-changing decision.
-        assert "PREVIEW" in body
-        assert "would be written" in body.lower() or "would_write" in body.lower()
-        assert "Confirm accept" in body
-        # The would_write JSON shape -- {"timeline": {"from": "...", "to": "..."}}
-        assert "2026-07-01" in body
-        assert "2026-07-05" in body
-        # Per #6: the dry-run output must NOT look like an accept happened
-        assert "pill-accepted" not in body
-        assert "Decision recorded" not in body
-
-    def test_dry_run_does_not_change_db(
-        self, client, session, timeline_proposal, patched_session_factory
-    ):
-        pid = str(timeline_proposal["proposal"].canonical_id)
-        client.post(f"/proposals/{pid}/dry-run")
-
-        session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=timeline_proposal["proposal"].canonical_id
-        ).one()
-        assert p.status == ProposalStatus.PENDING
-        # task dates were never set
-        t = session.query(Task).filter_by(
-            canonical_id=timeline_proposal["task"].canonical_id
-        ).one()
-        assert t.start_date is None
-        assert t.end_date is None
-
-    def test_dry_run_scope_gap_returns_preview(self, client, scope_proposal):
-        """scope_gap proposals are now acceptable -- dry-run should return a
-        preview of the would-be create_item call, NOT an error."""
-        pid = str(scope_proposal["proposal"].canonical_id)
-        resp = client.post(f"/proposals/{pid}/dry-run")
-        assert resp.status_code == 200
-        body = resp.text
-        # Should be the dry-run preview panel, not the error banner
-        assert "Action failed" not in body
-        assert "preview" in body.lower() or "would" in body.lower()
-
-    def test_dry_run_unknown_id_404(self, client):
-        resp = client.post("/proposals/00000000-0000-0000-0000-000000000000/dry-run")
-        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

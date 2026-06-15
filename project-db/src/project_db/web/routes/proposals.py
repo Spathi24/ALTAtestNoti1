@@ -9,10 +9,7 @@ the proposal *before* delegating.  If it's no longer PENDING, the route
 returns the ``decision_stale`` fragment instead of attempting a mutation.
 This is a first-class UI case, not a 4xx.
 
-Dry-run / accept separation (per #6): dry-run renders ``decision_dry_run``
-(yellow PREVIEW banner, no decided styling).  Accept renders
-``decision_decided`` (green/grey, with a real decided_at).  The two are
-visually distinct -- no overlap in color or wording.
+Accept renders ``decision_decided`` (green/grey, with a real decided_at).
 """
 from __future__ import annotations
 
@@ -197,9 +194,10 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
-        """Re-render the idle decision panel.  Used by the dry-run Cancel
-        button.  If the proposal has already been decided, returns the
-        decided partial so the page reflects current state."""
+        """Re-render the idle decision panel (GET /decision).
+
+        If the proposal has already been decided, returns the decided partial
+        so the page reflects current state."""
         pid = _coerce_uuid(proposal_id)
         if pid is None:
             raise HTTPException(404, "Proposal not found")
@@ -209,42 +207,6 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         if p.status != ProposalStatus.PENDING:
             return _render_decided(templates, request, p)
         return _render_idle(templates, request, p)
-
-    # ---------------------------------------------------------------- POST dry-run
-    @router.post("/proposals/{proposal_id}/dry-run", response_class=HTMLResponse)
-    def proposal_dry_run(
-        proposal_id: str,
-        request: Request,
-        session: Session = Depends(db),
-    ) -> HTMLResponse:
-        """Preview the Monday write.  No DB change, no API call.
-
-        Thin adapter: calls accept_proposal(dry_run=True) and renders the
-        preview fragment.  All guard failures (bad uuid, not found, not
-        PENDING, scope_gap, unparseable dates) come through as
-        result.error and surface inline.
-        """
-        p = _fresh_pending_proposal(session, proposal_id)
-        if p is None:
-            # Either bad id / not found (404) or already decided (stale).
-            pid = _coerce_uuid(proposal_id)
-            existing = (
-                session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
-                if pid else None
-            )
-            if existing is None:
-                raise HTTPException(404, "Proposal not found")
-            return _render_stale(templates, request, existing, attempted="dry-run")
-
-        result = accept_proposal(session, proposal_id, dry_run=True)
-        if not result.get("ok"):
-            return _render_idle(templates, request, p, error=result.get("error"))
-
-        return templates.TemplateResponse(
-            request,
-            "_partials/decision_dry_run.html",
-            {"proposal_id": str(p.canonical_id), "preview": result},
-        )
 
     # ---------------------------------------------------------------- POST accept
     @router.post("/proposals/{proposal_id}/accept", response_class=HTMLResponse)
