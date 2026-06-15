@@ -525,6 +525,53 @@ class MondayClient:
         logger.info("Created item '%s' on board %s: id=%s", item_name, board_id, item.get("id"))
         return item
 
+    def create_subitem(
+        self,
+        parent_item_id: int,
+        item_name: str,
+        column_values: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a subitem under an existing parent item.
+
+        Subitems live on their own auto-generated subitem board with their
+        own column ids (distinct from the parent board), so we do NOT pass a
+        board_id here -- Monday derives it from the parent.  ``column_values``
+        keys, if supplied, must therefore be subitem-board column ids, not the
+        parent board's.  For a bare title-only subitem (the common case) omit
+        them.
+
+        Returns the created subitem dict (id, name, and its board id so the
+        caller can build an external_url).
+        """
+        gql = """
+        mutation ($parent_item_id: ID!, $item_name: String!, $column_values: JSON) {
+          create_subitem(
+            parent_item_id: $parent_item_id,
+            item_name: $item_name,
+            column_values: $column_values
+          ) {
+            id
+            name
+            board { id }
+            column_values { id type text value }
+          }
+        }
+        """
+        variables: dict[str, Any] = {
+            "parent_item_id": parent_item_id,
+            "item_name": item_name,
+        }
+        if column_values:
+            variables["column_values"] = json.dumps(column_values)
+
+        result = self.query(gql, variables)
+        sub = result.get("create_subitem", {})
+        logger.info(
+            "Created subitem '%s' under parent %s: id=%s",
+            item_name, parent_item_id, sub.get("id"),
+        )
+        return sub
+
     def delete_item(self, board_id: int, item_id: int) -> bool:
         """Delete an item from a board.
         

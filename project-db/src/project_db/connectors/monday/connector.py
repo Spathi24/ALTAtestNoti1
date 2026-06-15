@@ -1055,12 +1055,48 @@ class MondayConnector(BaseConnector):
             return True
         return False
 
-    def create_task(self, project: Any, title: str) -> dict[str, Any]:
-        """Create a new Monday item on the project's board and return the item dict.
+    def create_task(
+        self, project: Any, title: str, parent_task: Any | None = None
+    ) -> dict[str, Any]:
+        """Create a new Monday item (or subitem) and return the created dict.
 
-        Raises RuntimeError if no board mapping exists for the project or if the
+        When ``parent_task`` is given, the new task is created as a SUBITEM of
+        that parent's Monday item (preserving the board hierarchy that the
+        read side already mirrors via ``is_subitem`` / ``parent_task_id``).
+        Otherwise a top-level item is created on the project's board.
+
+        Raises RuntimeError if the required Monday mapping is missing or if the
         Monday API returns an error.
         """
+        # --- subitem path: needs the PARENT's Monday item id ---------------
+        if parent_task is not None:
+            parent_ext = (
+                self.session.query(ExternalId)
+                .filter(
+                    ExternalId.source == self.source,
+                    ExternalId.entity_type == "Task",
+                    ExternalId.canonical_id == parent_task.canonical_id,
+                )
+                .one_or_none()
+            )
+            if not parent_ext or (parent_ext.external_key or "").startswith("board:"):
+                raise RuntimeError(
+                    f"Cannot create subitem: parent Task {parent_task.canonical_id} "
+                    f"({getattr(parent_task, 'title', '?')!r}) has no Monday item "
+                    f"mapping -- run a Monday sync first"
+                )
+            try:
+                parent_item_id = int(parent_ext.external_key)
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError(
+                    f"Parent Task has a non-numeric Monday key "
+                    f"{parent_ext.external_key!r}"
+                ) from exc
+            return self.client.create_subitem(
+                parent_item_id=parent_item_id, item_name=title
+            )
+
+        # --- top-level path: needs the PROJECT's board id ------------------
         ext_id = (
             self.session.query(ExternalId)
             .filter(

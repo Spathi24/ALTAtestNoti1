@@ -478,8 +478,11 @@ class TestGenerateScopeProposals:
         assert batch.skipped_reason is None
         assert batch.created_count == 0
 
-    def test_existing_task_is_not_flagged_as_gap(self, session, timeline_fixture):
-        """A suggested task that already exists on the board is not a gap."""
+    def test_title_collision_becomes_subitem_proposal(self, session, timeline_fixture):
+        """A suggested title that collides with an existing task is NOT a hard
+        reject -- it becomes a SUBITEM proposal under that task (the existing
+        task is the likely parent), flagged for review.  This replaced the old
+        hard-reject that silently buried specific scope items (2026-06-15)."""
         provider = _scope_mock([
             {"scope_item": "demolition of interior walls",
              "suggested_task_title": "Demolition",  # already a task in the fixture
@@ -487,9 +490,16 @@ class TestGenerateScopeProposals:
         ])
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
-        assert batch.created_count == 0
-        assert len(batch.errors) == 1
-        assert "already exists" in batch.errors[0]
+        # Now created (as a subitem proposal), not rejected.
+        assert batch.created_count == 1
+        assert len(batch.errors) == 0
+        # The warning explains the conversion.
+        assert any("SUBITEM" in w for w in batch.warnings)
+        # The proposal carries the parent and uses the specific scope item as
+        # the child title.
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv["parent_task_title"] == "Demolition"
+        assert pv["suggested_task_title"] == "demolition of interior walls"
 
     def test_malformed_item_recorded_not_raised(self, session, timeline_fixture):
         provider = MockLLMProvider(
@@ -687,14 +697,26 @@ class _FakeConnector:
     """
     def __init__(self, *, returns: bool = True, raises: bool = False):
         self.calls: list[dict] = []
+        self.create_calls: list[dict] = []
         self._returns = returns
         self._raises = raises
+        self.source = "MONDAY"
 
     def sync_back(self, entity, field_updates):
         self.calls.append({"entity": entity, "field_updates": field_updates})
         if self._raises:
             raise RuntimeError("simulated Monday API failure")
         return self._returns
+
+    def create_task(self, project, title, parent_task=None):
+        self.create_calls.append(
+            {"project": project, "title": title, "parent_task": parent_task}
+        )
+        if self._raises:
+            raise RuntimeError("simulated Monday API failure")
+        # Subitems come back with their own subitem-board id; top-level items
+        # don't need one (the accept handler falls back to the project board).
+        return {"id": "555", "name": title, "board": {"id": "999000"}}
 
 
 class TestAcceptProposal:
@@ -824,6 +846,71 @@ class TestAcceptProposal:
         assert second["ok"] is False
         assert "not PENDING" in second["error"]
         assert len(conn.calls) == 1, "second accept must not re-write to Monday"
+
+    def test_accept_scope_subitem_creates_subitem_and_mirrors_hierarchy(
+        self, session, timeline_fixture
+    ):
+        """Accepting a collision-converted scope proposal creates a Monday
+        SUBITEM under the named parent and mirrors is_subitem/parent_task_id."""
+        # A scope run whose suggested title collides with "Demolition" ->
+        # becomes a subitem proposal (parent_task_title="Demolition").
+        provider = _scope_mock([
+            {"scope_item": "install load-bearing columns",
+             "suggested_task_title": "Demolition",
+             "confidence": 0.8, "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        prop = batch.proposals[0]
+
+        parent = session.query(Task).filter_by(
+            project_id=timeline_fixture.canonical_id, title="Demolition"
+        ).one()
+
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, prop.canonical_id, writeback=conn, decided_by="bob")
+        session.commit()
+
+        assert result["ok"] is True
+        assert "create_subitem" in result["wrote_to_monday"]
+        # create_task was called WITH the resolved parent task.
+        assert len(conn.create_calls) == 1
+        assert conn.create_calls[0]["parent_task"].canonical_id == parent.canonical_id
+        assert conn.create_calls[0]["title"] == "install load-bearing columns"
+
+        # New canonical Task mirrors the hierarchy.
+        new_task = session.query(Task).filter_by(
+            project_id=timeline_fixture.canonical_id,
+            title="install load-bearing columns",
+        ).one()
+        assert new_task.is_subitem is True
+        assert new_task.parent_task_id == parent.canonical_id
+
+    def test_accept_scope_subitem_missing_parent_fails_cleanly(
+        self, session, timeline_fixture
+    ):
+        """If the named parent no longer exists, accept fails without writing."""
+        from project_db.db.models.proposals import Proposal as _P
+        prop = _P(
+            entity_type="Project",
+            entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps({
+                "scope_item": "x", "suggested_task_title": "x",
+                "parent_task_title": "Nonexistent Parent", "reasoning": "y",
+            }),
+            confidence=0.7,
+            status=ProposalStatus.PENDING,
+            prompt_version="scope-v1",
+        )
+        session.add(prop)
+        session.commit()
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, prop.canonical_id, writeback=conn)
+        assert result["ok"] is False
+        assert "parent task" in result["error"].lower()
+        assert conn.create_calls == [], "must not write when parent is unresolved"
 
     def test_nonexistent_id(self, session):
         result = accept_proposal(session, str(uuid.uuid4()), writeback=_FakeConnector())

@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from project_db.ai.context import ProjectContext, assemble_project_context
@@ -744,6 +745,12 @@ def _persist_scope_items(
     existing_titles = {
         (t.get("title") or "").strip().lower() for t in ctx.tasks
     }
+    # lower-case title -> original-case title, so a collision can name the
+    # real parent task with its display casing.
+    existing_title_display = {
+        (t.get("title") or "").strip().lower(): (t.get("title") or "").strip()
+        for t in ctx.tasks
+    }
 
     # A scope run replaces the project's prior scope analysis.
     prior = (
@@ -786,14 +793,24 @@ def _persist_scope_items(
             )
             source_label = "contract"
 
-        # An item the model calls a gap but whose suggested task already
-        # exists is not a gap -- reject it rather than create a dup proposal.
+        # A title collision with an existing task is NOT proof of a duplicate.
+        # The model was already shown the full task list and the instruction
+        # "if a task covers this, don't flag it" -- it judged this a gap anyway.
+        # The likely truth: this scope item is a SUB-STEP of the same-named
+        # broad task (e.g. "install load-bearing columns" under "Structural
+        # Demolition").  So instead of hard-rejecting, propose it as a SUBITEM
+        # under that task and flag it for the reviewer.  (Was a hard reject
+        # before 2026-06-15 -- it silently buried real specific gaps.)
+        parent_task_title = ""
+        child_title = suggested
         if suggested and suggested.lower() in existing_titles:
-            batch.errors.append(
-                f"scope item {scope_item!r}: suggested task {suggested!r} "
-                f"already exists on the board -- not a gap"
+            parent_task_title = existing_title_display.get(suggested.lower(), suggested)
+            child_title = scope_item  # the specific work, not the colliding bucket
+            batch.warnings.append(
+                f"scope item {scope_item!r}: a task titled {suggested!r} already "
+                f"exists -- proposing this as a SUBITEM under it; verify the "
+                f"hierarchy before accepting"
             )
-            continue
 
         source_doc_ids: list[str] = []
         matched_id = _match_source_document(source_doc_name, doc_id_by_name)
@@ -821,7 +838,8 @@ def _persist_scope_items(
             field_name="scope_gap",
             proposed_value=json.dumps({
                 "scope_item": scope_item,
-                "suggested_task_title": suggested,
+                "suggested_task_title": child_title,
+                "parent_task_title": parent_task_title,
                 "reasoning": reasoning,
                 "source": source_label,
             }),
@@ -1383,9 +1401,10 @@ def _accept_create_task(
 ) -> dict[str, Any]:
     """Accept handler for scope_gap / new_task / scope_change proposals.
 
-    Creates a new Monday item on the project's board, then mirrors it as a
-    canonical Task + ExternalId.  ORDER IS LOAD-BEARING: Monday write first,
-    canonical mirror second, proposal flip last.
+    Creates a new Monday item (or SUBITEM, when the proposal names a parent
+    task) and mirrors it as a canonical Task + ExternalId.  ORDER IS
+    LOAD-BEARING: Monday write first, canonical mirror second, proposal flip
+    last.
     """
     from project_db.db.models.work import Task, TaskStatus
     from project_db.db.models import ExternalId
@@ -1397,48 +1416,84 @@ def _accept_create_task(
         or "New task"
     )
 
+    # Optional parent: when the gap is a sub-step of an existing task, the
+    # proposal carries its title.  Resolve to a canonical Task on THIS project
+    # (case-insensitive) so the new task is created as a Monday subitem rather
+    # than an orphan top-level item.
+    parent_title = (value.get("parent_task_title") or "").strip()
+    parent_task = None
+    if parent_title:
+        parent_task = (
+            session.query(Task)
+            .filter(
+                Task.project_id == project.canonical_id,
+                func.lower(Task.title) == parent_title.lower(),
+            )
+            .first()
+        )
+        if parent_task is None:
+            return {
+                "ok": False,
+                "error": (
+                    f"parent task {parent_title!r} not found on project "
+                    f"{project.name!r} -- cannot create subitem"
+                ),
+            }
+
     if dry_run:
         return {
             "ok": True, "dry_run": True,
             "proposal_id": str(p.canonical_id),
             "task_title": project.name,
             "field": p.field_name,
-            "would_write": {"create_item": title},
+            "would_write": (
+                {"create_subitem": title, "under_parent": parent_title}
+                if parent_task is not None
+                else {"create_item": title}
+            ),
             "note": "Nothing written. Re-run without dry_run to apply.",
         }
 
     if writeback is None:
         return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
 
-    # Create the Monday item (raises RuntimeError on API failure).
+    # Create the Monday item/subitem (raises RuntimeError on API failure).
     try:
-        item = writeback.create_task(project, title)
+        item = writeback.create_task(project, title, parent_task=parent_task)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Monday create_item failed: {exc}"}
+        return {"ok": False, "error": f"Monday create failed: {exc}"}
 
     if not item or not item.get("id"):
-        return {"ok": False, "error": "Monday returned empty result for create_item"}
+        return {"ok": False, "error": "Monday returned empty result for create"}
 
     monday_item_id = int(item["id"])
 
-    # Find board_id to build the external_url for the new task row.
-    board_ext = (
-        session.query(ExternalId)
-        .filter(
-            ExternalId.entity_type == "Project",
-            ExternalId.canonical_id == project.canonical_id,
-            ExternalId.external_key.like("board:%"),
+    # Board id for the external_url.  A subitem lives on its own subitem board
+    # (returned in the create result); a top-level item lives on the project
+    # board (looked up from the project's ExternalId).
+    board_id_str = ""
+    if parent_task is not None:
+        board_id_str = str((item.get("board") or {}).get("id") or "")
+    if not board_id_str:
+        board_ext = (
+            session.query(ExternalId)
+            .filter(
+                ExternalId.entity_type == "Project",
+                ExternalId.canonical_id == project.canonical_id,
+                ExternalId.external_key.like("board:%"),
+            )
+            .one_or_none()
         )
-        .one_or_none()
-    )
-    board_id_str = board_ext.external_key.split(":", 1)[1] if board_ext else ""
+        board_id_str = board_ext.external_key.split(":", 1)[1] if board_ext else ""
     source = writeback.source if hasattr(writeback, "source") else "MONDAY"
 
-    # Mirror in canonical DB.
+    # Mirror in canonical DB (preserve the subitem hierarchy on the read side).
     new_task = Task(
         title=title,
         project_id=project.canonical_id,
         status=TaskStatus.TODO,
+        is_subitem=parent_task is not None,
+        parent_task_id=parent_task.canonical_id if parent_task is not None else None,
     )
     session.add(new_task)
     session.flush()  # materialise canonical_id
@@ -1461,12 +1516,17 @@ def _accept_create_task(
     p.decided_by = decided_by
     session.flush()
 
+    wrote = (
+        {"create_subitem": title, "under_parent": parent_title, "monday_id": monday_item_id}
+        if parent_task is not None
+        else {"create_item": title, "monday_id": monday_item_id}
+    )
     return {
         "ok": True, "dry_run": False,
         "proposal_id": str(p.canonical_id),
         "previous_status": "PENDING", "new_status": "ACCEPTED",
         "task_title": project.name,
-        "wrote_to_monday": {"create_item": title, "monday_id": monday_item_id},
+        "wrote_to_monday": wrote,
         "decided_by": decided_by,
     }
 
