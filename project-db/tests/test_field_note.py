@@ -720,6 +720,76 @@ class TestFieldNoteRag:
         assert ex.context_calls == [[]]
 
 
+class TestEmailTimestamp:
+    """Email sent timestamp is threaded into the extractor + FieldNote.received_at."""
+
+    def test_timestamp_passed_to_extractor(self, session, project, tasks):
+        """received_at flows to note_timestamp on the extractor call so the LLM
+        can resolve relative date references ('yesterday', 'next Friday')."""
+        email_ts = datetime(2026, 6, 13, 9, 30, 0)
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        ingest_field_note(
+            session, ex, project.canonical_id, "finished the silicone",
+            received_at=email_ts,
+        )
+        assert ex.timestamp_calls == [email_ts]
+
+    def test_timestamp_sets_field_note_received_at(self, session, project, tasks):
+        """FieldNote.received_at is the email's sent time, not ingest utcnow()."""
+        email_ts = datetime(2026, 6, 13, 9, 30, 0)
+        ex = _mock_done(task_index=0)
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "finished the silicone",
+            received_at=email_ts,
+        )
+        session.commit()
+        assert len(batch.field_notes) == 1
+        assert batch.field_notes[0].received_at == email_ts
+
+    def test_no_timestamp_falls_back_to_utcnow(self, session, project, tasks):
+        """CLI path (no received_at) works; FieldNote.received_at is close to now."""
+        before = datetime.utcnow()
+        ex = _mock_done(task_index=0)
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "finished the silicone",
+        )
+        after = datetime.utcnow()
+        session.commit()
+        assert len(batch.field_notes) == 1
+        fn_ts = batch.field_notes[0].received_at
+        assert before <= fn_ts <= after
+
+    def test_no_timestamp_extractor_still_receives_a_datetime(self, session, project, tasks):
+        """Without received_at the extractor gets the fallback utcnow (not None)
+        so the NOTE SENT block still appears in every prompt."""
+        before = datetime.utcnow()
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        ingest_field_note(session, ex, project.canonical_id, "something happened")
+        after = datetime.utcnow()
+        assert len(ex.timestamp_calls) == 1
+        ts = ex.timestamp_calls[0]
+        assert ts is not None
+        assert before <= ts <= after
+
+
+class TestNoteTimestampRendering:
+    """_render_note_timestamp produces the expected header format."""
+
+    def test_format_includes_day_name_and_dates(self):
+        from project_db.ai.field_note_extraction import _render_note_timestamp
+        ts = datetime(2026, 6, 13, 9, 30, 0)   # a Saturday
+        block = _render_note_timestamp(ts)
+        assert "NOTE SENT: 2026-06-13 09:30 UTC" in block
+        assert "Saturday" in block
+        assert "CURRENT DATE:" in block
+
+    def test_format_ends_with_blank_line(self):
+        """Block ends with double newline so it's cleanly separated from task list."""
+        from project_db.ai.field_note_extraction import _render_note_timestamp
+        block = _render_note_timestamp(datetime(2026, 6, 15, 8, 0, 0))
+        assert block.endswith("\n\n")
+
+
 class TestFieldNoteSubtaskWindow:
     """A date_shift on a SUBTASK is bounded loosely by its parent's window."""
 

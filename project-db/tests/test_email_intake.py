@@ -854,3 +854,65 @@ def test_retry_quarantined_clears_rows(session):
 def test_retry_quarantined_empty(session):
     """retry_quarantined returns 0 when nothing to clear."""
     assert retry_quarantined(session) == 0
+
+
+# ---------------------------------------------------------------------------
+# poll_mailbox: email timestamp threading
+# ---------------------------------------------------------------------------
+
+
+def test_email_timestamp_flows_to_extractor_and_field_note(
+    session, rockland, task, worker_marco
+):
+    """internalDate from Gmail is passed to ingest_field_note as received_at.
+
+    Two assertions:
+      1. The extractor's note_timestamp matches the email's internalDate (not
+         utcnow()), so the LLM sees NOTE SENT in its prompt and can resolve
+         'yesterday', 'next Monday', etc. into concrete ISO dates.
+      2. FieldNote.received_at is the email's sent time, not ingest time.
+    """
+    from datetime import timezone
+
+    # A specific internalDate: 2026-06-13 09:30:00 UTC expressed in milliseconds.
+    ts_ms = 1_749_808_200_000  # python: datetime(2026,6,13,9,30,0,tzinfo=utc)
+    msg = _make_message(
+        "tsflow001",
+        "Marco <marco@example.com>",
+        "fieldnotes+rockland@company.com",
+        "Timestamp threading test",
+        "finished the work on silicone",
+        internal_ms=ts_ms,
+    )
+    poller = MockGmailPoller([msg])
+    extractor = _simple_extractor_done(task_index=0)
+
+    batch = poll_mailbox(session, extractor, poller)
+    assert batch.processed == 1
+
+    # Compute the expected naive UTC datetime from internalDate (same formula
+    # as email_intake.py).
+    expected_ts = datetime.fromtimestamp(
+        ts_ms / 1000.0, tz=timezone.utc
+    ).replace(tzinfo=None)
+
+    # 1. Extractor received the email's timestamp (not utcnow).
+    assert len(extractor.timestamp_calls) == 1
+    delta = abs((extractor.timestamp_calls[0] - expected_ts).total_seconds())
+    assert delta < 1.0, (
+        f"Expected extractor.note_timestamp ~{expected_ts}, "
+        f"got {extractor.timestamp_calls[0]}"
+    )
+
+    # 2. FieldNote.received_at mirrors the email send time.
+    fn_rows = session.query(FieldNote).filter_by(
+        email_ingest_id=session.query(EmailIngest)
+        .filter_by(gmail_message_id="tsflow001")
+        .one()
+        .canonical_id
+    ).all()
+    assert len(fn_rows) == 1
+    fn_delta = abs((fn_rows[0].received_at - expected_ts).total_seconds())
+    assert fn_delta < 1.0, (
+        f"Expected FieldNote.received_at ~{expected_ts}, got {fn_rows[0].received_at}"
+    )

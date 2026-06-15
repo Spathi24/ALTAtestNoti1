@@ -652,6 +652,7 @@ def _process_one(
         channel=NoteChannel.EMAIL,
         sender_ref=sender_email,
         email_ingest_id=str(ingest.canonical_id),
+        received_at=received_at,
         embedding_provider=embedding_provider,
     )
     batch.field_note_batches.append(fn_batch)

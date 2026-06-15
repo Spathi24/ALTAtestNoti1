@@ -189,7 +189,27 @@ def _system_prompt() -> str:
         "them only as BACKGROUND to interpret the note (e.g. to recognise that "
         "a mentioned item is contracted scope, or to gauge whether something is "
         "a new_task vs. an existing obligation).  The quoted_excerpt must still "
-        "come from the NOTE, never from the excerpts."
+        "come from the NOTE, never from the excerpts.\n"
+        "- When NOTE SENT and CURRENT DATE appear at the top of the user message, "
+        "use NOTE SENT as the reference point for all relative time expressions "
+        "('yesterday', 'last Friday', 'next week', etc.) to produce concrete ISO "
+        "dates in proposed_start_date / proposed_end_date.  CURRENT DATE is today "
+        "at processing time -- use it to judge how recent the note is and whether "
+        "a mentioned date is in the past or future."
+    )
+
+
+def _render_note_timestamp(ts: datetime) -> str:
+    """Header block giving the LLM temporal context for relative-date resolution.
+
+    Placed at the top of the user message so 'yesterday', 'next Monday', etc.
+    can be converted to concrete ISO dates.  CURRENT DATE is ingest time in UTC.
+    """
+    day_name = ts.strftime("%A")
+    current_date = datetime.utcnow().strftime("%Y-%m-%d")
+    return (
+        f"NOTE SENT: {ts.strftime('%Y-%m-%d %H:%M')} UTC ({day_name})\n"
+        f"CURRENT DATE: {current_date}\n\n"
     )
 
 
@@ -231,13 +251,17 @@ class FieldNoteExtractor(ABC):
         task_lines: list[str],
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
+        note_timestamp: datetime | None = None,
     ) -> dict[str, Any]:
         """Return a dict conforming to FIELD_NOTE_SCHEMA's schema.
 
         ``context_excerpts`` are RAG-retrieved document passages (contract /
-        scope text) relevant to the note -- the same evidence base the
-        generate-proposals path uses, so a note can be cross-checked against
-        the contract instead of the task list alone.
+        scope text) relevant to the note.
+
+        ``note_timestamp`` is the email's sent time (or CLI call time if no
+        email).  When provided it is rendered as a NOTE SENT header in the
+        user message so the model can resolve relative date expressions
+        ('yesterday', 'next Friday') into concrete ISO dates.
         """
         raise NotImplementedError
 
@@ -274,6 +298,7 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         task_lines: list[str],
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
+        note_timestamp: datetime | None = None,
     ) -> dict[str, Any]:
         task_block = "\n".join(
             f"[{i}] {title}" for i, title in enumerate(task_lines)
@@ -284,7 +309,9 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
             else "- Working on it\n- Done\n- Stuck\n- Future steps\n- On Hold"
         )
         excerpt_block = _render_context_excerpts(context_excerpts)
+        timestamp_block = _render_note_timestamp(note_timestamp) if note_timestamp else ""
         user = (
+            f"{timestamp_block}"
             f"TASK LIST (0-based index):\n{task_block}\n\n"
             f"VALID STATUS LABELS (use one of these EXACTLY for proposed_status):\n"
             f"{labels_block}\n\n"
@@ -321,9 +348,10 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         self._responses = list(responses or [])
         self._idx = 0
         self.calls: list[tuple[str, list[str]]] = []
-        # Records the context_excerpts each call received, so tests can assert
-        # RAG passages were actually threaded into the extractor.
+        # Records the context_excerpts each call received.
         self.context_calls: list[list[str]] = []
+        # Records the note_timestamp each call received, for timestamp threading tests.
+        self.timestamp_calls: list[datetime | None] = []
 
     def extract(
         self,
@@ -332,9 +360,11 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         task_lines: list[str],
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
+        note_timestamp: datetime | None = None,
     ) -> dict[str, Any]:
         self.calls.append((note_text, task_lines))
         self.context_calls.append(list(context_excerpts))
+        self.timestamp_calls.append(note_timestamp)
         if self._idx < len(self._responses):
             r = self._responses[self._idx]
             self._idx += 1
@@ -437,6 +467,7 @@ def ingest_field_note(
     channel: NoteChannel = NoteChannel.CLI,
     sender_ref: str | None = None,
     email_ingest_id: str | None = None,
+    received_at: datetime | None = None,
     embedding_provider: Any | None = None,
     rag_top_k: int = 6,
     rag_min_similarity: float = 0.25,
@@ -504,6 +535,10 @@ def ingest_field_note(
         except Exception:  # noqa: BLE001 -- retrieval must never break ingest
             context_excerpts = []
 
+    # Resolve the note's timestamp: email send time if provided, ingest time otherwise.
+    # Used both for FieldNote.received_at and as temporal context for the LLM.
+    note_received_at = received_at or datetime.utcnow()
+
     # One structured-output call: classify + match tasks.
     try:
         result = extractor.extract(
@@ -511,6 +546,7 @@ def ingest_field_note(
             task_lines=task_lines,
             status_labels=known_labels,
             context_excerpts=context_excerpts,
+            note_timestamp=note_received_at,
         )
     except FieldNoteExtractorError as exc:
         batch.errors.append(f"extraction failed: {exc}")
@@ -520,8 +556,6 @@ def ingest_field_note(
     if not signals:
         batch.skipped_reason = "extractor returned no signals (note too vague)"
         return batch
-
-    received_at = datetime.utcnow()
 
     eid: Any = None
     if email_ingest_id:
@@ -534,7 +568,7 @@ def ingest_field_note(
         try:
             _process_signal(
                 session, batch, sig, pid, raw_text,
-                channel, sender_ref, received_at,
+                channel, sender_ref, note_received_at,
                 task_ids, task_lines, eid,
                 known_labels=known_labels,
             )
