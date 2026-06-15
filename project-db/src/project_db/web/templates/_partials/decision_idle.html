@@ -21,27 +21,24 @@ Variables expected:
     </article>
   {% endif %}
 
+  {% if not can_accept %}
   <p><small>
-    {% if can_accept %}
-      <strong>Two-step accept:</strong> Preview first; the Monday payload is
-      shown but nothing is written.  Then confirm to actually write.
-    {% else %}
-      <code>{{ field_name }}</code> proposals are <strong>advisory-only</strong>;
-      Accept is disabled (no Monday write-back logic exists for this field).
-      Reject is the only decision the UI can record; act on the suggestion
-      manually if you agree.
-    {% endif %}
+    <code>{{ field_name }}</code> proposals are <strong>advisory-only</strong>;
+    Accept is disabled (no Monday write-back logic exists for this field).
+    Reject is the only decision the UI can record; act on the suggestion manually if you agree.
   </small></p>
+  {% endif %}
 
   <fieldset role="group" id="decision-idle-buttons" style="margin-bottom: 0.5rem">
     <button type="button"
-            hx-post="/proposals/{{ proposal_id }}/dry-run"
+            hx-post="/proposals/{{ proposal_id }}/accept"
             hx-target="#decision"
             hx-swap="outerHTML"
+            hx-confirm="Write this change to the live Monday workspace?"
             hx-indicator="#decision-spinner"
             hx-disabled-elt="#decision-idle-buttons"
             {% if not can_accept %}disabled{% endif %}>
-      Preview Monday write (dry-run)
+      Accept &mdash; write to Monday
     </button>
   </fieldset>
 

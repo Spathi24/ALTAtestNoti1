@@ -70,9 +70,12 @@ def patched_session_factory(db_engine, monkeypatch):
 @pytest.fixture
 def fake_writeback():
     """Default fake: sync_back returns True (write succeeded).
-    Tests that need other behaviors override sync_back themselves."""
+    create_task returns a minimal Monday item dict.
+    Tests that need other behaviors override methods themselves."""
     wb = MagicMock(name="MondayConnector(fake)")
     wb.sync_back.return_value = True
+    wb.create_task.return_value = {"id": "9999999", "name": "New task"}
+    wb.source = "MONDAY"
     return wb
 
 
@@ -208,16 +211,16 @@ class TestDryRun:
         assert t.start_date is None
         assert t.end_date is None
 
-    def test_dry_run_scope_gap_shows_error_inline(self, client, scope_proposal):
-        """Scope proposals are advisory-only.  Dry-run on one should
-        report the refusal inline, NOT 5xx, and proposal stays PENDING."""
+    def test_dry_run_scope_gap_returns_preview(self, client, scope_proposal):
+        """scope_gap proposals are now acceptable -- dry-run should return a
+        preview of the would-be create_item call, NOT an error."""
         pid = str(scope_proposal["proposal"].canonical_id)
         resp = client.post(f"/proposals/{pid}/dry-run")
         assert resp.status_code == 200
         body = resp.text
-        # Idle fragment with the refusal text
-        assert "Action failed" in body
-        assert "scope_gap" in body or "acceptable" in body.lower()
+        # Should be the dry-run preview panel, not the error banner
+        assert "Action failed" not in body
+        assert "preview" in body.lower() or "would" in body.lower()
 
     def test_dry_run_unknown_id_404(self, client):
         resp = client.post("/proposals/00000000-0000-0000-0000-000000000000/dry-run")
@@ -331,21 +334,33 @@ class TestAccept:
         ).one()
         assert p.status == ProposalStatus.PENDING
 
-    def test_accept_scope_gap_refused(self, client, session, scope_proposal, patched_writeback):
-        """Scope proposals must not write to Monday.  accept_proposal
-        guards on _ACCEPTABLE_FIELDS; the route surfaces the error
-        inline and DOES NOT call sync_back."""
+    def test_accept_scope_gap_creates_monday_item(self, client, session, scope_proposal, patched_writeback):
+        """scope_gap proposals now create a new Monday item (not advisory-only).
+        create_task is called once; sync_back is NOT called (different path)."""
         pid = str(scope_proposal["proposal"].canonical_id)
         resp = client.post(f"/proposals/{pid}/accept")
         assert resp.status_code == 200
-        assert "Action failed" in resp.text
+        body = resp.text
+        assert "Action failed" not in body
+        assert "ACCEPTED" in body
+
+        # create_task called once; sync_back never called (different code path).
+        assert patched_writeback.create_task.call_count == 1
         assert patched_writeback.sync_back.call_count == 0
 
         session.expire_all()
         p = session.query(Proposal).filter_by(
             canonical_id=scope_proposal["proposal"].canonical_id
         ).one()
-        assert p.status == ProposalStatus.PENDING
+        assert p.status == ProposalStatus.ACCEPTED
+
+        # A new Task should exist in the DB mirroring the Monday item.
+        new_tasks = (
+            session.query(Task)
+            .filter_by(project_id=scope_proposal["project"].canonical_id)
+            .all()
+        )
+        assert any(t.title == "Demo kitchen" for t in new_tasks)
 
     def test_accept_unknown_id_404(self, client):
         resp = client.post("/proposals/00000000-0000-0000-0000-000000000000/accept")
@@ -444,8 +459,8 @@ class TestDecisionGet:
         resp = client.get(f"/proposals/{pid}/decision")
         assert resp.status_code == 200
         body = resp.text
-        # Idle fragment has the Preview button + Reject form
-        assert "Preview Monday write" in body
+        # Idle fragment has the Accept button + Reject form
+        assert "Accept" in body
         assert "Reject" in body
 
     def test_get_decided_returns_decided(self, client, session, timeline_proposal):
@@ -478,16 +493,17 @@ class TestProposalDetailPageRender:
         resp = client.get(f"/proposals/{pid}")
         assert resp.status_code == 200
         body = resp.text
-        assert "Preview Monday write" in body
+        assert "Accept" in body
         # Old Phase-B placeholder text MUST be gone
         assert "Phase D will add" not in body
 
-    def test_scope_gap_idle_disables_accept(self, client, scope_proposal):
+    def test_scope_gap_idle_enables_accept(self, client, scope_proposal):
+        """scope_gap proposals are now actionable -- Accept button is enabled."""
         pid = str(scope_proposal["proposal"].canonical_id)
         resp = client.get(f"/proposals/{pid}")
         assert resp.status_code == 200
         body = resp.text
-        # Accept is disabled; reject still available
-        assert "disabled" in body  # button disabled attr
-        assert "advisory-only" in body
+        # Accept button should NOT be disabled
+        assert "advisory-only" not in body
+        assert "Accept" in body
         assert "Reject" in body

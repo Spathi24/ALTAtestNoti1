@@ -1054,3 +1054,27 @@ class MondayConnector(BaseConnector):
             self.session.commit()
             return True
         return False
+
+    def create_task(self, project: Any, title: str) -> dict[str, Any]:
+        """Create a new Monday item on the project's board and return the item dict.
+
+        Raises RuntimeError if no board mapping exists for the project or if the
+        Monday API returns an error.
+        """
+        ext_id = (
+            self.session.query(ExternalId)
+            .filter(
+                ExternalId.source == self.source,
+                ExternalId.entity_type == "Project",
+                ExternalId.canonical_id == project.canonical_id,
+                ExternalId.external_key.like("board:%"),
+            )
+            .one_or_none()
+        )
+        if not ext_id:
+            raise RuntimeError(
+                f"No Monday board mapping for Project {project.canonical_id} "
+                f"({project.name!r}) -- run a Monday sync first"
+            )
+        board_id = int(ext_id.external_key.split(":", 1)[1])
+        return self.client.create_item(board_id=board_id, item_name=title)

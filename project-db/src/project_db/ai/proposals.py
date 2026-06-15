@@ -1130,9 +1130,11 @@ def bulk_dismiss_stale(
 
 # Proposal field_names the approval loop knows how to ACT on (write back).
 # "timeline"     -> Monday timeline column (start + end dates).
-# "task_status"  -> Monday status column (Done / In Progress / Blocked).
-# scope / anomaly / new_task / scope_change proposals are advisory-only.
-_ACCEPTABLE_FIELDS = {"timeline", "task_status"}
+# "task_status"  -> Monday status column (Done / Working on it / Stuck).
+# "scope_gap"    -> creates a new Monday item from a scope-gap proposal.
+# "new_task"     -> creates a new Monday item from a field-note signal.
+# "scope_change" -> creates a new Monday item from a field-note scope signal.
+_ACCEPTABLE_FIELDS = {"timeline", "task_status", "scope_gap", "new_task", "scope_change"}
 
 
 def accept_proposal(
@@ -1163,6 +1165,7 @@ def accept_proposal(
     PENDING and nothing is written.
     """
     from project_db.db.models import Task
+    from project_db.db.models.work import Project
 
     # --- resolve + guard --------------------------------------------------
     try:
@@ -1192,15 +1195,6 @@ def accept_proposal(
                 f"(acceptable: {sorted(_ACCEPTABLE_FIELDS)})"
             ),
         }
-    if p.entity_type != "Task":
-        return {
-            "ok": False,
-            "error": f"don't know how to write back a {p.entity_type!r} entity yet",
-        }
-
-    task = session.query(Task).filter_by(canonical_id=p.entity_id).one_or_none()
-    if task is None:
-        return {"ok": False, "error": f"target Task {p.entity_id} not found"}
 
     # --- parse the proposed value ----------------------------------------
     try:
@@ -1208,19 +1202,35 @@ def accept_proposal(
     except (json.JSONDecodeError, TypeError):
         return {"ok": False, "error": "proposed_value is not valid JSON"}
 
-    # Dispatch to field-specific accept handler.
-    if p.field_name == "timeline":
-        return _accept_timeline(
-            session, p, task, value, writeback=writeback, dry_run=dry_run,
-            decided_by=decided_by,
-        )
-    if p.field_name == "task_status":
+    # --- dispatch to field-specific handler (each loads its own entity) ---
+    if p.field_name in ("timeline", "task_status"):
+        if p.entity_type != "Task":
+            return {"ok": False, "error": f"{p.field_name!r} requires entity_type=Task, got {p.entity_type!r}"}
+        task = session.query(Task).filter_by(canonical_id=p.entity_id).one_or_none()
+        if task is None:
+            return {"ok": False, "error": f"target Task {p.entity_id} not found"}
+        if p.field_name == "timeline":
+            return _accept_timeline(
+                session, p, task, value, writeback=writeback, dry_run=dry_run,
+                decided_by=decided_by,
+            )
         return _accept_task_status(
             session, p, task, value, writeback=writeback, dry_run=dry_run,
             decided_by=decided_by,
         )
-    # Guard: should be unreachable because _ACCEPTABLE_FIELDS is checked above,
-    # but defend against future additions that forget to add a handler.
+
+    if p.field_name in ("scope_gap", "new_task", "scope_change"):
+        if p.entity_type != "Project":
+            return {"ok": False, "error": f"{p.field_name!r} requires entity_type=Project, got {p.entity_type!r}"}
+        project = session.query(Project).filter_by(canonical_id=p.entity_id).one_or_none()
+        if project is None:
+            return {"ok": False, "error": f"target Project {p.entity_id} not found"}
+        return _accept_create_task(
+            session, p, project, value, writeback=writeback, dry_run=dry_run,
+            decided_by=decided_by,
+        )
+
+    # Guard: unreachable if _ACCEPTABLE_FIELDS and dispatch branches stay in sync.
     return {
         "ok": False,
         "error": (
@@ -1357,6 +1367,106 @@ def _accept_task_status(
         "proposal_id": str(p.canonical_id),
         "previous_status": "PENDING", "new_status": "ACCEPTED",
         "task_title": task.title, "wrote_to_monday": field_updates,
+        "decided_by": decided_by,
+    }
+
+
+def _accept_create_task(
+    session: Session,
+    p: Any,
+    project: Any,
+    value: dict,
+    *,
+    writeback: Any,
+    dry_run: bool,
+    decided_by: str | None,
+) -> dict[str, Any]:
+    """Accept handler for scope_gap / new_task / scope_change proposals.
+
+    Creates a new Monday item on the project's board, then mirrors it as a
+    canonical Task + ExternalId.  ORDER IS LOAD-BEARING: Monday write first,
+    canonical mirror second, proposal flip last.
+    """
+    from project_db.db.models.work import Task, TaskStatus
+    from project_db.db.models import ExternalId
+
+    title = (
+        (value.get("new_task_title") or "").strip()
+        or (value.get("suggested_task_title") or "").strip()
+        or (value.get("scope_item") or "").strip()
+        or "New task"
+    )
+
+    if dry_run:
+        return {
+            "ok": True, "dry_run": True,
+            "proposal_id": str(p.canonical_id),
+            "task_title": project.name,
+            "field": p.field_name,
+            "would_write": {"create_item": title},
+            "note": "Nothing written. Re-run without dry_run to apply.",
+        }
+
+    if writeback is None:
+        return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
+
+    # Create the Monday item (raises RuntimeError on API failure).
+    try:
+        item = writeback.create_task(project, title)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"Monday create_item failed: {exc}"}
+
+    if not item or not item.get("id"):
+        return {"ok": False, "error": "Monday returned empty result for create_item"}
+
+    monday_item_id = int(item["id"])
+
+    # Find board_id to build the external_url for the new task row.
+    board_ext = (
+        session.query(ExternalId)
+        .filter(
+            ExternalId.entity_type == "Project",
+            ExternalId.canonical_id == project.canonical_id,
+            ExternalId.external_key.like("board:%"),
+        )
+        .one_or_none()
+    )
+    board_id_str = board_ext.external_key.split(":", 1)[1] if board_ext else ""
+    source = writeback.source if hasattr(writeback, "source") else "MONDAY"
+
+    # Mirror in canonical DB.
+    new_task = Task(
+        title=title,
+        project_id=project.canonical_id,
+        status=TaskStatus.TODO,
+    )
+    session.add(new_task)
+    session.flush()  # materialise canonical_id
+
+    ext = ExternalId(
+        source=source,
+        entity_type="Task",
+        canonical_id=new_task.canonical_id,
+        external_key=str(monday_item_id),
+        external_url=(
+            f"https://view.monday.com/boards/{board_id_str}/pulses/{monday_item_id}"
+            if board_id_str else None
+        ),
+        last_synced_at=datetime.utcnow(),
+    )
+    session.add(ext)
+
+    p.status = ProposalStatus.ACCEPTED
+    p.decided_at = datetime.utcnow()
+    p.decided_by = decided_by
+    session.flush()
+
+    return {
+        "ok": True, "dry_run": False,
+        "proposal_id": str(p.canonical_id),
+        "previous_status": "PENDING", "new_status": "ACCEPTED",
+        "task_title": project.name,
+        "wrote_to_monday": {"create_item": title, "monday_id": monday_item_id},
         "decided_by": decided_by,
     }
 

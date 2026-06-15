@@ -301,7 +301,7 @@ class TestProposalDetail:
         assert "2026-07-01" in body  # proposed start date
         # Phase D landed: the idle decision fragment is rendered inline.
         # The Phase-B placeholder text is gone.
-        assert "Preview Monday write" in body
+        assert "Accept" in body
         assert "Phase D will add Accept" not in body
 
     def test_404_unknown(self, client, world):
