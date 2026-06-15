@@ -963,6 +963,10 @@ class MondayConnector(BaseConnector):
         Reads board_id from the stored ExternalId.external_url — no extra
         Monday API call to find which board an item lives on.
         """
+        # --- setup phase: return False on lookup/parsing failures -----------
+        # The API call below is intentionally outside this try so that Monday
+        # API errors (e.g. invalid status label) propagate to the caller and
+        # can be surfaced to the user rather than being swallowed here.
         try:
             entity_type = canonical_entity.__class__.__name__
             ext_id = (
@@ -1027,26 +1031,26 @@ class MondayConnector(BaseConnector):
                 logger.warning("sync_back: no resolvable column updates for item %s", item_id)
                 return False
 
-            logger.info(
-                "Syncing back %s %s -> Monday item %s on board %s: %s",
-                entity_type,
-                canonical_entity.canonical_id,
-                item_id,
-                board_id,
-                list(resolved.keys()),
-            )
-
-            result = self.client.change_multiple_column_values(
-                board_id=board_id,
-                item_id=item_id,
-                column_values=resolved,
-            )
-            if result:
-                ext_id.last_synced_at = datetime.utcnow()
-                self.session.commit()
-                return True
-            return False
-
         except Exception as exc:  # noqa: BLE001
-            logger.error("sync_back failed: %s", exc)
+            logger.error("sync_back setup failed: %s", exc)
             return False
+
+        # --- API call: let exceptions propagate so callers see the real error
+        logger.info(
+            "Syncing back %s %s -> Monday item %s on board %s: %s",
+            entity_type,
+            canonical_entity.canonical_id,
+            item_id,
+            board_id,
+            list(resolved.keys()),
+        )
+        result = self.client.change_multiple_column_values(
+            board_id=board_id,
+            item_id=item_id,
+            column_values=resolved,
+        )
+        if result:
+            ext_id.last_synced_at = datetime.utcnow()
+            self.session.commit()
+            return True
+        return False

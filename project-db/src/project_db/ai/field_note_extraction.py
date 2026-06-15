@@ -118,7 +118,8 @@ FIELD_NOTE_SCHEMA: dict[str, Any] = {
                             "description": (
                                 "Monday status label to set when classification is "
                                 "task_done / task_progress / blocker.  "
-                                "Use 'Done', 'In Progress', or 'Blocked'.  "
+                                "You MUST use one of the VALID STATUS LABELS listed in "
+                                "the user message -- do not invent a label.  "
                                 "null for all other classifications."
                             ),
                         },
@@ -168,8 +169,8 @@ def _system_prompt() -> str:
         "   - task_index: the 0-based index of the BEST matching task from "
         "the provided TASK LIST, or null if no task matches or if "
         "classification is new_task / scope_change / other.\n"
-        "   - proposed_status: 'Done', 'In Progress', or 'Blocked' for status "
-        "signals; null otherwise.\n"
+        "   - proposed_status: use EXACTLY one of the VALID STATUS LABELS listed "
+        "in the user message for status signals; null otherwise.\n"
         "   - proposed_start_date / proposed_end_date: ISO dates only if the "
         "note implies a schedule change; null otherwise.\n"
         "   - new_task_title: a short imperative title only for new_task; null "
@@ -200,7 +201,9 @@ class FieldNoteExtractor(ABC):
     name = "abstract"
 
     @abstractmethod
-    def extract(self, *, note_text: str, task_lines: list[str]) -> dict[str, Any]:
+    def extract(
+        self, *, note_text: str, task_lines: list[str], status_labels: list[str] = ()
+    ) -> dict[str, Any]:
         """Return a dict conforming to FIELD_NOTE_SCHEMA's schema."""
         raise NotImplementedError
 
@@ -230,12 +233,21 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
             raise FieldNoteExtractorError("openai package not installed") from exc
         self._client = OpenAI(api_key=key, base_url=base_url, timeout=timeout_seconds)
 
-    def extract(self, *, note_text: str, task_lines: list[str]) -> dict[str, Any]:
+    def extract(
+        self, *, note_text: str, task_lines: list[str], status_labels: list[str] = ()
+    ) -> dict[str, Any]:
         task_block = "\n".join(
             f"[{i}] {title}" for i, title in enumerate(task_lines)
         ) if task_lines else "(no tasks found for this project)"
+        labels_block = (
+            "\n".join(f"- {lbl}" for lbl in status_labels)
+            if status_labels
+            else "- Working on it\n- Done\n- Stuck\n- Future steps\n- On Hold"
+        )
         user = (
             f"TASK LIST (0-based index):\n{task_block}\n\n"
+            f"VALID STATUS LABELS (use one of these EXACTLY for proposed_status):\n"
+            f"{labels_block}\n\n"
             f"FIELD NOTE:\n{note_text}"
         )
         try:
@@ -269,7 +281,9 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         self._idx = 0
         self.calls: list[tuple[str, list[str]]] = []
 
-    def extract(self, *, note_text: str, task_lines: list[str]) -> dict[str, Any]:
+    def extract(
+        self, *, note_text: str, task_lines: list[str], status_labels: list[str] = ()
+    ) -> dict[str, Any]:
         self.calls.append((note_text, task_lines))
         if self._idx < len(self._responses):
             r = self._responses[self._idx]
@@ -406,9 +420,19 @@ def ingest_field_note(
     task_lines = [_task_context_line(t) for t in tasks]
     task_ids = [t.canonical_id for t in tasks]
 
+    # Collect unique Monday status labels from synced tasks so the model
+    # uses labels that actually exist on this board.
+    known_labels: list[str] = sorted(
+        {t.monday_status_label for t in tasks if t.monday_status_label}
+    )
+
     # One structured-output call: classify + match tasks.
     try:
-        result = extractor.extract(note_text=raw_text.strip(), task_lines=task_lines)
+        result = extractor.extract(
+            note_text=raw_text.strip(),
+            task_lines=task_lines,
+            status_labels=known_labels,
+        )
     except FieldNoteExtractorError as exc:
         batch.errors.append(f"extraction failed: {exc}")
         return batch
@@ -433,6 +457,7 @@ def ingest_field_note(
                 session, batch, sig, pid, raw_text,
                 channel, sender_ref, received_at,
                 task_ids, task_lines, eid,
+                known_labels=known_labels,
             )
         except Exception as exc:  # noqa: BLE001
             batch.errors.append(f"signal processing error: {exc}")
@@ -453,6 +478,8 @@ def _process_signal(
     task_ids: list,
     task_lines: list[str],
     email_ingest_id: Any = None,
+    *,
+    known_labels: list[str] = (),
 ) -> None:
     """Persist one signal as a FieldNote row and (if actionable) a Proposal."""
     raw_class = sig.get("classification", "other")
@@ -514,7 +541,54 @@ def _process_signal(
     _maybe_create_proposal(
         session, batch, sig, note_class, fn, project_id, matched_task_id,
         task_ids, task_lines, conf, quoted, reasoning,
+        known_labels=list(known_labels),
     )
+
+
+# Alias map: lower-case keys -> canonical Monday label.
+# Used as a safety net when the model produces a common synonym despite
+# being given the real label list in the prompt.
+_STATUS_ALIASES: dict[str, str] = {
+    "blocked": "Stuck",
+    "in progress": "Working on it",
+    "in_progress": "Working on it",
+    "working on it": "Working on it",
+    "done": "Done",
+    "complete": "Done",
+    "completed": "Done",
+    "on hold": "On Hold",
+    "future": "Future steps",
+    "future steps": "Future steps",
+    "stuck": "Stuck",
+}
+
+# Monday label -> canonical TaskStatus value.
+_LABEL_TO_CANONICAL: dict[str, str] = {
+    "Done": "DONE",
+    "Working on it": "IN_PROGRESS",
+    "In Progress": "IN_PROGRESS",
+    "Stuck": "BLOCKED",
+    "Blocked": "BLOCKED",
+    "Future steps": "TODO",
+    "On Hold": "TODO",
+}
+
+
+def _normalize_status_label(proposed: str, known_labels: list[str]) -> str:
+    """Map a proposed Monday status label to one the board will accept.
+
+    Priority: exact in known_labels > case-insensitive in known_labels > alias map > original.
+    """
+    if proposed in known_labels:
+        return proposed
+    lower_map = {lbl.lower(): lbl for lbl in known_labels}
+    if proposed.lower() in lower_map:
+        return lower_map[proposed.lower()]
+    aliased = _STATUS_ALIASES.get(proposed.lower())
+    if aliased:
+        if not known_labels or aliased in known_labels:
+            return aliased
+    return proposed
 
 
 def _maybe_create_proposal(
@@ -530,6 +604,8 @@ def _maybe_create_proposal(
     conf: float,
     quoted: str,
     reasoning: str = "",
+    *,
+    known_labels: list[str] = (),
 ) -> None:
     """Emit a Proposal for actionable signals (A1: always PENDING, never auto-apply)."""
 
@@ -544,12 +620,14 @@ def _maybe_create_proposal(
             return
         proposed_status = (sig.get("proposed_status") or "").strip() or None
         if not proposed_status:
-            _default = {"task_done": "Done", "task_progress": "In Progress", "blocker": "Blocked"}
-            proposed_status = _default.get(note_class.value, "In Progress")
+            _default = {"task_done": "Done", "task_progress": "Working on it", "blocker": "Stuck"}
+            proposed_status = _default.get(note_class.value, "Working on it")
+
+        # Normalise the label against the board's actual options.
+        proposed_status = _normalize_status_label(proposed_status, list(known_labels))
 
         # Canonical TaskStatus mirror for the proposed_value.
-        _status_map = {"Done": "DONE", "In Progress": "IN_PROGRESS", "Blocked": "BLOCKED"}
-        canonical_status = _status_map.get(proposed_status, "IN_PROGRESS")
+        canonical_status = _LABEL_TO_CANONICAL.get(proposed_status, "IN_PROGRESS")
 
         pv: dict[str, Any] = {
             "status": canonical_status,

@@ -439,7 +439,7 @@ class TestSupersede:
                 "classification": "blocker",
                 "quoted_excerpt": "actually stuck now",
                 "task_index": 0,
-                "proposed_status": "Blocked",
+                "proposed_status": "Stuck",
                 "proposed_start_date": None,
                 "proposed_end_date": None,
                 "new_task_title": None,
@@ -461,7 +461,7 @@ class TestSupersede:
             .all()
         )
         assert len(pending) == 1
-        assert json.loads(pending[0].proposed_value)["monday_label"] == "Blocked"
+        assert json.loads(pending[0].proposed_value)["monday_label"] == "Stuck"
 
         superseded = (
             session.query(Proposal)
