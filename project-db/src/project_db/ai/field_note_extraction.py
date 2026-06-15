@@ -49,7 +49,7 @@ from project_db.db.models import (
 
 logger = logging.getLogger(__name__)
 
-FIELD_NOTE_PROMPT_VERSION = "field-note-v1"
+FIELD_NOTE_PROMPT_VERSION = "field-note-v2"
 
 # ---------------------------------------------------------------------------
 # Image helpers (Win 3 -- photos through the same pipe)
@@ -225,6 +225,15 @@ def _system_prompt(*, has_images: bool = False) -> str:
         "CONSERVATIVE RULES:\n"
         "- Return no signals (empty array) if the note is too vague to classify.\n"
         "- A declined task match (null task_index) is fine -- do not guess.\n"
+        "- IMPORTANT: If a signal describes work that was COMPLETED but no task in "
+        "the TASK LIST is a confident match (either because the work was unplanned, "
+        "the closest task is already Done for a different scope, or the list is long "
+        "and no item clearly corresponds), prefer classifying as `new_task` rather "
+        "than `task_done` with null task_index.  A `new_task` proposal with a "
+        "descriptive title (e.g. 'Ceiling hole repair - second floor') is actionable; "
+        "a `task_done` with no matched task is silently dropped and produces nothing.  "
+        "Use `new_task` whenever completed work cannot be confidently tied to an "
+        "existing task in the list.\n"
         "- Never invent information not present in the note.\n"
         "- Every signal MUST have a non-empty quoted_excerpt.\n"
         "- The user message may include RELEVANT CONTRACT/SCOPE EXCERPTS.  Use "
