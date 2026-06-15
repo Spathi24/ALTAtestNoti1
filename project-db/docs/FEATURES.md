@@ -57,6 +57,26 @@ its evidence. It's **computed deterministically** from data already pulled in �
 no AI guessing, no per-question cost — so it's always up to date and never
 invents a number. Also available as a one-line command (`project_db briefing`).
 
+### 0b. Field notes — turning what happens on site into board updates (newest)
+A worker or PM reports, in plain language, what happened on a job —
+*"finished the silicone in the bathroom, glass door still sticking, me and Marco
+did 6 hours."* They can type it into the project page or simply **send it (with
+photos) to a dedicated email address from their phone.** ALTA reads the note,
+splits it into individual signals, matches each against that project's Monday
+tasks, and turns them into **suggestions** a manager reviews — mark a task done,
+shift a date, add a missing task, flag a blocker — each quoting the exact words
+from the note as evidence.
+
+Nothing is ever changed automatically: every suggestion waits for a human to
+accept or reject it, and only then is it written back to Monday. Photos go
+through the same pipe (the AI reads the picture as part of the same report), and
+a note about brand-new work becomes a proposed task — created under the right
+parent task on the board, not dumped loose. This is the feature that closes the
+loop between the field and the office: the people doing the work don't have to
+touch Monday, and the board still stays current. (Pilot project: 923-927
+Rockland. CLI `field-note`; email intake polls a mailbox, outbound-only — nothing
+listens on the public internet.)
+
 ### 1. Data sync — Monday.com and Google Drive
 - **Monday.com:** pulls every board, item, status, date, owner, and CRM record
   into the canonical database. Recognizes column meanings automatically. Can

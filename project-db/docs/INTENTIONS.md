@@ -26,6 +26,17 @@
 > source was switched to the team shared Drive with a clean-slate rebuild
 > (2026-06-10) — 1081 docs, 439 financial records, 170 obligations, all
 > team-only.
+>
+> **STATUS 2026-06-15: the field-note MVP (§0) is now BUILT.** All three Wins
+> from `FIELD_NOTES_BRIEF.md` shipped — channel-agnostic core (typed text),
+> Gmail-API email intake (N7-safe), and photos through the same vision pipe —
+> plus a composite-scored task block, `parent_task_index` subitem creation, and
+> RAG contract context in extraction. 958 tests. The loop is live: site note ->
+> Proposal -> human accept -> Monday write-back. **Per STRATEGY §9 the next move
+> is the Rockland adoption trial, not more building.** Open brief item: the
+> deterministic "chaos report" (board-hygiene one-pager). See CHANGELOG
+> 2026-06-15 + HANDOFF top block.
+
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
 usable, and informative, not just clever. Every intention below is judged by

@@ -85,6 +85,18 @@ corrections to what Monday says is happening.
 - **Anthropic primary + OpenAI fallback (2026-06-04).** `ask` / `propose` /
   extraction try Anthropic, then transparently fall back to OpenAI on failure
   (the owner's Anthropic credits ran out) instead of erroring.
+- **Field-note pipeline — the active-adaptation core (2026-06-15): the current
+  headline.** A worker or PM reports in plain language what happened on site
+  (typed into the project page, or emailed with photos from a phone); ALTA
+  classifies the note into signals, matches them against that project's Monday
+  tasks, and emits **Proposals** a human accepts → Monday write-back (mark done,
+  shift dates, add a task, flag a blocker). Advisor-not-actor throughout — notes
+  never auto-apply, every proposal quotes the note as evidence. Three input
+  channels (text / email / photo) are one pipeline. Email intake polls a mailbox
+  outbound-only (nothing listens on the public internet). New-work notes become
+  proposed tasks created under the right parent (subitems). Pilot: 923-927
+  Rockland. `project_db field-note <project> "text"`; see **CHANGELOG.md** /
+  **docs/FIELD_NOTES_BRIEF.md**.
 
 For "what does it do?" read **[docs/FEATURES.md](docs/FEATURES.md)**
 (plain-language feature list); for the mission + the standing ALWAYS/NEVER rules

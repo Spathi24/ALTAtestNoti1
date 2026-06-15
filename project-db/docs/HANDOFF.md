@@ -11,11 +11,11 @@ guidance for working on this project well.
 ALWAYS/NEVER rules + owner clarifications), `docs/FEATURES.md` (plain-language
 feature list), then this; `docs/INTENTIONS.md` is the forward roadmap.
 
-Last updated: 2026-06-09. (Current test count: see the latest CHANGELOG entry —
-it is the single source, not repeated across docs.)  The two newest things below
-(structured extraction + provider fallback) are the ones a fresh instance most
-needs; then RAG, the briefing, and the financial layer.  The obligations layer
-is now structured + live-validated too (see below).
+Last updated: 2026-06-15. (Current test count: see the latest CHANGELOG entry —
+it is the single source, not repeated across docs.)  The newest thing is the
+**field-note / active-adaptation pipeline** (see the block just below the budget
+note); then structured extraction + provider fallback, RAG, the briefing, and
+the financial layer.  The obligations layer is structured + live-validated too.
 
 **⚠ BUDGET / PROVIDER REALITY (read first).** The owner's **Anthropic credits
 are at $0**; **OpenAI has ~$4** left. So: `get_default_provider` / `get_fast_
@@ -102,6 +102,28 @@ a documented known-hard limit). Both are the financial layer's already-solved pr
 (dedup / direction-from-client-name) -- pick up only when a PM uses the layer.
 See [[project-obligations]] memory.
 
+**THE FIELD-NOTE PIPELINE IS NOW BUILT (2026-06-15 — the current centre of
+gravity).** The active-adaptation feature (INTENTIONS §0 / `docs/FIELD_NOTES_
+BRIEF.md`) shipped end-to-end: a plain-language site note -> classify
+(`ai/field_note_extraction.py`, OpenAI structured outputs) -> match against the
+project's Monday tasks -> emit **Proposals** -> human accept -> Monday
+write-back (advisor-not-actor, A1). All three Wins landed: Win 1 (channel-
+agnostic core + `FieldNote` table + `field-note` CLI + project-page text box),
+Win 2 (Gmail-API email intake, OUTBOUND-only/N7-safe, open Worker roster,
+email-as-untrusted-input), Win 3 (photos through the same vision pipe; one
+combined signal). Pilot = 923-927 Rockland. Key design points a fresh instance
+needs: the **task block** fed to the LLM is status-stratified + composite-scored
+(`_render_task_block`: status 50% / keyword-semantic 30% / temporal 20%;
+subitems annotated with parent); **`new_task` proposals carry `parent_task_index`**
+so accept creates a Monday SUBITEM (and the resolver climbs to top-level if the
+LLM picks a subitem, since Monday forbids sub-subitems); a completed-work note
+that matches nothing becomes a `new_task` rather than a silently-dropped
+`task_done`. Field-note extraction reuses RAG context, the Proposal engine, and
+the existing review queue — it did NOT reinvent them. Tests:
+`tests/test_field_note.py`, `tests/test_email_intake.py`. **Next is ADOPTION:
+put it in front of the Rockland PM (STRATEGY §9) and let their friction drive
+the next iteration — not more building.**
+
 **WHAT'S NEXT (the plan, owner-agreed 2026-06-04; #1 done 2026-06-09), in order:**
 1. ~~**Re-do the obligations extraction with the structured classify-then-extract
    pattern** and RUN IT LIVE.~~ **DONE 2026-06-09** — `ai/obligation_extraction.py`,
@@ -114,18 +136,19 @@ See [[project-obligations]] memory.
    — `report_project_money_line` + `money-line` CLI + a project-page banner.
    Headlines the CONFIRMED view (agrees with the Financials panel); when revenue
    is unconfirmed quotes it says so instead of printing a quote-inflated margin.
-4a. **THE CORE PURPOSE, coming after a job-site visit (owner, 2026-06-09): LIVE
-   TRANSCRIPTION / ACTIVE ADAPTATION.** A worker reports (chat / voice / later
-   photo) what was done / what's left -> classify -> update timeline/scope
-   dependency-aware -> Proposal write-back. Chat/voice/image are ONE pipeline
-   with three input adapters. The framework exists (DailyLog, the
-   classify-then-extract pattern, `assemble_project_context`, the Proposal
-   engine). Full design + the open questions to resolve on-site are in
-   **`docs/INTENTIONS.md` §0**. DO NOT build it before the requirements land.
+4a. ~~**THE CORE PURPOSE: LIVE TRANSCRIPTION / ACTIVE ADAPTATION.**~~ **BUILT
+   2026-06-15** — the field-note pipeline (see the top-of-file block). A worker
+   reports in plain language -> classify -> match -> Proposal -> Monday
+   write-back. Requirements landed 2026-06-12 (`docs/FIELD_NOTES_BRIEF.md`) and
+   all three Wins shipped (text / email / photo, one pipeline). Residual /
+   deferred: dependency-edge PROPOSALS (the graph is empty — 11/139 populated;
+   a later win lets the LLM propose edges, human-approved); man-hours are
+   capture-only (no timesheet product until data accumulates).
 4. **Then STOP building and put it in front of the PM** (STRATEGY §9 adoption
-   test) — the data is finally clean; the PM's reaction drives the next
-   iteration. **← WE ARE HERE (2026-06-09): #1-3 done; next is adoption + the
-   job-site transcription requirements, not more building.**
+   test) — the data is finally clean and the field-note loop is live. The PM's
+   reaction drives the next iteration. **← WE ARE HERE (2026-06-15): the
+   field-note pipeline is built; next is the Rockland adoption trial, not more
+   building.**
 5. Horizon: **acquisition / lead-gen intelligence** (INTENTIONS §5 — partner's
    matricule->REQ->contacts pipeline), gated on the data feed + the ops brain
    being in daily use.
@@ -416,12 +439,17 @@ prompts and produced template-derived flags the PM had to second-guess
 `_build_timeline_prompt` / `_build_scope_prompt`. Versions: `timeline-v5-quoted`,
 `scope-v4-quoted`.
 
-### Proposals (timeline + scope)
+### Proposals (timeline + scope + field-note types)
 `ai/proposals.py`. `generate_timeline_proposals` (dateless Monday tasks → dates,
-write-back-able), `generate_scope_proposals` (documented scope with no task,
-advisory-only). Conservative; quoted-excerpt evidence required; past-dated
-proposals rejected; `accept_proposal` writes to Monday first / flips second.
-`_ACCEPTABLE_FIELDS = {"timeline"}`.
+write-back-able), `generate_scope_proposals` (documented scope with no task).
+Conservative; quoted-excerpt evidence required; past-dated proposals rejected;
+`accept_proposal` writes to Monday first / flips second (A2/A3 ordering is
+sacred). `_ACCEPTABLE_FIELDS = {"timeline", "task_status", "scope_gap",
+"new_task", "scope_change"}` — accept now also flips Monday status and CREATES
+items/subitems (`_accept_create_task`), not just timeline edits. Parent
+resolution is per-project-safe: a `new_task` proposal carrying `parent_task_id`
+(set by the field-note layer from `parent_task_index`) creates a Monday SUBITEM;
+it refuses cross-project parents, ambiguous title matches, and sub-subitems.
 
 ### Web UI (M5 + Financials)
 FastAPI + Jinja + HTMX + Pico.css, vendored static, no build pipeline,

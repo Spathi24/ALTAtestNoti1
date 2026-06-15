@@ -56,6 +56,18 @@ the input adapters + one extraction module + a roster table.
 
 ## 3. Build order — three independently demoable wins
 
+> **BUILD STATUS 2026-06-15: all three Wins SHIPPED.** Win 1 (channel-agnostic
+> core, `FieldNote` + `ai/field_note_extraction.py` + `field-note` CLI + web
+> text box), Win 2 (Gmail-API email intake, N7-safe, open Worker roster), and
+> Win 3 (photos through the same vision pipe) are built, tested, and pushed.
+> Beyond the brief, this session added: a status-stratified + composite-scored
+> task block (`_render_task_block`), `parent_task_index` so `new_task` accepts
+> create Monday SUBITEMS, the `new_task`-over-dropped-`task_done` preference, and
+> RAG contract context in extraction. Tests: `tests/test_field_note.py`,
+> `tests/test_email_intake.py`. **Next per STRATEGY §9 is ADOPTION on Rockland,
+> not more building.** The "free win" chaos report (§3 below) is the one
+> brief item still open. Spec below is unchanged — kept as the record of intent.
+
 Ship each win fully (code + tests + a live demo path) before starting the next.
 Each ends with the suite green, committed, pushed (repo conventions in
 HANDOFF §10).

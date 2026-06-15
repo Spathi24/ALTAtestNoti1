@@ -9,6 +9,66 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-15 -- The field-note (active-adaptation) pipeline: notes -> proposals -> Monday
+
+The big build the whole project was pointed at (STRATEGY's "active adaptation",
+INTENTIONS §0, settled in `docs/FIELD_NOTES_BRIEF.md`). A field worker or PM
+reports in plain language what happened on site; ALTA classifies it, matches it
+against that project's Monday tasks, and emits **Proposals** a human reviews and
+accepts -> Monday write-back. Advisor-not-actor throughout (A1): notes never
+auto-apply. Pilot project is 923-927 Rockland. Built INSIDE the existing repo,
+reusing the Proposal engine, the classify-then-extract structured pattern, RAG
+context, and the existing review UI. All three Wins from the brief shipped, plus
+a round of hardening:
+
+- **Win 1 -- channel-agnostic core.** `FieldNote` sidecar table + migration;
+  `ai/field_note_extraction.py` (OpenAI structured outputs, strict schema;
+  classification vocab `task_done | task_progress | blocker | new_task |
+  date_shift | scope_change | other`; one note -> many signals, each with a
+  verbatim `quoted_excerpt`, A6). `ingest_field_note` is the shared service
+  (A5) behind a `field-note <project> "text"` CLI and a project-page text box.
+- **Win 2 -- email intake (N7-safe).** Gmail-API poller, OUTBOUND-only (no
+  public endpoint -> localhost posture intact). Open sender roster auto-creates
+  Worker stubs (role/tags/verified). Email content is treated as UNTRUSTED
+  prompt-injection surface (A1): it produces Proposals only, never direct writes.
+- **Win 3 -- photos through the same pipe.** Attachments pass through the
+  vision-capable model with the SAME schema; photo + accompanying text are one
+  combined signal. The email timestamp is threaded into the extractor so
+  relative time ("yesterday", "last Friday") resolves to concrete ISO dates.
+- **Proposal write-back symmetry.** Direct-accept now CREATES Monday items
+  (scope_gap / new_task) and SUBITEMS, not just timeline edits; parent
+  resolution is per-project-safe and refuses ambiguous/cross-project parents;
+  subtask timeline proposals are bounded to the parent window; Monday API
+  errors surface instead of failing silently; status labels normalise to the
+  board's actual options.
+- **RAG context wired in.** Field-note extraction pulls RELEVANT CONTRACT/SCOPE
+  EXCERPTS from the embedded corpus as background to interpret a note (still
+  quotes the NOTE for evidence, never the excerpts).
+
+This session's hardening (the part that probed deepest):
+
+- **Erik's-email failure class fixed.** A completed-work note that matched no
+  existing task was classified `task_done` with a null match and then SILENTLY
+  DROPPED. The prompt now prefers `new_task` over a dropped `task_done` when
+  nothing matches confidently -- an actionable proposal instead of nothing.
+- **Strategy C task block.** The flat 168-task list that confused matching is
+  now status-stratified (Active -> Upcoming -> Done) and composite-scored
+  (status 50% / keyword-semantic 30% / temporal 20%; undated tasks stay neutral
+  so far-future and dateless work isn't buried). Done section trimmed to top-30
+  by relevance; subitems annotated with parent context.
+- **new_task accept uses the right title key + lands under a parent.**
+  `parent_task_index` lets the LLM name the parent task; it resolves to a UUID
+  stored in the proposal so accept creates a Monday SUBITEM instead of an orphan
+  top-level item. If the LLM picks a subitem as the parent (Monday forbids
+  sub-subitems), the resolver climbs to its top-level parent rather than emit a
+  proposal doomed to fail at accept time.
+
+Reuses, doesn't reinvent: storage mirrors the Document->DocumentText sidecar;
+extraction mirrors `ai/doc_extraction.py`; proposals flow through the existing
+engine and review queue. **958 tests passing** (was 829 at the last entry).
+
+---
+
 ## 2026-06-10 -- External review integration: fix the cp1252 footgun once + strategy
 
 An external review (Claude "Mythos") of the docs surfaced sharp points; acted on
