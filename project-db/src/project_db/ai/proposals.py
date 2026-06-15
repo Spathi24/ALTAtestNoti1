@@ -1539,9 +1539,10 @@ def _accept_create_task(
     from project_db.db.models import ExternalId
 
     title = (
-        (value.get("new_task_title") or "").strip()
-        or (value.get("suggested_task_title") or "").strip()
-        or (value.get("scope_item") or "").strip()
+        (value.get("title") or "").strip()            # field-note new_task / scope_change
+        or (value.get("new_task_title") or "").strip()  # legacy alias
+        or (value.get("suggested_task_title") or "").strip()  # document scope_gap
+        or (value.get("scope_item") or "").strip()    # document scope_gap fallback
         or "New task"
     )
 
