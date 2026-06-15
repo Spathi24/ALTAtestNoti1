@@ -1173,7 +1173,20 @@ def _maybe_create_proposal(
         # Resolve parent_task_index → UUID (same bounds-check as task_index).
         pti = sig.get("parent_task_index")
         if isinstance(pti, int) and 0 <= pti < len(task_ids):
-            pv_new["parent_task_id"] = str(task_ids[pti])
+            parent_uuid = task_ids[pti]
+            # The task block indexes subitems too, so the LLM can pick one as a
+            # parent.  Monday forbids sub-subitems, so a subitem parent would be
+            # rejected at accept time.  Climb to the subitem's own parent (the
+            # real top-level task) so the new work still lands alongside the
+            # related step; if the subitem has no resolvable parent, fall back
+            # to a top-level task (no parent) rather than emit a doomed proposal.
+            parent_obj = (
+                session.query(Task).filter_by(canonical_id=parent_uuid).one_or_none()
+            )
+            if parent_obj is not None and parent_obj.is_subitem:
+                parent_uuid = parent_obj.parent_task_id
+            if parent_uuid is not None:
+                pv_new["parent_task_id"] = str(parent_uuid)
         proposed_value = json.dumps(pv_new)
         p = Proposal(
             entity_type="Project",

@@ -1188,3 +1188,55 @@ class TestParentTaskIndex:
         assert len(batch.proposals) == 1
         pv = json.loads(batch.proposals[0].proposed_value)
         assert "parent_task_id" not in pv
+
+    def test_subitem_parent_climbs_to_top_level(self, session, project):
+        """If the LLM picks a SUBITEM as parent (Monday forbids sub-subitems),
+        the resolver climbs to the subitem's own parent so the new work still
+        lands alongside the related step instead of failing at accept time."""
+        top = Task(
+            title="Drywall finishing", status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id,
+        )
+        session.add(top)
+        session.flush()
+        sub = Task(
+            title="Tape and mud", status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id, is_subitem=True,
+            parent_task_id=top.canonical_id,
+        )
+        session.add(sub)
+        session.commit()
+
+        # Tasks render Active-first; the subitem is index 1 (top is index 0).
+        # Point the LLM at the SUBITEM and confirm it climbs to `top`.
+        ex = MockFieldNoteExtractor(responses=[{
+            "signals": [self._new_task_signal(parent_task_index=1)]
+        }])
+        batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv["parent_task_id"] == str(top.canonical_id)
+
+    def test_orphan_subitem_parent_falls_back_to_top_level(self, session, project):
+        """A subitem with no resolvable parent (parent_task_id is None) cannot
+        host a subitem; the resolver drops the parent rather than emit a
+        proposal doomed to fail at accept time."""
+        orphan_sub = Task(
+            title="Loose subitem", status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id, is_subitem=True,
+            parent_task_id=None,
+        )
+        session.add(orphan_sub)
+        session.commit()
+
+        ex = MockFieldNoteExtractor(responses=[{
+            "signals": [self._new_task_signal(parent_task_index=0)]
+        }])
+        batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "parent_task_id" not in pv
