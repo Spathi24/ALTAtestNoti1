@@ -560,6 +560,55 @@ class TestGenerateScopeProposals:
         assert pv["parent_task_title"] == ""     # proposed top-level
         assert any("ambiguous" in w.lower() for w in batch.warnings)
 
+    def test_collision_duplicate_parents_disambiguated_by_unit(
+        self, session, timeline_fixture
+    ):
+        """With >1 same-named top-level task, a correct 'unit' hint pins the
+        right per-unit parent (the group-aware fix)."""
+        existing = session.query(Task).filter_by(
+            project_id=timeline_fixture.canonical_id, title="Demolition").one()
+        existing.group_title = "Unit 923"
+        u927 = Task(title="Demolition", status=TaskStatus.TODO,
+                    project_id=timeline_fixture.canonical_id, is_subitem=False,
+                    group_title="Unit 927")
+        session.add(u927); session.commit()
+        provider = _scope_mock([
+            {"scope_item": "debris removal", "suggested_task_title": "Demolition",
+             "unit": "Unit 927", "confidence": 0.7, "reasoning": "x",
+             "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv["parent_task_id"] == str(u927.canonical_id)   # the RIGHT unit
+        assert pv["parent_task_title"] == "Demolition"
+        assert any("Unit 927" in w for w in batch.warnings)
+
+    def test_collision_duplicate_parents_wrong_unit_falls_back_top_level(
+        self, session, timeline_fixture
+    ):
+        """A unit hint matching no parent group -> safe top-level fallback, never
+        a guessed parent."""
+        existing = session.query(Task).filter_by(
+            project_id=timeline_fixture.canonical_id, title="Demolition").one()
+        existing.group_title = "Unit 923"
+        session.add(Task(title="Demolition", status=TaskStatus.TODO,
+                         project_id=timeline_fixture.canonical_id, is_subitem=False,
+                         group_title="Unit 927"))
+        session.commit()
+        provider = _scope_mock([
+            {"scope_item": "debris removal", "suggested_task_title": "Demolition",
+             "unit": "Unit 999",  # matches no group
+             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
+        ])
+        batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert pv["parent_task_id"] == ""   # NOT pinned -- conservative fallback
+        assert any("did not single one out" in w for w in batch.warnings)
+
     def test_collision_with_only_subitem_proposes_top_level(
         self, session, timeline_fixture
     ):

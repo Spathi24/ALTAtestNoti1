@@ -273,6 +273,7 @@ def _task_to_dict(t: Task) -> dict[str, Any]:
         "duration_days": _ser(t.duration_days),
         "is_subitem": bool(t.is_subitem),
         "parent_task_id": _ser(t.parent_task_id),
+        "group_title": t.group_title,
         "priority": t.priority,
     }
 

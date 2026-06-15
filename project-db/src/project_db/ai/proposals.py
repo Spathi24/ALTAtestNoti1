@@ -717,13 +717,29 @@ def _build_scope_prompt(
         if v:
             lines.append(f"{k}: {v}")
 
+    # Distinct unit/group names -- a multi-address project groups its tasks by
+    # unit (e.g. "923 3rd Floor Unit"), and the SAME task title repeats once per
+    # unit.  Showing the unit lets the model say WHICH unit a gap belongs to so
+    # we can nest under the right same-named parent.
+    groups = sorted({(t.get("group_title") or "").strip()
+                     for t in ctx.tasks if (t.get("group_title") or "").strip()})
     lines.append(f"\n=== CURRENT MONDAY TASKS ({len(ctx.tasks)}) ===")
     if ctx.tasks:
         for t in ctx.tasks:
             sub = " [subitem]" if t.get("is_subitem") else ""
-            lines.append(f"- {t.get('title', '(untitled)')}{sub}")
+            grp = (t.get("group_title") or "").strip()
+            unit = f"  (unit: {grp})" if grp else ""
+            lines.append(f"- {t.get('title', '(untitled)')}{sub}{unit}")
     else:
         lines.append("(none -- this project has no tasks yet)")
+    if len(groups) > 1:
+        lines.append(
+            "\nNOTE: this project has multiple UNITS -- "
+            + "; ".join(groups)
+            + ".  The same task title can appear once per unit.  When you flag a "
+            "gap, set 'unit' to the unit it belongs to (copy the unit name "
+            "exactly) so it is filed under the correct one."
+        )
 
     # Relevance-retrieved excerpts (RAG) first -- targeted scope passages,
     # including from parts of long SOWs the recency truncation below cut.
@@ -771,7 +787,10 @@ def _build_scope_prompt(
         '      "confidence": <float 0.0-1.0>,\n'
         '      "reasoning": "<quoted excerpt + document name + why missing.  '
         'See requirement above.>",\n'
-        '      "source_document": "<exact document name>"\n'
+        '      "source_document": "<exact document name>",\n'
+        '      "unit": "<the unit/group this gap belongs to, copied EXACTLY '
+        'from a task unit shown above; empty string if the project has no '
+        'units or you are unsure>"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
@@ -847,6 +866,7 @@ def _persist_scope_items(
         reasoning = str(raw_item.get("reasoning") or "").strip()
         confidence = _clamp_confidence(raw_item.get("confidence"))
         source_doc_name = raw_item.get("source_document")
+        unit_hint = str(raw_item.get("unit") or "").strip()
         # Layer 2: the model labels each gap as 'contract' or 'roadmap'.
         # Default to 'contract' for backward compatibility -- pre-Layer-2
         # prompts don't request this field; missing == contract.
@@ -885,13 +905,32 @@ def _persist_scope_items(
                     f"verify the hierarchy before accepting"
                 )
             elif len(top_matches) > 1:
-                # >1 top-level task shares this title -- cannot pick a parent
-                # safely.  Propose top-level and flag for manual re-parenting.
-                batch.warnings.append(
-                    f"scope item {scope_item!r}: {len(top_matches)} top-level "
-                    f"tasks are named {suggested!r} -- ambiguous parent; "
-                    f"proposing as a top-level item, re-parent in Monday if needed"
-                )
+                # >1 top-level task shares this title (one per unit).  Try to
+                # disambiguate by the model's 'unit' hint against group_title --
+                # but ONLY pin a parent when that yields exactly one match.
+                # Never guess: no/ambiguous unit -> safe top-level fallback.
+                unit_matches = [
+                    m for m in top_matches
+                    if unit_hint
+                    and (m.get("group_title") or "").strip().lower() == unit_hint.lower()
+                ]
+                if len(unit_matches) == 1:
+                    parent = unit_matches[0]
+                    parent_task_title = (parent.get("title") or "").strip()
+                    parent_task_id = str(parent.get("canonical_id") or "")
+                    batch.warnings.append(
+                        f"scope item {scope_item!r}: {len(top_matches)} tasks named "
+                        f"{suggested!r}; filed as a SUBITEM under the one in unit "
+                        f"{unit_hint!r} -- verify the hierarchy before accepting"
+                    )
+                else:
+                    batch.warnings.append(
+                        f"scope item {scope_item!r}: {len(top_matches)} top-level "
+                        f"tasks are named {suggested!r} (ambiguous parent) and the "
+                        f"unit hint {unit_hint or '(none)'!r} did not single one "
+                        f"out -- proposing as a top-level item, re-parent in Monday "
+                        f"if needed"
+                    )
             else:
                 # The only same-named task(s) are subitems -- a subitem cannot
                 # host another.  Propose top-level.
