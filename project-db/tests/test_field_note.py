@@ -669,3 +669,52 @@ class TestTaskContextLine:
         assert "Paint walls" in line
         assert "start:" not in line
         assert "end:" not in line
+
+
+class TestFieldNoteRag:
+    """Field notes use the SAME RAG evidence base as generate-proposals."""
+
+    def test_rag_excerpts_threaded_to_extractor(self, session, project, tasks, monkeypatch):
+        """When an embedding provider is supplied, retrieved contract passages
+        are passed to the extractor as context_excerpts."""
+        import project_db.ai.proposals as proposals_mod
+        monkeypatch.setattr(
+            proposals_mod, "_retrieve_proposal_chunks",
+            lambda *a, **k: [
+                {"text": "Contractor shall install custom shower glass in Unit 05.",
+                 "document_name": "SOW.pdf"},
+            ],
+        )
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "the glass is installed",
+            embedding_provider=object(),  # non-None triggers RAG
+        )
+        assert batch.rag_chunks_used == 1
+        assert ex.context_calls, "extractor should have been called"
+        assert any("custom shower glass" in e for e in ex.context_calls[0])
+
+    def test_no_embedding_provider_means_no_rag(self, session, project, tasks):
+        """No embedding provider -> byte-identical pre-RAG behaviour (no excerpts)."""
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "the glass is installed",
+        )
+        assert batch.rag_chunks_used == 0
+        assert ex.context_calls == [[]]
+
+    def test_rag_retrieval_failure_is_swallowed(self, session, project, tasks, monkeypatch):
+        """A retrieval hiccup must not break ingest -- falls back to no excerpts."""
+        import project_db.ai.proposals as proposals_mod
+
+        def boom(*a, **k):
+            raise RuntimeError("vector store down")
+        monkeypatch.setattr(proposals_mod, "_retrieve_proposal_chunks", boom)
+
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "the glass is installed",
+            embedding_provider=object(),
+        )
+        assert batch.rag_chunks_used == 0
+        assert ex.context_calls == [[]]

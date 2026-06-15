@@ -1520,9 +1520,13 @@ def cmd_field_note(args: argparse.Namespace) -> int:
         print(f"[field-note] note:    {note_text[:120]}")
         print()
 
+        from project_db.ai.embeddings import get_optional_embedding_provider
+        embed_provider = get_optional_embedding_provider()
+
         batch = ingest_field_note(
             s, extractor, project.canonical_id, note_text,
             channel=NoteChannel.CLI,
+            embedding_provider=embed_provider,
         )
 
     if batch.skipped_reason:
@@ -1647,8 +1651,11 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
     print(f"[poll-mail] mailbox: {mailbox or '(all unprocessed)'}")
     print("[poll-mail] polling...")
 
+    from project_db.ai.embeddings import get_optional_embedding_provider
+    embed_provider = get_optional_embedding_provider()
+
     with session_scope() as s:
-        batch = poll_mailbox(s, extractor, poller)
+        batch = poll_mailbox(s, extractor, poller, embedding_provider=embed_provider)
 
     print(
         f"[poll-mail] done: {batch.total_seen} seen, "

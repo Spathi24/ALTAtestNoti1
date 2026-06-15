@@ -184,8 +184,31 @@ def _system_prompt() -> str:
         "- Return no signals (empty array) if the note is too vague to classify.\n"
         "- A declined task match (null task_index) is fine -- do not guess.\n"
         "- Never invent information not present in the note.\n"
-        "- Every signal MUST have a non-empty quoted_excerpt."
+        "- Every signal MUST have a non-empty quoted_excerpt.\n"
+        "- The user message may include RELEVANT CONTRACT/SCOPE EXCERPTS.  Use "
+        "them only as BACKGROUND to interpret the note (e.g. to recognise that "
+        "a mentioned item is contracted scope, or to gauge whether something is "
+        "a new_task vs. an existing obligation).  The quoted_excerpt must still "
+        "come from the NOTE, never from the excerpts."
     )
+
+
+def _render_context_excerpts(excerpts: list[str]) -> str:
+    """A RELEVANT CONTRACT/SCOPE EXCERPTS block for the user message.
+
+    Empty string when there are no excerpts -- so the prompt is byte-identical
+    to the pre-RAG prompt when no embedding provider is available.
+    """
+    cleaned = [" ".join((e or "").split()) for e in excerpts if (e or "").strip()]
+    if not cleaned:
+        return ""
+    lines = [
+        "RELEVANT CONTRACT/SCOPE EXCERPTS (semantic search -- background only, "
+        "do NOT quote these as the signal's quoted_excerpt):"
+    ]
+    for body in cleaned:
+        lines.append(f"- {body}")
+    return "\n".join(lines) + "\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +225,20 @@ class FieldNoteExtractor(ABC):
 
     @abstractmethod
     def extract(
-        self, *, note_text: str, task_lines: list[str], status_labels: list[str] = ()
+        self,
+        *,
+        note_text: str,
+        task_lines: list[str],
+        status_labels: list[str] = (),
+        context_excerpts: list[str] = (),
     ) -> dict[str, Any]:
-        """Return a dict conforming to FIELD_NOTE_SCHEMA's schema."""
+        """Return a dict conforming to FIELD_NOTE_SCHEMA's schema.
+
+        ``context_excerpts`` are RAG-retrieved document passages (contract /
+        scope text) relevant to the note -- the same evidence base the
+        generate-proposals path uses, so a note can be cross-checked against
+        the contract instead of the task list alone.
+        """
         raise NotImplementedError
 
 
@@ -234,7 +268,12 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         self._client = OpenAI(api_key=key, base_url=base_url, timeout=timeout_seconds)
 
     def extract(
-        self, *, note_text: str, task_lines: list[str], status_labels: list[str] = ()
+        self,
+        *,
+        note_text: str,
+        task_lines: list[str],
+        status_labels: list[str] = (),
+        context_excerpts: list[str] = (),
     ) -> dict[str, Any]:
         task_block = "\n".join(
             f"[{i}] {title}" for i, title in enumerate(task_lines)
@@ -244,10 +283,12 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
             if status_labels
             else "- Working on it\n- Done\n- Stuck\n- Future steps\n- On Hold"
         )
+        excerpt_block = _render_context_excerpts(context_excerpts)
         user = (
             f"TASK LIST (0-based index):\n{task_block}\n\n"
             f"VALID STATUS LABELS (use one of these EXACTLY for proposed_status):\n"
             f"{labels_block}\n\n"
+            f"{excerpt_block}"
             f"FIELD NOTE:\n{note_text}"
         )
         try:
@@ -280,11 +321,20 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         self._responses = list(responses or [])
         self._idx = 0
         self.calls: list[tuple[str, list[str]]] = []
+        # Records the context_excerpts each call received, so tests can assert
+        # RAG passages were actually threaded into the extractor.
+        self.context_calls: list[list[str]] = []
 
     def extract(
-        self, *, note_text: str, task_lines: list[str], status_labels: list[str] = ()
+        self,
+        *,
+        note_text: str,
+        task_lines: list[str],
+        status_labels: list[str] = (),
+        context_excerpts: list[str] = (),
     ) -> dict[str, Any]:
         self.calls.append((note_text, task_lines))
+        self.context_calls.append(list(context_excerpts))
         if self._idx < len(self._responses):
             r = self._responses[self._idx]
             self._idx += 1
@@ -306,6 +356,7 @@ class FieldNoteBatch:
     proposals: list[Proposal] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped_reason: str | None = None
+    rag_chunks_used: int = 0
 
     @property
     def signal_count(self) -> int:
@@ -385,9 +436,18 @@ def ingest_field_note(
     channel: NoteChannel = NoteChannel.CLI,
     sender_ref: str | None = None,
     email_ingest_id: str | None = None,
+    embedding_provider: Any | None = None,
+    rag_top_k: int = 6,
+    rag_min_similarity: float = 0.25,
 ) -> FieldNoteBatch:
     """Classify a field note, persist signals + proposals.  The entry point for
     CLI and web (A5).  Flushes but does not commit -- caller owns the transaction.
+
+    When ``embedding_provider`` is supplied, the note is enriched with
+    RAG-retrieved contract/scope excerpts (the same evidence base the
+    generate-proposals path uses) so the model can interpret the note against
+    the contract -- not the task list alone.  Retrieval never raises; a hiccup
+    just yields the pre-RAG behaviour.
 
     Returns a FieldNoteBatch with the created FieldNote and Proposal rows.
     """
@@ -426,12 +486,30 @@ def ingest_field_note(
         {t.monday_status_label for t in tasks if t.monday_status_label}
     )
 
+    # RAG: pull contract/scope passages relevant to THIS note, so the model
+    # can cross-check the note against the contract (same evidence base as the
+    # generate-proposals path).  Best-effort -- never breaks ingest.
+    context_excerpts: list[str] = []
+    if embedding_provider is not None:
+        try:
+            from project_db.ai.proposals import _retrieve_proposal_chunks
+
+            chunks = _retrieve_proposal_chunks(
+                session, embedding_provider, pid, raw_text.strip(),
+                top_k=rag_top_k, min_similarity=rag_min_similarity,
+            )
+            context_excerpts = [c.get("text") or "" for c in chunks]
+            batch.rag_chunks_used = len(context_excerpts)
+        except Exception:  # noqa: BLE001 -- retrieval must never break ingest
+            context_excerpts = []
+
     # One structured-output call: classify + match tasks.
     try:
         result = extractor.extract(
             note_text=raw_text.strip(),
             task_lines=task_lines,
             status_labels=known_labels,
+            context_excerpts=context_excerpts,
         )
     except FieldNoteExtractorError as exc:
         batch.errors.append(f"extraction failed: {exc}")

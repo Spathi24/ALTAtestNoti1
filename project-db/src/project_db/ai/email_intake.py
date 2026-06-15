@@ -485,6 +485,7 @@ def poll_mailbox(
     poller: BaseGmailPoller,
     *,
     attachment_dir: str | None = None,
+    embedding_provider: Any | None = None,
 ) -> EmailPollBatch:
     """Poll the Gmail mailbox and ingest any new field notes.
 
@@ -516,6 +517,7 @@ def poll_mailbox(
                 gmail_id=gmail_id,
                 batch=batch,
                 attachment_dir=attach_base,
+                embedding_provider=embedding_provider,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("[GMAIL] Unexpected error processing %s", gmail_id)
@@ -538,6 +540,7 @@ def _process_one(
     gmail_id: str,
     batch: EmailPollBatch,
     attachment_dir: str,
+    embedding_provider: Any | None = None,
 ) -> None:
     """Process a single Gmail message.  All side-effects happen here."""
     # ----- Dedup check -----
@@ -649,6 +652,7 @@ def _process_one(
         channel=NoteChannel.EMAIL,
         sender_ref=sender_email,
         email_ingest_id=str(ingest.canonical_id),
+        embedding_provider=embedding_provider,
     )
     batch.field_note_batches.append(fn_batch)
 

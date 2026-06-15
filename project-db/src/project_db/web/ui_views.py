@@ -87,9 +87,18 @@ def submit_field_note(
     except FieldNoteExtractorError as exc:
         return {"ok": False, "summary": f"Extractor unavailable: {exc}", "proposals": [], "errors": [str(exc)]}
 
+    # Same RAG evidence base the generate-proposals path uses (optional --
+    # None if no embedding provider is configured).
+    try:
+        from project_db.ai.embeddings import get_optional_embedding_provider
+        embed_provider = get_optional_embedding_provider()
+    except Exception:  # noqa: BLE001
+        embed_provider = None
+
     batch = ingest_field_note(
         session, extractor, project_id, note_text.strip(),
         channel=NoteChannel.WEB,
+        embedding_provider=embed_provider,
     )
 
     proposals_out = [

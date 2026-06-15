@@ -138,10 +138,14 @@ def run_refresh(
     if poll_mail:
         try:
             from project_db.ai.email_intake import GmailPoller, poll_mailbox
+            from project_db.ai.embeddings import get_optional_embedding_provider
             from project_db.ai.field_note_extraction import OpenAIFieldNoteExtractor
             extractor = OpenAIFieldNoteExtractor()
             poller = GmailPoller()
-            mail_batch = poll_mailbox(session, extractor, poller)
+            mail_batch = poll_mailbox(
+                session, extractor, poller,
+                embedding_provider=get_optional_embedding_provider(),
+            )
             summary = (
                 f"{mail_batch.total_seen} seen, "
                 f"{mail_batch.processed} processed, "
