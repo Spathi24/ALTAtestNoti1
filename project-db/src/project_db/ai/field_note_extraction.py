@@ -24,15 +24,27 @@ signals a potential new_task.  No auto-apply under any circumstances (A1).
 
 Task indexing mirrors proposals.py: tasks are passed by INTEGER INDEX so the
 model cannot subtly miscopy a 36-char UUID.  The service maps index -> id.
+
+Task list rendering (Strategy C):
+  Tasks are grouped by operational status (Active → Upcoming → Done) and
+  sorted within each group by a composite relevance score:
+    50% status weight  (Active tasks surface first regardless of other factors)
+    30% keyword-semantic overlap  (note text vs task title, no API call)
+    20% temporal proximity  (date distance from today; 0.5 neutral for undated)
+  The Done section is trimmed to ``_DONE_TRIM_K`` entries by relevance when
+  large.  Sub-tasks carry a parent annotation so the model understands
+  hierarchy without the parent needing to appear adjacent.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date as _date_type
 from datetime import datetime
 from typing import Any
 
@@ -92,6 +104,194 @@ def _load_image_b64(path: str) -> str | None:
     except OSError as exc:
         logger.warning("[field-note] cannot read image %s: %s -- skipped", path, exc)
         return None
+
+# ---------------------------------------------------------------------------
+# Task-block scoring: status × semantic × temporal composite
+# ---------------------------------------------------------------------------
+
+_STOPWORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "for", "on", "at",
+    "is", "was", "be", "been", "have", "has", "do", "did", "will", "with",
+    "this", "that", "it", "its", "by", "from", "are", "not", "no", "as",
+    "we", "they", "he", "she", "my", "our", "so", "if", "but", "up",
+})
+
+_ACTIVE_LABELS: frozenset[str] = frozenset(
+    {"working on it", "in progress", "in_progress", "stuck", "blocked"}
+)
+_DONE_LABELS: frozenset[str] = frozenset({"done", "complete", "completed"})
+
+_STATUS_SCORES: dict[str, float] = {
+    "Working on it": 1.00,
+    "In Progress":   1.00,
+    "Stuck":         0.95,
+    "Blocked":       0.95,
+    "TODO":          0.55,
+    "On Hold":       0.45,
+    "Future steps":  0.40,
+    "Done":          0.10,
+}
+
+_DONE_TRIM_K = 30
+
+
+def _keyword_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        w for w in re.findall(r"[a-z]+", (text or "").lower())
+        if w not in _STOPWORDS and len(w) > 2
+    )
+
+
+def _task_status_label(task: "Task") -> str:
+    return (
+        task.monday_status_label
+        or (task.status.value if hasattr(task.status, "value") else str(task.status or "TODO"))
+    )
+
+
+def _task_status_score(task: "Task") -> float:
+    label = _task_status_label(task)
+    # Canonical enum values ("IN_PROGRESS", "DONE", "BLOCKED") map via aliases.
+    _aliases = {"IN_PROGRESS": "Working on it", "DONE": "Done", "BLOCKED": "Stuck", "TODO": "TODO"}
+    resolved = _aliases.get(label, label)
+    return _STATUS_SCORES.get(resolved, 0.30)
+
+
+def _task_temporal_score(task: "Task", today: _date_type) -> float:
+    """Proximity of the task's dates to today.  0.5 for undated (neutral)."""
+    dates = [d for d in [task.start_date, task.end_date] if d]
+    if hasattr(task, "due_date") and task.due_date:
+        dates.append(task.due_date)
+    if not dates:
+        return 0.5
+    min_days = min(abs((d - today).days) for d in dates)
+    if min_days <= 7:
+        return 1.00
+    if min_days <= 14:
+        return 0.85
+    if min_days <= 30:
+        return 0.65
+    if min_days <= 60:
+        return 0.45
+    if min_days <= 90:
+        return 0.30
+    return 0.15
+
+
+def _task_semantic_score(task: "Task", note_tokens: frozenset[str]) -> float:
+    """Keyword recall: fraction of task-title tokens present in the note."""
+    task_tokens = _keyword_tokens(task.title or "")
+    if not task_tokens or not note_tokens:
+        return 0.0
+    return len(task_tokens & note_tokens) / len(task_tokens)
+
+
+def _task_composite(task: "Task", note_tokens: frozenset[str], today: _date_type) -> float:
+    return (
+        0.50 * _task_status_score(task)
+        + 0.30 * _task_semantic_score(task, note_tokens)
+        + 0.20 * _task_temporal_score(task, today)
+    )
+
+
+def _task_bucket(task: "Task") -> str:
+    label = _task_status_label(task).lower()
+    if label in _ACTIVE_LABELS:
+        return "active"
+    if label in _DONE_LABELS:
+        return "done"
+    # Canonical enum fallback
+    if task.status is not None:
+        val = (task.status.value if hasattr(task.status, "value") else str(task.status)).upper()
+        if val in ("IN_PROGRESS", "BLOCKED"):
+            return "active"
+        if val == "DONE":
+            return "done"
+    return "upcoming"
+
+
+def _render_task_block(
+    tasks: list["Task"],
+    note_text: str,
+    *,
+    today: _date_type | None = None,
+    done_trim_k: int = _DONE_TRIM_K,
+) -> tuple[str, list]:
+    """Build a status-stratified, relevance-sorted task block for the LLM prompt.
+
+    Groups: Active (Working on it / Stuck) → Upcoming (TODO / Future steps /
+    On Hold) → Completed (Done, trimmed to done_trim_k by composite score).
+    Within each group, ordered by composite score (status 50%, keyword-semantic
+    30%, temporal 20%).  Subitems annotated with parent name + status for
+    disambiguation.  Indices are 0-based and contiguous across all sections.
+
+    Returns (rendered_str, task_ids) where task_ids[i] is the canonical_id of
+    the task at index i.  Section header lines are not indexed.
+    """
+    if not tasks:
+        return "(no tasks found for this project)", []
+
+    if today is None:
+        today = _date_type.today()
+
+    note_tokens = _keyword_tokens(note_text)
+    by_id = {t.canonical_id: t for t in tasks}
+
+    active: list["Task"] = []
+    upcoming: list["Task"] = []
+    done: list["Task"] = []
+    for t in tasks:
+        b = _task_bucket(t)
+        if b == "active":
+            active.append(t)
+        elif b == "done":
+            done.append(t)
+        else:
+            upcoming.append(t)
+
+    def sort_key(t: "Task") -> tuple:
+        return (-_task_composite(t, note_tokens, today), str(t.created_at or ""))
+
+    active.sort(key=sort_key)
+    upcoming.sort(key=sort_key)
+    done.sort(key=sort_key)
+
+    trimmed = 0
+    if len(done) > done_trim_k:
+        trimmed = len(done) - done_trim_k
+        done = done[:done_trim_k]
+
+    def parent_note(t: "Task") -> str:
+        if not t.is_subitem or t.parent_task_id is None:
+            return ""
+        parent = by_id.get(t.parent_task_id)
+        if parent is None:
+            return ""
+        return f"  (parent: {parent.title or '?'} [{_task_status_label(parent)}])"
+
+    lines: list[str] = []
+    task_ids: list = []
+
+    done_header = "COMPLETED — Done"
+    if trimmed:
+        done_header += f" (top {done_trim_k} of {done_trim_k + trimmed} by relevance)"
+
+    sections = [
+        ("ACTIVE — Working on it / Stuck", active),
+        ("UPCOMING — TODO / Future steps / On Hold", upcoming),
+        (done_header, done),
+    ]
+    for header, group in sections:
+        if not group:
+            continue
+        lines.append(f"-- {header} --")
+        for t in group:
+            idx = len(task_ids)
+            lines.append(f"[{idx}] {_task_context_line(t)}{parent_note(t)}")
+            task_ids.append(t.canonical_id)
+
+    return "\n".join(lines), task_ids
+
 
 # ---------------------------------------------------------------------------
 # Strict JSON schema for structured outputs
@@ -210,7 +410,9 @@ def _system_prompt(*, has_images: bool = False) -> str:
         "the classification (do not paraphrase).\n"
         "   - task_index: the 0-based index of the BEST matching task from "
         "the provided TASK LIST, or null if no task matches or if "
-        "classification is new_task / scope_change / other.\n"
+        "classification is new_task / scope_change / other.  The list is "
+        "grouped (Active first, Completed last) -- indices are consecutive "
+        "across all sections.  Sub-tasks include a parent annotation.\n"
         "   - proposed_status: use EXACTLY one of the VALID STATUS LABELS listed "
         "in the user message for status signals; null otherwise.\n"
         "   - proposed_start_date / proposed_end_date: ISO dates only if the "
@@ -314,13 +516,20 @@ class FieldNoteExtractor(ABC):
         self,
         *,
         note_text: str,
-        task_lines: list[str],
+        task_lines: list[str] = (),
+        task_block: str | None = None,
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
         note_timestamp: datetime | None = None,
         image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return a dict conforming to FIELD_NOTE_SCHEMA's schema.
+
+        ``task_block`` is a pre-rendered task list string (status-stratified,
+        relevance-sorted, parent-annotated) produced by ``_render_task_block``.
+        When provided it is used directly in the user message.  ``task_lines``
+        is the legacy flat-list fallback used by tests and callers that build
+        the block themselves; it is ignored when ``task_block`` is given.
 
         ``context_excerpts`` are RAG-retrieved document passages (contract /
         scope text) relevant to the note.
@@ -368,15 +577,18 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         self,
         *,
         note_text: str,
-        task_lines: list[str],
+        task_lines: list[str] = (),
+        task_block: str | None = None,
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
         note_timestamp: datetime | None = None,
         image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        task_block = "\n".join(
-            f"[{i}] {title}" for i, title in enumerate(task_lines)
-        ) if task_lines else "(no tasks found for this project)"
+        # task_block (pre-rendered) takes priority over legacy task_lines.
+        rendered_tasks = task_block if task_block is not None else (
+            "\n".join(f"[{i}] {title}" for i, title in enumerate(task_lines))
+            if task_lines else "(no tasks found for this project)"
+        )
         labels_block = (
             "\n".join(f"- {lbl}" for lbl in status_labels)
             if status_labels
@@ -386,7 +598,9 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         timestamp_block = _render_note_timestamp(note_timestamp) if note_timestamp else ""
         user_text = (
             f"{timestamp_block}"
-            f"TASK LIST (0-based index):\n{task_block}\n\n"
+            f"TASK LIST (0-based index, grouped by status — active first, "
+            f"completed last; sub-tasks show parent in parentheses):\n"
+            f"{rendered_tasks}\n\n"
             f"VALID STATUS LABELS (use one of these EXACTLY for proposed_status):\n"
             f"{labels_block}\n\n"
             f"{excerpt_block}"
@@ -447,21 +661,25 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
         self.timestamp_calls: list[datetime | None] = []
         # Records the image_paths each call received, for Win 3 photo tests.
         self.image_calls: list[list[str]] = []
+        # Records the pre-rendered task_block each call received (None when not passed).
+        self.block_calls: list[str | None] = []
 
     def extract(
         self,
         *,
         note_text: str,
-        task_lines: list[str],
+        task_lines: list[str] = (),
+        task_block: str | None = None,
         status_labels: list[str] = (),
         context_excerpts: list[str] = (),
         note_timestamp: datetime | None = None,
         image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        self.calls.append((note_text, task_lines))
+        self.calls.append((note_text, list(task_lines)))
         self.context_calls.append(list(context_excerpts))
         self.timestamp_calls.append(note_timestamp)
         self.image_calls.append(list(image_paths or []))
+        self.block_calls.append(task_block)
         if self._idx < len(self._responses):
             r = self._responses[self._idx]
             self._idx += 1
@@ -607,8 +825,9 @@ def ingest_field_note(
         .order_by(Task.created_at)
         .all()
     )
-    task_lines = [_task_context_line(t) for t in tasks]
-    task_ids = [t.canonical_id for t in tasks]
+    # Build a status-stratified, relevance-sorted block (Strategy C).
+    # task_ids mirrors the rendered order so task_index N -> task_ids[N].
+    task_block, task_ids = _render_task_block(tasks, raw_text.strip())
 
     # Collect unique Monday status labels from synced tasks so the model
     # uses labels that actually exist on this board.
@@ -641,7 +860,7 @@ def ingest_field_note(
     try:
         result = extractor.extract(
             note_text=raw_text.strip(),
-            task_lines=task_lines,
+            task_block=task_block,
             status_labels=known_labels,
             context_excerpts=context_excerpts,
             note_timestamp=note_received_at,
@@ -668,7 +887,7 @@ def ingest_field_note(
             _process_signal(
                 session, batch, sig, pid, raw_text,
                 channel, sender_ref, note_received_at,
-                task_ids, task_lines, eid,
+                task_ids, eid,
                 known_labels=known_labels,
             )
         except Exception as exc:  # noqa: BLE001
@@ -688,7 +907,6 @@ def _process_signal(
     sender_ref: str | None,
     received_at: datetime,
     task_ids: list,
-    task_lines: list[str],
     email_ingest_id: Any = None,
     *,
     known_labels: list[str] = (),
@@ -752,7 +970,7 @@ def _process_signal(
     # Create Proposal rows for actionable signals.
     _maybe_create_proposal(
         session, batch, sig, note_class, fn, project_id, matched_task_id,
-        task_ids, task_lines, conf, quoted, reasoning,
+        task_ids, conf, quoted, reasoning,
         known_labels=list(known_labels),
     )
 
@@ -838,7 +1056,6 @@ def _maybe_create_proposal(
     project_id: Any,
     matched_task_id: Any,
     task_ids: list,
-    task_lines: list[str],
     conf: float,
     quoted: str,
     reasoning: str = "",

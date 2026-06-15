@@ -17,6 +17,8 @@ Coverage:
   - _ACCEPTABLE_FIELDS now includes task_status
   - Win 3 photos: image_paths flows to extractor; photo-only notes proceed;
     _load_image_b64 size guard and extension filter
+  - Strategy C task rendering: status grouping, temporal + semantic scoring,
+    parent annotation, done trimming
 """
 from __future__ import annotations
 
@@ -32,7 +34,11 @@ from project_db.ai.field_note_extraction import (
     NoteChannel,
     NoteClass,
     _IMAGE_EXTS,
+    _DONE_TRIM_K,
     _load_image_b64,
+    _render_task_block,
+    _task_composite,
+    _keyword_tokens,
     ingest_field_note,
 )
 from project_db.ai.proposals import _ACCEPTABLE_FIELDS, accept_proposal
@@ -95,13 +101,19 @@ def _mock_done(task_index: int = 0) -> MockFieldNoteExtractor:
 
 
 def _mock_multi() -> MockFieldNoteExtractor:
-    """Two signals: task_progress + blocker."""
+    """Two signals: task_progress + blocker.
+
+    Note: "still working on the door, glass door still sticking"
+    After Strategy-C rendering, t2 ("Adjust glass door") scores highest via
+    keyword overlap ("door", "glass") and lands at index 0 in the UPCOMING
+    group.  Both signals reference task_index=0 (t2).
+    """
     return MockFieldNoteExtractor(responses=[{
         "signals": [
             {
                 "classification": "task_progress",
                 "quoted_excerpt": "still working on the door",
-                "task_index": 1,
+                "task_index": 0,
                 "proposed_status": "In Progress",
                 "proposed_start_date": None,
                 "proposed_end_date": None,
@@ -113,7 +125,7 @@ def _mock_multi() -> MockFieldNoteExtractor:
             {
                 "classification": "blocker",
                 "quoted_excerpt": "glass door still sticking",
-                "task_index": 1,
+                "task_index": 0,
                 "proposed_status": "Blocked",
                 "proposed_start_date": None,
                 "proposed_end_date": None,
@@ -287,11 +299,13 @@ class TestIngestHappyPath:
         assert NoteClass.BLOCKER in classes
 
     def test_date_shift_with_dates_creates_timeline_proposal(self, session, project, tasks):
+        # "drywall pushed to next week": t3 ("Drywall finishing") wins on
+        # keyword overlap ("drywall") and is placed at index 0 in UPCOMING.
         ex = MockFieldNoteExtractor(responses=[{
             "signals": [{
                 "classification": "date_shift",
                 "quoted_excerpt": "drywall pushed to next week",
-                "task_index": 2,
+                "task_index": 0,
                 "proposed_status": None,
                 "proposed_start_date": "2026-06-20",
                 "proposed_end_date": "2026-06-27",
@@ -822,7 +836,9 @@ class TestFieldNoteSubtaskWindow:
 
     def test_date_shift_outside_parent_window_warns(self, session, project):
         self._parent_and_subtask(session, project)
-        ex = self._date_shift_mock(1, "2026-08-10", "2026-08-20")  # after Jul 31
+        # "Sub A pushed to August": "Sub A" wins keyword overlap ("sub") -> index 0.
+        # Parent "Phase 1" has temporal boost (dated Jul 1-31) but zero semantic -> index 1.
+        ex = self._date_shift_mock(0, "2026-08-10", "2026-08-20")  # after Jul 31
         batch = ingest_field_note(session, ex, project.canonical_id, "Sub A pushed to August")
         # Proposal still created (A1: advise, don't block) but flagged.
         assert len(batch.proposals) == 1
@@ -830,7 +846,8 @@ class TestFieldNoteSubtaskWindow:
 
     def test_date_shift_within_parent_window_no_warning(self, session, project):
         self._parent_and_subtask(session, project)
-        ex = self._date_shift_mock(1, "2026-07-10", "2026-07-20")  # within Jul 1-31
+        # "Sub A mid-July": same ordering -- sub at index 0.
+        ex = self._date_shift_mock(0, "2026-07-10", "2026-07-20")  # within Jul 1-31
         batch = ingest_field_note(session, ex, project.canonical_id, "Sub A mid-July")
         assert len(batch.proposals) == 1
         assert not any("outside parent" in w for w in batch.warnings)
@@ -929,3 +946,146 @@ class TestLoadImageB64:
     def test_image_exts_constant_covers_common_formats(self):
         for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
             assert ext in _IMAGE_EXTS
+
+
+# ---------------------------------------------------------------------------
+# Strategy C -- _render_task_block: status grouping + scoring
+# ---------------------------------------------------------------------------
+
+
+class TestRenderTaskBlock:
+    """Unit tests for the composite-score task block renderer."""
+
+    def _make_task(self, title, status_label, *, is_subitem=False, parent_id=None,
+                   start=None, end=None):
+        """Build a minimal Task-like object without hitting the DB."""
+        from unittest.mock import MagicMock
+        t = MagicMock()
+        t.title = title
+        t.monday_status_label = status_label
+        t.status = None
+        t.is_subitem = is_subitem
+        t.parent_task_id = parent_id
+        t.canonical_id = uuid.uuid4()
+        t.start_date = start
+        t.end_date = end
+        t.due_date = None  # prevent MagicMock from returning a truthy mock
+        t.created_at = datetime.utcnow()
+        return t
+
+    def test_active_tasks_appear_before_upcoming_and_done(self):
+        from datetime import date as _d
+        active = self._make_task("Framing", "Working on it")
+        upcoming = self._make_task("Paint", "Future steps")
+        done = self._make_task("Demo", "Done")
+
+        rendered, ids = _render_task_block(
+            [done, upcoming, active], "framing work", today=_d(2026, 6, 15)
+        )
+        lines = rendered.splitlines()
+        active_hdr = next(i for i, l in enumerate(lines) if "ACTIVE" in l)
+        upcoming_hdr = next(i for i, l in enumerate(lines) if "UPCOMING" in l)
+        done_hdr = next(i for i, l in enumerate(lines) if "COMPLETED" in l)
+        assert active_hdr < upcoming_hdr < done_hdr
+
+    def test_indices_are_contiguous_and_match_task_ids(self):
+        from datetime import date as _d
+        tasks = [
+            self._make_task("Task A", "Working on it"),
+            self._make_task("Task B", "Future steps"),
+            self._make_task("Task C", "Done"),
+        ]
+        rendered, ids = _render_task_block(tasks, "task note", today=_d(2026, 6, 15))
+        assert len(ids) == 3
+        # Every [N] in rendered maps to ids[N]
+        import re as _re
+        found_indices = [int(m) for m in _re.findall(r"\[(\d+)\]", rendered)]
+        assert found_indices == list(range(len(ids)))
+
+    def test_subitem_includes_parent_annotation(self, session, project):
+        from datetime import date as _d
+        parent = Task(
+            title="Wall finishes", status=TaskStatus.TODO,
+            monday_status_label="Working on it",
+            project_id=project.canonical_id, is_subitem=False,
+        )
+        session.add(parent)
+        session.flush()
+        sub = Task(
+            title="Drywall repair", status=TaskStatus.TODO,
+            monday_status_label="Working on it",
+            project_id=project.canonical_id, is_subitem=True,
+            parent_task_id=parent.canonical_id,
+        )
+        session.add(sub)
+        session.flush()
+
+        rendered, ids = _render_task_block([parent, sub], "drywall", today=_d(2026, 6, 15))
+        assert "parent: Wall finishes" in rendered
+
+    def test_done_section_trimmed_to_done_trim_k(self):
+        from datetime import date as _d
+        done_tasks = [
+            self._make_task(f"Done task {i}", "Done") for i in range(_DONE_TRIM_K + 5)
+        ]
+        rendered, ids = _render_task_block(done_tasks, "something", today=_d(2026, 6, 15))
+        assert len(ids) == _DONE_TRIM_K
+        assert f"top {_DONE_TRIM_K} of {_DONE_TRIM_K + 5}" in rendered
+
+    def test_done_not_trimmed_when_under_limit(self):
+        from datetime import date as _d
+        done_tasks = [self._make_task(f"Done {i}", "Done") for i in range(5)]
+        rendered, ids = _render_task_block(done_tasks, "something", today=_d(2026, 6, 15))
+        assert len(ids) == 5
+        assert "top" not in rendered
+
+    def test_semantic_score_raises_matching_task(self):
+        from datetime import date as _d
+        # "drywall" in note: drywall task should score higher than glass task
+        drywall = self._make_task("Drywall finishing", "Future steps")
+        glass = self._make_task("Adjust glass door", "Future steps")
+        rendered, ids = _render_task_block(
+            [glass, drywall], "drywall repair needed", today=_d(2026, 6, 15)
+        )
+        # drywall task should be first in UPCOMING (index 0)
+        drywall_line = next(l for l in rendered.splitlines() if "Drywall" in l)
+        assert "[0]" in drywall_line
+
+    def test_temporal_proximity_boosts_within_group(self):
+        from datetime import date as _d
+        today = _d(2026, 6, 15)
+        near = self._make_task("Near task", "Future steps",
+                               start=_d(2026, 6, 20), end=_d(2026, 6, 25))
+        far = self._make_task("Far task", "Future steps",
+                              start=_d(2026, 12, 1), end=_d(2026, 12, 31))
+        undated = self._make_task("Undated task", "Future steps")
+        rendered, ids = _render_task_block(
+            [far, undated, near], "general update", today=today
+        )
+        # near task wins temporal (1.0), undated is neutral (0.5), far is low (0.15)
+        near_line = next(l for l in rendered.splitlines() if "Near task" in l)
+        assert "[0]" in near_line
+
+    def test_undated_task_not_buried_below_far_future(self):
+        """Undated (0.5 temporal) beats far-future (0.15 temporal) in the ranking."""
+        from datetime import date as _d
+        today = _d(2026, 6, 15)
+        far = self._make_task("Far future task", "Future steps",
+                              start=_d(2027, 6, 1), end=_d(2027, 6, 30))
+        undated = self._make_task("Undated task", "Future steps")
+        rendered, ids = _render_task_block([far, undated], "general note", today=today)
+        undated_line = next(l for l in rendered.splitlines() if "Undated" in l)
+        assert "[0]" in undated_line
+
+    def test_empty_task_list_returns_placeholder(self):
+        rendered, ids = _render_task_block([], "anything")
+        assert "no tasks" in rendered
+        assert ids == []
+
+    def test_block_calls_received_by_mock_extractor(self, session, project, tasks):
+        """ingest_field_note passes the pre-rendered task_block to the extractor."""
+        ex = MockFieldNoteExtractor(responses=[{"signals": []}])
+        ingest_field_note(session, ex, project.canonical_id, "some note text")
+        assert len(ex.block_calls) == 1
+        assert ex.block_calls[0] is not None
+        assert "-- UPCOMING" in ex.block_calls[0]
