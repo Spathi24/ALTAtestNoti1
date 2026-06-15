@@ -718,3 +718,45 @@ class TestFieldNoteRag:
         )
         assert batch.rag_chunks_used == 0
         assert ex.context_calls == [[]]
+
+
+class TestFieldNoteSubtaskWindow:
+    """A date_shift on a SUBTASK is bounded loosely by its parent's window."""
+
+    def _parent_and_subtask(self, session, project):
+        parent = Task(title="Phase 1", status=TaskStatus.TODO,
+                      project_id=project.canonical_id, is_subitem=False,
+                      start_date=date(2026, 7, 1), end_date=date(2026, 7, 31))
+        session.add(parent); session.commit()
+        sub = Task(title="Sub A", status=TaskStatus.TODO,
+                   project_id=project.canonical_id, is_subitem=True,
+                   parent_task_id=parent.canonical_id)
+        session.add(sub); session.commit()
+        return parent, sub  # parent=index 0, subtask=index 1
+
+    def _date_shift_mock(self, task_index, start, end):
+        return MockFieldNoteExtractor(responses=[{"signals": [{
+            "classification": "date_shift",
+            "quoted_excerpt": "pushed to next month",
+            "task_index": task_index,
+            "proposed_status": None,
+            "proposed_start_date": start,
+            "proposed_end_date": end,
+            "new_task_title": None, "workers": None, "hours_worked": None,
+            "confidence": 0.8, "reasoning": "note says so",
+        }]}])
+
+    def test_date_shift_outside_parent_window_warns(self, session, project):
+        self._parent_and_subtask(session, project)
+        ex = self._date_shift_mock(1, "2026-08-10", "2026-08-20")  # after Jul 31
+        batch = ingest_field_note(session, ex, project.canonical_id, "Sub A pushed to August")
+        # Proposal still created (A1: advise, don't block) but flagged.
+        assert len(batch.proposals) == 1
+        assert any("outside parent" in w for w in batch.warnings)
+
+    def test_date_shift_within_parent_window_no_warning(self, session, project):
+        self._parent_and_subtask(session, project)
+        ex = self._date_shift_mock(1, "2026-07-10", "2026-07-20")  # within Jul 1-31
+        batch = ingest_field_note(session, ex, project.canonical_id, "Sub A mid-July")
+        assert len(batch.proposals) == 1
+        assert not any("outside parent" in w for w in batch.warnings)

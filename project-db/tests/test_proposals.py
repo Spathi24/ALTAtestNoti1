@@ -350,6 +350,45 @@ class TestGenerateTimelineProposals:
         assert batch.created_count == 1
         assert any("no reasoning" in w for w in batch.warnings)
 
+    def _project_with_dated_parent_and_subtask(self, session, client_factory):
+        """Helper: project with a dated parent 'Phase 1' (Jul 1-31 2026) and one
+        dateless subtask under it.  Returns (project, parent, subtask)."""
+        c = client_factory(name="Acme")
+        p = Project(name="P", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
+        session.add(p); session.commit()
+        parent = Task(title="Phase 1", status=TaskStatus.TODO, project_id=p.canonical_id,
+                      is_subitem=False, start_date=date(2026, 7, 1), end_date=date(2026, 7, 31))
+        session.add(parent); session.commit()
+        sub = Task(title="Sub A", status=TaskStatus.TODO, project_id=p.canonical_id,
+                   is_subitem=True, parent_task_id=parent.canonical_id)
+        session.add(sub); session.commit()
+        return p, parent, sub
+
+    def test_subtask_outside_parent_window_warns(self, session, client_factory):
+        """A subtask proposed outside its parent's window is still created but
+        flagged (loose bound: warn, never reject)."""
+        p, _parent, _sub = self._project_with_dated_parent_and_subtask(session, client_factory)
+        provider = _mock([  # Aug is AFTER the parent's Jul 31 end
+            {"task_index": 0, "proposed_start": "2026-08-15", "proposed_end": "2026-08-20",
+             "confidence": 0.8, "reasoning": "x", "source_document": ""},
+        ])
+        batch = generate_timeline_proposals(session, provider, p.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        assert any("outside its parent" in w for w in batch.warnings)
+
+    def test_subtask_within_parent_window_no_window_warning(self, session, client_factory):
+        """Inside the parent window -> no parent-window warning."""
+        p, _parent, _sub = self._project_with_dated_parent_and_subtask(session, client_factory)
+        provider = _mock([  # within Jul 1-31
+            {"task_index": 0, "proposed_start": "2026-07-10", "proposed_end": "2026-07-20",
+             "confidence": 0.8, "reasoning": "x", "source_document": ""},
+        ])
+        batch = generate_timeline_proposals(session, provider, p.canonical_id)
+        session.commit()
+        assert batch.created_count == 1
+        assert not any("outside its parent" in w for w in batch.warnings)
+
     def test_well_evidenced_proposal_has_no_warnings(self, session, timeline_fixture):
         """Happy path: matched source + reasoning present -> zero warnings."""
         provider = _mock([
@@ -1028,6 +1067,33 @@ class TestAcceptProposal:
         result = accept_proposal(session, prop.canonical_id, writeback=conn)
         assert result["ok"] is False
         assert "subitem" in result["error"].lower()
+        assert conn.create_calls == []
+
+    def test_accept_scope_subitem_rejects_cross_project_parent(
+        self, session, timeline_fixture, client_factory
+    ):
+        """Safeguard: a pinned parent_task_id from ANOTHER project is refused --
+        we never create a cross-project subitem."""
+        other_c = client_factory(name="Other")
+        other = Project(name="Other P", status=ProjectStatus.ACTIVE, client_id=other_c.canonical_id)
+        session.add(other); session.commit()
+        foreign_parent = Task(title="Foreign", status=TaskStatus.TODO,
+                              project_id=other.canonical_id, is_subitem=False)
+        session.add(foreign_parent); session.commit()
+        prop = Proposal(
+            entity_type="Project", entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps({
+                "scope_item": "x", "suggested_task_title": "x",
+                "parent_task_id": str(foreign_parent.canonical_id), "reasoning": "y",
+            }),
+            confidence=0.7, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+        )
+        session.add(prop); session.commit()
+        conn = _FakeConnector(returns=True)
+        result = accept_proposal(session, prop.canonical_id, writeback=conn)
+        assert result["ok"] is False
+        assert "different project" in result["error"].lower()
         assert conn.create_calls == []
 
     def test_nonexistent_id(self, session):

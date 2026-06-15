@@ -355,6 +355,7 @@ class FieldNoteBatch:
     field_notes: list[FieldNote] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     skipped_reason: str | None = None
     rag_chunks_used: int = 0
 
@@ -669,6 +670,32 @@ def _normalize_status_label(proposed: str, known_labels: list[str]) -> str:
     return proposed
 
 
+def _subtask_window_note(
+    session: Session, task_id: Any, start: Any, end: Any
+) -> str | None:
+    """Advisory string when a subtask's proposed dates fall outside its parent's
+    window, else None.  Loose bound -- the caller warns, never blocks (A1)."""
+    task = session.query(Task).filter_by(canonical_id=task_id).one_or_none()
+    if task is None or not task.is_subitem or task.parent_task_id is None:
+        return None
+    parent = session.query(Task).filter_by(canonical_id=task.parent_task_id).one_or_none()
+    if parent is None:
+        return None
+    ps, pe = parent.start_date, parent.end_date or parent.due_date
+    if ps is None and pe is None:
+        return None
+    outside = (ps is not None and start is not None and start < ps) or (
+        pe is not None and end is not None and end > pe
+    )
+    if not outside:
+        return None
+    return (
+        f"subtask {task.title!r} proposed dates "
+        f"{start or '?'}..{end or '?'} fall outside parent {parent.title!r} "
+        f"window {ps or '?'}..{pe or '?'} -- verify before accepting"
+    )
+
+
 def _maybe_create_proposal(
     session: Session,
     batch: FieldNoteBatch,
@@ -752,6 +779,12 @@ def _maybe_create_proposal(
         }
         if reasoning:
             pv_dates["reasoning"] = reasoning
+        # Loose parent-window bound for a subtask date_shift: warn (don't block)
+        # when the proposed dates spill outside the parent task's window.
+        bound_note = _subtask_window_note(session, matched_task_id, start, end)
+        if bound_note:
+            pv_dates["parent_window_warning"] = bound_note
+            batch.warnings.append(bound_note)
         proposed_value = json.dumps(pv_dates)
         _supersede_prior(session, "Task", matched_task_id, "timeline")
         p = Proposal(

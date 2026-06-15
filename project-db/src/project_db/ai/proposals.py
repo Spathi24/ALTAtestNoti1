@@ -260,6 +260,31 @@ def generate_timeline_proposals(
     return batch
 
 
+def _parent_window(
+    task: dict[str, Any], tasks_by_id: dict[str, dict[str, Any]]
+) -> tuple[date | None, date | None] | None:
+    """For a SUBTASK, return its parent's (start, end) date window, or None.
+
+    Either bound may be None (the parent has only one date).  Returns None when
+    the task is not a subitem, has no parent, the parent isn't in this project's
+    context, or the parent has no dates -- i.e. nothing to bound against.  A
+    subtask's proposed schedule should fall loosely within this window.
+    """
+    if not task.get("is_subitem"):
+        return None
+    pid = task.get("parent_task_id")
+    if not pid:
+        return None
+    parent = tasks_by_id.get(str(pid))
+    if parent is None:
+        return None
+    ps = _parse_date(parent.get("start_date"))
+    pe = _parse_date(parent.get("end_date")) or _parse_date(parent.get("due_date"))
+    if ps is None and pe is None:
+        return None
+    return (ps, pe)
+
+
 def _build_timeline_prompt(
     ctx: ProjectContext,
     dateless: list[dict[str, Any]],
@@ -299,6 +324,9 @@ def _build_timeline_prompt(
         "NOT propose -- returning fewer proposals, or none, is correct.\n"
         "- proposed_start and proposed_end must both be on or after today; "
         "proposed_end on or after proposed_start.\n"
+        "- If a task is a SUBITEM of a parent that has a scheduled window "
+        "(shown inline next to the task as 'keep dates WITHIN x..y'), keep its "
+        "proposed dates within that window.\n"
         "- Every proposal must cite its specific evidence in 'reasoning'.\n"
         "- Output STRICT JSON only.  No prose, no markdown fences."
     )
@@ -330,9 +358,23 @@ def _build_timeline_prompt(
             "today.)"
         )
 
+    tasks_by_id = {str(t.get("canonical_id")): t for t in ctx.tasks}
     lines.append("\n=== TASKS NEEDING DATES (reference these by index) ===")
     for i, t in enumerate(dateless):
-        sub = " [subitem]" if t.get("is_subitem") else ""
+        sub = ""
+        if t.get("is_subitem"):
+            win = _parent_window(t, tasks_by_id)
+            if win:
+                ps, pe = win
+                parent = tasks_by_id.get(str(t.get("parent_task_id")), {})
+                lo = ps.isoformat() if ps else "?"
+                hi = pe.isoformat() if pe else "?"
+                sub = (
+                    f' [subitem of "{parent.get("title", "parent")}" -- '
+                    f"keep dates WITHIN {lo}..{hi}]"
+                )
+            else:
+                sub = " [subitem]"
         lines.append(f"[{i}] {t.get('title', '(untitled)')}{sub}")
 
     # Relevance-retrieved excerpts (RAG) -- targeted passages first, so a
@@ -421,6 +463,8 @@ def _persist_timeline_items(
     """
     # Map document name -> canonical id for source attribution.
     doc_id_by_name = {d["name"]: d["document_id"] for d in ctx.document_texts}
+    # Lookup for parent-window bounding of subtasks.
+    tasks_by_id = {str(t.get("canonical_id")): t for t in ctx.tasks}
 
     for raw_item in items:
         if not isinstance(raw_item, dict):
@@ -493,6 +537,21 @@ def _persist_timeline_items(
         except (ValueError, TypeError):
             batch.errors.append(f"task_index={idx}: bad canonical_id {task_cid!r}")
             continue
+
+        # Loose parent-window bound: a subtask's schedule should fall within its
+        # parent's window.  Warn (don't reject) when it spills outside -- the
+        # human may know better, but must see the conflict.
+        win = _parent_window(task, tasks_by_id)
+        if win is not None:
+            ps, pe = win
+            if (ps is not None and start < ps) or (pe is not None and end > pe):
+                parent = tasks_by_id.get(str(task.get("parent_task_id")), {})
+                batch.warnings.append(
+                    f"task_index={idx} ({_safe_title(dateless, idx)}): proposed "
+                    f"{start} -> {end} falls outside its parent "
+                    f"{parent.get('title', 'parent')!r} window "
+                    f"{ps or '?'}..{pe or '?'} -- verify before accepting"
+                )
 
         # Auto-supersede any prior PENDING timeline proposal for this task.
         superseded = (
@@ -1468,6 +1527,17 @@ def _accept_create_task(
                 "error": (
                     f"parent task {parent_id_raw} no longer exists -- "
                     f"cannot create subitem"
+                ),
+            }
+        # Safeguard: a subitem must be created under a parent of the SAME
+        # project.  A pinned id is normally same-project, but never cross
+        # projects on a stale or hand-edited proposal.
+        if parent_task.project_id != project.canonical_id:
+            return {
+                "ok": False,
+                "error": (
+                    f"parent task {parent_id_raw} belongs to a different "
+                    f"project -- refusing to create a cross-project subitem"
                 ),
             }
     elif parent_title:
