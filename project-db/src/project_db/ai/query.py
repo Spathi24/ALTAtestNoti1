@@ -211,6 +211,33 @@ class AiAssistant:
         except Exception:
             return []
 
+    def _task_tree_block(self, question: str) -> str:
+        """Deterministic hierarchy + dependency tree for a referenced project.
+
+        This is the fix for the askbot being hierarchy- and dependency-blind:
+        the flat whole-DB snapshot has no parent links and no dependencies, so a
+        task/sequence question could not be answered. When the question names a
+        project we hand the model that project's real tree (parents, deps,
+        schedule order, blocked-by annotations). Best-effort -- returns '' on no
+        ref / no match / any error.
+        """
+        try:
+            from project_db.ai.task_graph import build_task_graph, render_project_tree
+            from project_db.ai.views import _resolve_project
+
+            ref = extract_project_ref(question)
+            if not ref:
+                return ""
+            proj = _resolve_project(self.session, ref)
+            if proj is None:
+                return ""
+            graph = build_task_graph(self.session, proj.canonical_id)
+            if not graph.nodes:
+                return ""
+            return render_project_tree(graph) + "\n\n---\n\n"
+        except Exception:
+            return ""
+
     def answer_with_llm(
         self,
         question: str,
@@ -347,11 +374,27 @@ class AiAssistant:
                 for c in chunks
             ]
 
+        # Deterministic task tree (hierarchy + dependencies) for a referenced
+        # project -- the structured spine the flat snapshot lacks.
+        tree_block = self._task_tree_block(question)
+        if tree_block:
+            system = system + (
+                "\n\nTASK TREE:\n"
+                "- When a project is referenced you are given its TASK TREE: the "
+                "authoritative hierarchy (sub-tasks indented under their parent) "
+                "and dependency structure (each task annotated '<- blocked by: ...' "
+                "for unfinished predecessors), in schedule order.\n"
+                "- Use it as hard fact for ANY question about task structure, what "
+                "depends on what, sequence, or what is blocking a task. Do not "
+                "infer dependencies that the tree does not show."
+            )
+
         # Instruction at the TAIL: if the snapshot ever overflows the
         # context window, a front-loaded instruction is the first thing
         # truncated.
         user = (
             f"{excerpts_block}"
+            f"{tree_block}"
             f"DATABASE SNAPSHOT (JSON):\n{json.dumps(snapshot, default=str)}\n\n"
             "---\n\n"
             f"QUESTION: {question}\n\n"
