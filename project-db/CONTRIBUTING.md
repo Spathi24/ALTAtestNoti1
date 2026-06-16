@@ -41,13 +41,13 @@ Pre-commit runs the fast subset (format + lint + hygiene) automatically on
 | Gate | Where | Blocking? |
 |------|-------|-----------|
 | 958-test suite | CI (`test` job, py3.11 + py3.13) | **Yes** |
-| ruff lint | pre-commit + CI (`quality`) | informational → **ratcheting to yes** |
-| ruff format | pre-commit + CI | informational → **ratcheting to yes** |
+| ruff lint | pre-commit + CI (`quality`) | **Yes** (since the 2026-06-16 sweep) |
+| ruff format | pre-commit + CI | **Yes** (since the 2026-06-16 sweep) |
 | mypy | CI (`quality`) | informational (lenient baseline) |
 
-CI lives in `.github/workflows/ci.yml`. The `quality` job's lint/format steps
-are `continue-on-error: true` **only until the codebase-wide sweep lands**
-(§3); flip them to blocking the moment the tree is green.
+CI lives in `.github/workflows/ci.yml`. ruff lint + format are blocking now
+that the codebase-wide sweep (§3/§4) has landed and the tree is green. mypy
+stays informational until its baseline is worked down (§5).
 
 ## 3. Linting: the ratchet
 

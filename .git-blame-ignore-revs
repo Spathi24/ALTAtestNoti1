@@ -9,4 +9,5 @@
 # Add the FULL 40-char SHA of any pure-mechanical commit below, one per line,
 # with a comment. Do NOT list commits that also change behavior.
 
-# (none yet — the codebase-wide ruff format/autofix sweep will be recorded here)
+# Codebase-wide ruff autofix + format sweep (2026-06-16), no behavior change.
+6e34f4b640bdc485525cfe5e98e0f80c59c09a43

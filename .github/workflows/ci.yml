@@ -63,17 +63,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      # NOTE: flip continue-on-error to false (or delete it) once the
-      # codebase-wide ruff autofix + format sweep has landed and the tree is
-      # green. Until then these surface drift without blocking merges.
+      # ruff is BLOCKING as of the 2026-06-16 codebase-wide sweep (tree is
+      # green). mypy stays informational until the lenient baseline is worked
+      # down per CONTRIBUTING.md "Type checking: the ratchet".
       - name: ruff lint
-        continue-on-error: true
         run: python -m ruff check .
 
       - name: ruff format (check only)
-        continue-on-error: true
         run: python -m ruff format --check .
 
-      - name: mypy (lenient baseline)
+      - name: mypy (lenient baseline — informational)
         continue-on-error: true
         run: python -m mypy
