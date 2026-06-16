@@ -449,6 +449,34 @@ def _coerce_uuid(value: str) -> UUID | None:
         return None
 
 
+def project_gantt(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Data for the Gantt page: the project + a server-rendered SVG timeline.
+
+    Deterministic -- the SVG is built from the task graph (hierarchy + dates +
+    dependency edges), no LLM, recomputed free on every view. Returns ``None``
+    when the project id doesn't resolve so the route can 404.
+    """
+    from project_db.ai.task_graph import build_task_graph
+    from project_db.web.gantt import render_project_gantt_svg
+
+    pid = _coerce_uuid(project_id)
+    if pid is None:
+        return None
+    project = session.query(Project).filter_by(canonical_id=pid).one_or_none()
+    if project is None:
+        return None
+    graph = build_task_graph(session, pid)
+    dated = sum(1 for n in graph.nodes.values() if n.start_date and n.effective_end)
+    dep_count = sum(len(n.successor_ids) for n in graph.nodes.values())
+    return {
+        "project": {"name": project.name, "canonical_id": str(pid)},
+        "svg": render_project_gantt_svg(graph),
+        "task_count": len(graph.nodes),
+        "dated_count": dated,
+        "dependency_count": dep_count,
+    }
+
+
 def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
     """Assemble the data the project-detail template renders.
 

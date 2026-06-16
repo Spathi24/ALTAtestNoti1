@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project.name }} - Timeline{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.project.name }} &mdash; Timeline</h2>
+  <p>
+    <a href="/projects/{{ d.project.canonical_id }}">&larr; back to project</a>
+    &middot; {{ d.task_count }} tasks &middot; {{ d.dated_count }} dated
+    &middot; {{ d.dependency_count }} dependency link{{ "" if d.dependency_count == 1 else "s" }}
+  </p>
+</hgroup>
+
+<p>
+  Deterministic Gantt built from the task hierarchy, dates, and Monday
+  &ldquo;Dependent On&rdquo; links. Sub-tasks are indented under their parent;
+  amber arrows are dependencies (predecessor &rarr; successor); the dashed red
+  line is today. Tasks with no dates show &ldquo;no dates&rdquo; &mdash; a cue to
+  fill the schedule in.
+</p>
+
+<div style="overflow-x:auto; border:1px solid var(--pico-muted-border-color, #ccc); border-radius:6px;">
+  {{ d.svg | safe }}
+</div>
+
+<p style="margin-top:.6rem; font-size:.85rem;">
+  <strong>Legend:</strong>
+  <span style="color:#1565c0;">&#9632;</span> in&nbsp;progress
+  <span style="color:#2e7d32;">&#9632;</span> done
+  <span style="color:#c62828;">&#9632;</span> stuck/blocked
+  <span style="color:#ef6c00;">&#9632;</span> on&nbsp;hold
+  <span style="color:#78909c;">&#9632;</span> to&nbsp;do
+</p>
+{% endblock %}
