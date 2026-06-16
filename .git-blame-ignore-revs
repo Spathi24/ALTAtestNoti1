@@ -1,0 +1,12 @@
+# Commits listed here are skipped by `git blame` so that bulk mechanical
+# changes (auto-formatting, mass lint autofixes) don't bury the real authorship
+# of each line.
+#
+# Activate once per clone:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub's blame view honors this file automatically.)
+#
+# Add the FULL 40-char SHA of any pure-mechanical commit below, one per line,
+# with a comment. Do NOT list commits that also change behavior.
+
+# (none yet — the codebase-wide ruff format/autofix sweep will be recorded here)

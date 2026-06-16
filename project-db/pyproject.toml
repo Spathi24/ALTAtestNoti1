@@ -31,3 +31,45 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# presentation/ is a separate JS app at the repo root; ruff is scoped to this
+# package, so nothing to exclude here. Add paths if generated code appears.
+
+[tool.ruff.lint]
+# Pragmatic starting set we can hold GREEN today; ratchet up (B, SIM, PTH, PERF,
+# ASYNC) one rule-family per PR — see CONTRIBUTING.md "Linting: the ratchet".
+#   E/W pycodestyle, F pyflakes, I import-sort, UP pyupgrade,
+#   C4 comprehensions, RUF ruff-native.
+select = ["E", "F", "W", "I", "UP", "C4", "RUF"]
+ignore = [
+    "E501",  # line-too-long — owned by the formatter, not enforced as a lint
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are intentionally looser: imports after sys.path/env setup, terse
+# one-line setup (`s.add(x); s.flush()`), and throwaway unpacked vars.
+"tests/**" = ["E402", "E702", "F841"]
+"**/__init__.py" = ["F401"]          # package re-export surface
+"scripts/**" = ["E402"]              # demo scripts set up sys.path first
+
+[tool.ruff.lint.isort]
+known-first-party = ["project_db"]
+
+[tool.ruff.format]
+# Black-compatible. Activation across the codebase is a deliberate, separate
+# step (see CONTRIBUTING.md "Formatting") so the reformat lands in one tagged
+# commit recorded in .git-blame-ignore-revs.
+docstring-code-format = false
+
+[tool.mypy]
+# LENIENT baseline (the codebase is ~untyped today). We are NOT strict yet.
+# Adoption is a ratchet: type the high-traffic chokepoints first
+# (db/models, identity/, ai/views.py), tighten per-module via [[overrides]].
+# See CONTRIBUTING.md "Type checking: the ratchet". Not a blocking CI gate yet.
+python_version = "3.10"
+files = ["src/project_db"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_redundant_casts = true
+warn_unused_ignores = false
+check_untyped_defs = false
+disallow_untyped_defs = false

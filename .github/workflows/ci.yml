@@ -1,0 +1,79 @@
+name: CI
+
+# Runs the test suite + quality checks on every push and PR.
+# The 958-test suite is the BLOCKING gate (matches CLAUDE.md rule #3:
+# "keep the suite green"). Lint/format start as INFORMATIONAL
+# (continue-on-error) and flip to blocking once the codebase-wide ruff sweep
+# has landed — see CONTRIBUTING.md "Linting: the ratchet".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: project-db
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + dev/runtime extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ai,gdrive,content,rag,ui]"
+
+      - name: Run test suite (BLOCKING)
+        env:
+          # Tests run fully offline against mocks; no real keys needed.
+          LLM_PROVIDER: mock
+        run: python -m pytest tests/ -q
+
+  quality:
+    name: lint + types (informational for now)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # NOTE: flip continue-on-error to false (or delete it) once the
+      # codebase-wide ruff autofix + format sweep has landed and the tree is
+      # green. Until then these surface drift without blocking merges.
+      - name: ruff lint
+        continue-on-error: true
+        run: python -m ruff check .
+
+      - name: ruff format (check only)
+        continue-on-error: true
+        run: python -m ruff format --check .
+
+      - name: mypy (lenient baseline)
+        continue-on-error: true
+        run: python -m mypy

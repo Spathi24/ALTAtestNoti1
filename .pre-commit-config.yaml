@@ -1,0 +1,41 @@
+# Pre-commit hooks for the ALTA / project_db repo.
+#
+# One-time setup (from the repo root):
+#     py -3.13 -m pip install pre-commit
+#     py -3.13 -m pre_commit install
+#
+# Thereafter these run automatically on `git commit`, touching only the files
+# you staged. Run across everything on demand with:
+#     py -3.13 -m pre_commit run --all-files
+#
+# Philosophy (per the research + CONTRIBUTING.md): local hooks do FAST checks
+# only (format + lint + whitespace). The full 958-test suite runs in CI, not
+# here, so commits stay quick. Hooks that MODIFY files are ordered first.
+minimum_pre_commit_version: "3.5.0"
+repos:
+  # ---- generic hygiene (fast, modify-in-place) -------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.(md|svg)$'   # markdown line-breaks rely on trailing spaces
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]   # stops .sqlite / model dumps sneaking in
+      - id: detect-private-key   # belt-and-suspenders for the .env rule (N7)
+
+  # ---- ruff: lint (with autofix) then format ---------------------------------
+  # Scoped to the package; ruff auto-discovers project-db/pyproject.toml per file.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        name: ruff (lint + autofix)
+        args: ["--fix"]
+        files: '^project-db/.*\.py$'
+      - id: ruff-format
+        name: ruff (format)
+        files: '^project-db/.*\.py$'
