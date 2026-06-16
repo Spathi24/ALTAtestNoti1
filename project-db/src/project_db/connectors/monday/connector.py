@@ -1081,6 +1081,8 @@ class MondayConnector(BaseConnector):
             return find("date")
         if wanted == "timeline":
             return find("timeline")
+        if wanted == "dependency":
+            return find("dependency")
         if wanted == "budget":
             return find("numbers", "budget") or find("numbers")
         if wanted == "name":
@@ -1249,3 +1251,70 @@ class MondayConnector(BaseConnector):
             )
         board_id = int(ext_id.external_key.split(":", 1)[1])
         return self.client.create_item(board_id=board_id, item_name=title)
+
+    def set_task_dependencies(
+        self, successor_task: Any, predecessor_tasks: list[Any]
+    ) -> dict[str, Any]:
+        """Write the successor's Monday "Dependent On" column to point at the
+        predecessor items.
+
+        Resolves the successor's item + board + dependency column id and the
+        predecessors' Monday item ids, then writes the dependency column value
+        (``{"item_ids": [...]}``). Returns ``{"ok": bool, ...}``; the accept
+        handler mirrors the canonical edges on success (A2/A3: external write
+        first, local mirror second). Surfaces Monday API errors rather than
+        swallowing them.
+
+        NOTE: the dependency column-value shape (`{"item_ids": [...]}`) follows
+        the Platform API 2026-07 reference; this write path has not yet been
+        exercised against the live board -- validate on the first real accept.
+        """
+        ext = (
+            self.session.query(ExternalId)
+            .filter_by(
+                source=self.source,
+                entity_type="Task",
+                canonical_id=successor_task.canonical_id,
+            )
+            .one_or_none()
+        )
+        if not ext or (ext.external_key or "").startswith("board:"):
+            return {"ok": False, "error": "successor task has no Monday item mapping"}
+        try:
+            item_id = int(ext.external_key)
+        except (ValueError, TypeError):
+            return {"ok": False, "error": f"bad Monday item id {ext.external_key!r}"}
+        board_id = self._board_id_from_url(ext.external_url)
+        if board_id is None:
+            return {"ok": False, "error": "could not determine board id for successor"}
+        dep_col = self._resolve_column_id(board_id, "dependency")
+        if not dep_col:
+            return {"ok": False, "error": "this board has no dependency column"}
+
+        pred_item_ids: list[int] = []
+        for pt in predecessor_tasks:
+            pe = (
+                self.session.query(ExternalId)
+                .filter_by(
+                    source=self.source,
+                    entity_type="Task",
+                    canonical_id=pt.canonical_id,
+                )
+                .one_or_none()
+            )
+            if pe and not (pe.external_key or "").startswith("board:"):
+                try:
+                    pred_item_ids.append(int(pe.external_key))
+                except (ValueError, TypeError):
+                    continue
+        if not pred_item_ids:
+            return {"ok": False, "error": "no predecessor task has a Monday item mapping"}
+
+        # Raises RuntimeError on API error -> surfaced to the accept handler.
+        self.client.change_column_value(board_id, item_id, dep_col, {"item_ids": pred_item_ids})
+        return {
+            "ok": True,
+            "item_id": item_id,
+            "column": dep_col,
+            "predecessor_item_ids": pred_item_ids,
+        }

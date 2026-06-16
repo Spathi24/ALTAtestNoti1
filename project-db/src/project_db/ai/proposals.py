@@ -1281,7 +1281,83 @@ def bulk_dismiss_stale(
 # "scope_gap"    -> creates a new Monday item from a scope-gap proposal.
 # "new_task"     -> creates a new Monday item from a field-note signal.
 # "scope_change" -> creates a new Monday item from a field-note scope signal.
-_ACCEPTABLE_FIELDS = {"timeline", "task_status", "scope_gap", "new_task", "scope_change"}
+_ACCEPTABLE_FIELDS = {
+    "timeline",
+    "task_status",
+    "scope_gap",
+    "new_task",
+    "scope_change",
+    "dependency",
+}
+
+
+def propose_dependency(
+    session: Session,
+    successor_task_id: Any,
+    predecessor_task_ids: list[Any],
+    *,
+    evidence: str = "",
+    confidence: float = 0.9,
+    prompt_version: str = "dependency-manual-v1",
+) -> Proposal | None:
+    """Create a PENDING `dependency` proposal: "successor depends on these
+    predecessors" (advisor-not-actor -- it is NOT written to Monday until a
+    human accepts).
+
+    The producer seam for dependency edges. Today's callers create them
+    explicitly (CLI / a human recording a known dependency); a future LLM
+    generator that *suggests* edges over the task graph would call this same
+    function. Validates the targets are real tasks on one project; supersedes
+    any prior PENDING dependency proposal for the same successor. Returns the
+    Proposal, or None if the targets are invalid.
+    """
+    from project_db.db.models.work import Task
+
+    successor = session.query(Task).filter_by(canonical_id=successor_task_id).one_or_none()
+    if successor is None:
+        return None
+    clean: list[str] = []
+    for raw in predecessor_task_ids or []:
+        pt = session.query(Task).filter_by(canonical_id=raw).one_or_none()
+        if (
+            pt is None
+            or pt.canonical_id == successor.canonical_id
+            or pt.project_id != successor.project_id
+        ):
+            continue
+        clean.append(str(pt.canonical_id))
+    if not clean:
+        return None
+
+    # Supersede any prior PENDING dependency proposal for the same successor
+    # (one open dependency proposal per task at a time).
+    for prior in (
+        session.query(Proposal)
+        .filter_by(
+            entity_type="Task",
+            entity_id=successor.canonical_id,
+            field_name="dependency",
+            status=ProposalStatus.PENDING,
+        )
+        .all()
+    ):
+        prior.status = ProposalStatus.SUPERSEDED
+
+    pv = {"predecessor_task_ids": clean}
+    if evidence:
+        pv["evidence"] = evidence
+    proposal = Proposal(
+        entity_type="Task",
+        entity_id=successor.canonical_id,
+        field_name="dependency",
+        proposed_value=json.dumps(pv),
+        confidence=confidence,
+        prompt_version=prompt_version,
+        status=ProposalStatus.PENDING,
+    )
+    session.add(proposal)
+    session.flush()
+    return proposal
 
 
 def accept_proposal(
@@ -1378,6 +1454,25 @@ def accept_proposal(
             decided_by=decided_by,
         )
 
+    if p.field_name == "dependency":
+        if p.entity_type != "Task":
+            return {
+                "ok": False,
+                "error": f"'dependency' requires entity_type=Task, got {p.entity_type!r}",
+            }
+        successor = session.query(Task).filter_by(canonical_id=p.entity_id).one_or_none()
+        if successor is None:
+            return {"ok": False, "error": f"target Task {p.entity_id} not found"}
+        return _accept_dependency(
+            session,
+            p,
+            successor,
+            value,
+            writeback=writeback,
+            dry_run=dry_run,
+            decided_by=decided_by,
+        )
+
     if p.field_name in ("scope_gap", "new_task", "scope_change"):
         if p.entity_type != "Project":
             return {
@@ -1468,6 +1563,112 @@ def _accept_timeline(
         "new_status": "ACCEPTED",
         "task_title": task.title,
         "wrote_to_monday": field_updates,
+        "decided_by": decided_by,
+    }
+
+
+def _accept_dependency(
+    session: Session,
+    p: Any,
+    successor_task: Any,
+    value: dict,
+    *,
+    writeback: Any,
+    dry_run: bool,
+    decided_by: str | None,
+) -> dict[str, Any]:
+    """Accept handler for field_name='dependency'.
+
+    Sets the successor task's Monday "Dependent On" column to the proposed
+    predecessor tasks, then mirrors the canonical edges (A2/A3: Monday write
+    first, local mirror second). ``proposed_value`` carries
+    ``{"predecessor_task_ids": [<uuid>, ...], "evidence": ...}``.
+    """
+    from project_db.db.models import SourceSystem
+    from project_db.db.models.work import Task, TaskDependency
+
+    raw_ids = value.get("predecessor_task_ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return {"ok": False, "error": "proposal has no predecessor_task_ids"}
+
+    predecessors: list[Any] = []
+    for raw in raw_ids:
+        try:
+            pu = uuid.UUID(str(raw))
+        except (ValueError, TypeError):
+            return {"ok": False, "error": f"bad predecessor id {raw!r}"}
+        pt = session.query(Task).filter_by(canonical_id=pu).one_or_none()
+        if pt is None:
+            return {"ok": False, "error": f"predecessor task {raw} not found"}
+        if pt.canonical_id == successor_task.canonical_id:
+            return {"ok": False, "error": "a task cannot depend on itself"}
+        if pt.project_id != successor_task.project_id:
+            return {
+                "ok": False,
+                "error": "refusing a cross-project dependency",
+            }
+        predecessors.append(pt)
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "proposal_id": str(p.canonical_id),
+            "task_title": successor_task.title,
+            "field": "dependency",
+            "would_write": {
+                "successor": successor_task.title,
+                "depends_on": [t.title for t in predecessors],
+            },
+            "note": "Nothing written. Re-run without dry_run to apply.",
+        }
+    if writeback is None:
+        return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
+
+    try:
+        res = writeback.set_task_dependencies(successor_task, predecessors)
+    except Exception as exc:
+        return {"ok": False, "error": f"Monday dependency write failed: {exc}"}
+    if not res or not res.get("ok"):
+        return {
+            "ok": False,
+            "error": (res or {}).get("error", "Monday dependency write returned no result"),
+        }
+
+    # Mirror the canonical edges (idempotent: only add missing pairs).
+    added = 0
+    for pt in predecessors:
+        exists = (
+            session.query(TaskDependency)
+            .filter_by(
+                predecessor_task_id=pt.canonical_id,
+                successor_task_id=successor_task.canonical_id,
+            )
+            .first()
+        )
+        if exists is None:
+            session.add(
+                TaskDependency(
+                    predecessor_task_id=pt.canonical_id,
+                    successor_task_id=successor_task.canonical_id,
+                    source=SourceSystem.MONDAY,
+                )
+            )
+            added += 1
+
+    p.status = ProposalStatus.ACCEPTED
+    p.decided_at = datetime.utcnow()
+    p.decided_by = decided_by
+    session.flush()
+    return {
+        "ok": True,
+        "dry_run": False,
+        "proposal_id": str(p.canonical_id),
+        "previous_status": "PENDING",
+        "new_status": "ACCEPTED",
+        "task_title": successor_task.title,
+        "wrote_to_monday": {"depends_on": [t.title for t in predecessors]},
+        "edges_added": added,
         "decided_by": decided_by,
     }
 

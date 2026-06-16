@@ -172,16 +172,26 @@ prompt (`proposals.py:368-383`, parent-window bounding — this part is good).
    dependency arrows, today marker, theme-adaptive. Verified live on Rockland.
    ✅ (Fixes D4.)
 
-**Phase 4 — Close the write loop. ⏳ REMAINING.**
-8. `update_dependency_column` / `change_column_value` for the dependency column
-   (write side — D5) + a `dependency` proposal type so the LLM can *suggest*
-   edges (human-approved) — the brief's "build the graph over time" idea,
-   advisor-not-actor (A1). Not yet built.
+**Phase 4 — Close the write loop. ✅ MECHANISM DONE (commit pending); auto-suggester deferred.**
+8. Write side (D5): `MondayConnector.set_task_dependencies` writes the
+   successor's "Dependent On" column (`change_column_value` with
+   `{"item_ids": [...]}`); a `dependency` proposal type + `_accept_dependency`
+   handler (advisor-not-actor: Monday write first, canonical edges mirrored
+   second); `propose_dependency` is the producer seam. The web accept flow
+   wires up automatically via `_ACCEPTABLE_FIELDS`. 10 tests, Monday mocked. ✅
+   - **NOTE:** the dependency-column write JSON follows the 2026-07 reference
+     but has NOT been exercised against the live board — validate on first
+     real accept.
+   - **DEFERRED:** the LLM *auto-suggester* that proposes likely edges over the
+     task graph (the brief's "build the graph over time"). The mechanism to
+     accept+write such proposals is ready; the generator that emits them is the
+     next increment.
 
-**Status 2026-06-16:** Phases 1-3 shipped (D1-D4 fixed). The dependency graph
-is captured, the LLM sees the hierarchy + dependencies, date shifts surface the
-cascade, and the Gantt makes it visible. **Remaining:** Phase 4 (dependency
-write-back, D5). Known data limit — cascades/arrows need dated dependents;
-Rockland's dependent subitems are mostly undated, so the engine maps the
-structure everywhere but computes date math only where dates exist (it now
-flags that gap rather than hiding it).
+**Status 2026-06-16:** Phases 1-3 shipped + Phase 4 mechanism (D1-D5 addressed).
+The dependency graph is captured, the LLM sees the hierarchy + dependencies,
+date shifts surface the cascade, the Gantt makes it visible, and human-approved
+dependency edges can be written back to Monday. **Remaining:** the LLM
+dependency auto-suggester (producer). Known data limit — cascades/arrows need
+dated dependents; Rockland's dependent subitems are mostly undated, so the
+engine maps the structure everywhere but computes date math only where dates
+exist (it now flags that gap rather than hiding it).
