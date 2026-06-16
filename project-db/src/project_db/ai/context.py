@@ -17,6 +17,7 @@ The ``token_budget`` knob is in characters/4 by the same heuristic the
 extractors use.  Default 150k tokens fits comfortably in Claude's 200k
 context; tune up for newer models, down for fine-tuned 8k-context ones.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -56,11 +57,12 @@ class ProjectContext:
     Two views: ``to_dict()`` for JSON serialization / debugging, and
     ``to_prompt_block()`` for dropping straight into a prompt.
     """
+
     project: dict[str, Any]
     client: dict[str, Any] | None
     tasks: list[dict[str, Any]]
-    documents: list[dict[str, Any]]          # metadata only
-    document_texts: list[dict[str, Any]]     # name + mime + text excerpt
+    documents: list[dict[str, Any]]  # metadata only
+    document_texts: list[dict[str, Any]]  # name + mime + text excerpt
     invoices: list[dict[str, Any]]
     daily_logs: list[dict[str, Any]]
     truncated: dict[str, Any] = field(default_factory=dict)
@@ -133,7 +135,7 @@ class ProjectContext:
                 parts.append(dt["text"])
 
         if self.truncated:
-            parts.append(f"\n=== TRUNCATION NOTES ===")
+            parts.append("\n=== TRUNCATION NOTES ===")
             for k, v in self.truncated.items():
                 parts.append(f"  {k}: {v}")
 
@@ -173,7 +175,8 @@ def assemble_project_context(
 
     client = (
         session.query(Client).filter_by(canonical_id=project.client_id).one_or_none()
-        if project.client_id else None
+        if project.client_id
+        else None
     )
     tasks = session.query(Task).filter_by(project_id=project_id).all()
     invoices = session.query(Invoice).filter_by(project_id=project_id).all()
@@ -210,14 +213,16 @@ def assemble_project_context(
     document_texts: list[dict[str, Any]] = []
     for d, dt in docs_with_text[:max_documents_with_text]:
         body = (dt.extracted_text or "")[:per_doc_char_cap]
-        document_texts.append({
-            "document_id": _ser(d.canonical_id),
-            "name": d.name,
-            "mime_type": d.mime_type,
-            "folder_path": d.folder_path,
-            "text": body,
-            "truncated": len(dt.extracted_text or "") > per_doc_char_cap,
-        })
+        document_texts.append(
+            {
+                "document_id": _ser(d.canonical_id),
+                "name": d.name,
+                "mime_type": d.mime_type,
+                "folder_path": d.folder_path,
+                "text": body,
+                "truncated": len(dt.extracted_text or "") > per_doc_char_cap,
+            }
+        )
 
     # Build the context, then fit it to budget.
     ctx = ProjectContext(

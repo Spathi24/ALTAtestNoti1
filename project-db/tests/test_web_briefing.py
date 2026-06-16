@@ -6,6 +6,7 @@ briefing renders, that items carry their severity + link, that an empty
 portfolio reads "All clear", and that the demoted counts grid is still present
 (so the Phase-A count assertions keep holding).
 """
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -17,10 +18,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
-from project_db.db.models.work import TaskStatus  # noqa: E402
+from project_db.db.base import Base
+from project_db.db.models.work import TaskStatus
 
 
 @pytest.fixture
@@ -56,7 +57,7 @@ class TestBriefingLanding:
     def test_empty_portfolio_reads_all_clear(self, client):
         r = client.get("/")
         assert r.status_code == 200
-        assert "Dashboard" in r.text            # title block preserved
+        assert "Dashboard" in r.text  # title block preserved
         assert "Today's briefing" in r.text
         assert "All clear" in r.text
         assert 'data-testid="briefing-item"' not in r.text
@@ -65,8 +66,12 @@ class TestBriefingLanding:
         self, client, session, project_factory, task_factory
     ):
         p = project_factory(name="Briefing Reno")
-        task_factory(project=p, title="Hang doors", status=TaskStatus.TODO,
-                     due_date=date.today() - timedelta(days=10))
+        task_factory(
+            project=p,
+            title="Hang doors",
+            status=TaskStatus.TODO,
+            due_date=date.today() - timedelta(days=10),
+        )
 
         r = client.get("/")
         assert r.status_code == 200
@@ -83,20 +88,26 @@ class TestBriefingLanding:
         project_factory(name="Count Proj")
         body = client.get("/").text
         for testid in (
-            "projects-total", "tasks-total", "tasks-dateless",
-            "docs-total", "docs-with-text", "proposals-total",
+            "projects-total",
+            "tasks-total",
+            "tasks-dateless",
+            "docs-total",
+            "docs-with-text",
+            "proposals-total",
             "proposals-pending",
         ):
             assert f'data-testid="{testid}"' in body
 
-    def test_briefing_count_matches_items(
-        self, client, session, project_factory, task_factory
-    ):
+    def test_briefing_count_matches_items(self, client, session, project_factory, task_factory):
         p = project_factory(name="Multi Proj")
         # 5 overdue -> a single HIGH schedule item.
         for i in range(5):
-            task_factory(project=p, title=f"t{i}", status=TaskStatus.TODO,
-                         due_date=date.today() - timedelta(days=3))
+            task_factory(
+                project=p,
+                title=f"t{i}",
+                status=TaskStatus.TODO,
+                due_date=date.today() - timedelta(days=3),
+            )
         body = client.get("/").text
         assert "pill-high" in body
         assert 'data-testid="briefing-count"' in body
@@ -107,10 +118,15 @@ class TestValueCaughtCard:
         from project_db.db.models import ContractObligation
 
         p = project_factory(name="VC Proj")
-        session.add(ContractObligation(
-            project_id=p.canonical_id, kind="payment_milestone",
-            direction="owed_to_us", amount=Decimal("12345"),
-            due_date=date.today() - timedelta(days=4)))
+        session.add(
+            ContractObligation(
+                project_id=p.canonical_id,
+                kind="payment_milestone",
+                direction="owed_to_us",
+                amount=Decimal("12345"),
+                due_date=date.today() - timedelta(days=4),
+            )
+        )
         session.commit()
 
         body = client.get("/").text
@@ -132,7 +148,13 @@ class TestUiViewsBriefing:
         out = attention_briefing(session)
         # Same shape report_attention_briefing returns.
         assert set(out) >= {
-            "generated_on", "item_count", "project_count", "shown_count",
-            "truncated", "by_category", "by_severity", "items",
+            "generated_on",
+            "item_count",
+            "project_count",
+            "shown_count",
+            "truncated",
+            "by_category",
+            "by_severity",
+            "items",
         }
         assert isinstance(out["items"], list)

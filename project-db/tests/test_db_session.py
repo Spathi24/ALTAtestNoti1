@@ -1,4 +1,5 @@
 """Tests for the engine, session factory, and session_scope context manager."""
+
 from __future__ import annotations
 
 import pytest

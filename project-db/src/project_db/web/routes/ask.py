@@ -5,10 +5,10 @@ instantly when a keyword matches; only the no-match fallthrough calls the
 fast model (Haiku).  This is the same dispatch the CLI's
 ``project_db ask "..."`` uses, so UI and CLI cannot drift.
 """
+
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
@@ -73,8 +73,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         return templates.TemplateResponse(
             request,
             "ask.html",
-            {"result": None, "question": "", "format": None, "mode": None,
-             "report": None},
+            {"result": None, "question": "", "format": None, "mode": None, "report": None},
         )
 
     @router.post("/ask", response_class=HTMLResponse)
@@ -125,8 +124,9 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         try:
             from project_db.ai.providers import get_fast_provider
+
             provider = get_fast_provider()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return templates.TemplateResponse(
                 request,
                 "ask.html",
@@ -147,18 +147,21 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         # RAG: supply relevant document excerpts when embeddings are available.
         try:
             from project_db.ai.embeddings import get_optional_embedding_provider
+
             embed_provider = get_optional_embedding_provider()
-        except Exception:  # noqa: BLE001 -- never break /ask on RAG setup
+        except Exception:
             embed_provider = None
 
         llm_resp = assistant.answer_with_llm(
-            question, provider, embedding_provider=embed_provider,
+            question,
+            provider,
+            embedding_provider=embed_provider,
         )
         text, fmt = _format_answer(llm_resp.answer)
         # De-duplicate cited documents for the "answered using" badge.
         sources = []
         seen = set()
-        for s in (llm_resp.sources or []):
+        for s in llm_resp.sources or []:
             name = s.get("document_name") or "(unknown)"
             if name not in seen:
                 seen.add(name)

@@ -25,6 +25,7 @@ Env vars (passed via config dict or picked up from environment):
   GDRIVE_IMPERSONATE   -- Workspace user to impersonate
   GDRIVE_ROOT_FOLDER   -- Drive folder ID to crawl (default: root)
 """
+
 from __future__ import annotations
 
 import json
@@ -147,9 +148,8 @@ class GDriveConnector(BaseConnector):
                 impersonate=impersonate,
             )
 
-        self.root_folder: str = (
-            self.config.get("root_folder")
-            or __import__("os").environ.get("GDRIVE_ROOT_FOLDER", "root")
+        self.root_folder: str = self.config.get("root_folder") or __import__("os").environ.get(
+            "GDRIVE_ROOT_FOLDER", "root"
         )
 
         # Off by default: every sync would otherwise issue one Drive download per
@@ -226,7 +226,7 @@ class GDriveConnector(BaseConnector):
             new_cursor = self.client.get_start_page_token()
             self._save_cursor(new_cursor)
             logger.info("[GDRIVE] Saved new cursor for delta sync: %s", new_cursor)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("[GDRIVE] Could not save delta-sync cursor: %s", exc)
 
     def _reconcile_removed(self) -> None:
@@ -278,7 +278,9 @@ class GDriveConnector(BaseConnector):
             removed += 1
             logger.info(
                 "[GDRIVE] Marked removed: %s (storage_ref=%s, folder_path=%s)",
-                doc.name, doc.storage_ref, doc.folder_path,
+                doc.name,
+                doc.storage_ref,
+                doc.folder_path,
             )
 
         if removed:
@@ -316,7 +318,7 @@ class GDriveConnector(BaseConnector):
 
         try:
             items = self.client.list_folder(folder_id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._record_failure(f"list_folder({folder_id}, path={folder_path!r}): {exc}")
             return
 
@@ -332,7 +334,9 @@ class GDriveConnector(BaseConnector):
                 bucket = _project_bucket_for_path(child_path)
                 if bucket is not None:
                     child_project_id = self._resolve_project_folder(
-                        item["id"], item["name"], bucket,
+                        item["id"],
+                        item["name"],
+                        bucket,
                     )
                 else:
                     child_project_id = project_id
@@ -473,7 +477,7 @@ class GDriveConnector(BaseConnector):
                 matcher=ExactFieldMatcher(["storage_ref"]),
             )
             self._record_result(result.was_created, result.was_matched)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._record_failure(f"Document {file_id} ({name}): {exc}")
             return
 
@@ -484,7 +488,7 @@ class GDriveConnector(BaseConnector):
                     client=self.client,
                     document=result.entity,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Never let extraction failure abort the sync.
                 self._record_failure(f"extract_content {file_id} ({name}): {exc}")
 
@@ -501,11 +505,7 @@ class GDriveConnector(BaseConnector):
         )
         if ext is None:
             return  # never saw this file -- nothing to do
-        doc = (
-            self.session.query(Document)
-            .filter_by(canonical_id=ext.canonical_id)
-            .one_or_none()
-        )
+        doc = self.session.query(Document).filter_by(canonical_id=ext.canonical_id).one_or_none()
         if doc is not None:
             doc.url = f"[removed] {doc.url}"
             self.session.flush()
@@ -516,7 +516,10 @@ class GDriveConnector(BaseConnector):
     # ------------------------------------------------------------------
 
     def _resolve_project_folder(
-        self, folder_id: str, folder_name: str, bucket: str,
+        self,
+        folder_id: str,
+        folder_name: str,
+        bucket: str,
     ) -> Any:
         """Return the canonical project_id for a Drive project folder.
 
@@ -563,7 +566,9 @@ class GDriveConnector(BaseConnector):
         self._folder_project_cache[folder_id] = result.entity.canonical_id
         logger.info(
             "[GDRIVE] project folder %r -> Project %s (%s)",
-            folder_name, result.entity.canonical_id, bucket,
+            folder_name,
+            result.entity.canonical_id,
+            bucket,
         )
         return result.entity.canonical_id
 

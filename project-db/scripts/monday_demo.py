@@ -23,6 +23,7 @@ Set in .env (project-db/.env):
 
 Or as environment variables before running.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,7 @@ from sqlalchemy.orm import Session
 
 def _get_session() -> Session:
     """Open a session against the configured DB (defaults to SQLite)."""
-    from project_db.db import get_engine, session_scope
+    from project_db.db import get_engine
     from project_db.db.base import Base
 
     engine = get_engine()
@@ -93,17 +94,26 @@ def cmd_inspect() -> None:
     from project_db.db import get_engine, session_scope
     from project_db.db.base import Base
     from project_db.db.models import (
-        Client, Deal, ExternalId, Invoice, Lead, Project, SourceSystem, Task, User,
+        Client,
+        Deal,
+        ExternalId,
+        Invoice,
+        Lead,
+        Project,
+        SourceSystem,
+        Task,
+        User,
     )
 
     engine = get_engine()
     Base.metadata.create_all(engine)
 
     with session_scope() as session:
+
         def _header(title: str) -> None:
-            print(f"\n{'-'*60}")
+            print(f"\n{'-' * 60}")
             print(f"  {title}")
-            print(f"{'-'*60}")
+            print(f"{'-' * 60}")
 
         _header("CLIENTS")
         for c in session.query(Client).all():
@@ -113,9 +123,11 @@ def cmd_inspect() -> None:
 
         _header("PROJECTS")
         for p in session.query(Project).all():
-            ext = session.query(ExternalId).filter_by(
-                canonical_id=p.canonical_id, source=SourceSystem.MONDAY
-            ).first()
+            ext = (
+                session.query(ExternalId)
+                .filter_by(canonical_id=p.canonical_id, source=SourceSystem.MONDAY)
+                .first()
+            )
             monday_key = ext.external_key if ext else "-"
             monday_url = ext.external_url if ext else "-"
             print(
@@ -131,8 +143,10 @@ def cmd_inspect() -> None:
             print(f"  [{t.canonical_id}]  {t.title:<40}  status={t.status.value}")
 
         _header("LEADS")
-        for l in session.query(Lead).all():
-            print(f"  [{l.canonical_id}]  stage={l.stage.value}  value={l.estimated_value}")
+        for lead in session.query(Lead).all():
+            print(
+                f"  [{lead.canonical_id}]  stage={lead.stage.value}  value={lead.estimated_value}"
+            )
 
         _header("DEALS")
         for d in session.query(Deal).all():
@@ -173,7 +187,6 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
       python scripts/monday_demo.py push <uuid> status=Done
       python scripts/monday_demo.py push <uuid> status="Working on it" budget=75000
     """
-    import json
 
     from project_db.connectors.monday import MondayConnector
     from project_db.db import get_engine, session_scope
@@ -208,6 +221,7 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
             field_updates["status"] = {"label": value}
             # Also map to canonical ProjectStatus if recognisable
             from project_db.db.models.work import ProjectStatus
+
             status_map = {
                 "done": ProjectStatus.COMPLETED,
                 "completed": ProjectStatus.COMPLETED,
@@ -247,10 +261,12 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
         entity_type = "Project"
         if entity is None:
             from project_db.db.models import Lead
+
             entity = session.query(Lead).filter_by(canonical_id=cid).one_or_none()
             entity_type = "Lead"
         if entity is None:
             from project_db.db.models import Deal
+
             entity = session.query(Deal).filter_by(canonical_id=cid).one_or_none()
             entity_type = "Deal"
         if entity is None:
@@ -267,11 +283,15 @@ def cmd_push(canonical_id_str: str, *updates: str) -> None:
         session.flush()
 
         # Look up Monday external ID to confirm the item is tracked
-        ext = session.query(ExternalId).filter_by(
-            canonical_id=cid,
-            source=SourceSystem.MONDAY,
-            entity_type=entity_type,
-        ).one_or_none()
+        ext = (
+            session.query(ExternalId)
+            .filter_by(
+                canonical_id=cid,
+                source=SourceSystem.MONDAY,
+                entity_type=entity_type,
+            )
+            .one_or_none()
+        )
 
         if ext is None:
             print(
@@ -354,7 +374,11 @@ def cmd_add_item(board_id_str: str, name: str) -> None:
             attrs={"name": name, "organization_id": org.canonical_id},
             matcher=ExactFieldMatcher(["name"]),
         )
-        verb = "Matched existing" if result.was_matched else ("Created new" if result.was_created else "Updated")
+        verb = (
+            "Matched existing"
+            if result.was_matched
+            else ("Created new" if result.was_created else "Updated")
+        )
         print(
             f"OK: {verb} canonical Client\n"
             f"  canonical_id : {result.entity.canonical_id}\n"
@@ -368,8 +392,10 @@ def cmd_add_item(board_id_str: str, name: str) -> None:
 
 
 def cmd_list_boards() -> None:
-    from project_db.cli import cmd_list_boards as _cmd
     import argparse
+
+    from project_db.cli import cmd_list_boards as _cmd
+
     _cmd(argparse.Namespace())
 
 
@@ -412,8 +438,9 @@ def main() -> None:
     # (cp1252 UnicodeEncodeError). Shared fix -- see cli.force_utf8_output.
     try:
         from project_db.cli import force_utf8_output
+
         force_utf8_output()
-    except Exception:  # noqa: BLE001 -- output hardening must never block the command
+    except Exception:
         pass
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):

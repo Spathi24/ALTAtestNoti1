@@ -26,6 +26,7 @@ Env vars:
   GDRIVE_IMPERSONATE  -- only used for service-account mode (Workspace domains only)
   GDRIVE_ROOT_FOLDER  -- Drive folder ID to crawl (defaults to 'root')
 """
+
 from __future__ import annotations
 
 import json
@@ -63,7 +64,9 @@ _FILE_FIELDS = (
     "capabilities(canDownload,canEdit)"
 )
 _LIST_FIELDS = f"nextPageToken,files({_FILE_FIELDS})"
-_CHANGE_FILE_FIELDS = f"nextPageToken,newStartPageToken,changes(removed,fileId,file({_FILE_FIELDS}))"
+_CHANGE_FILE_FIELDS = (
+    f"nextPageToken,newStartPageToken,changes(removed,fileId,file({_FILE_FIELDS}))"
+)
 
 
 class GDriveClient:
@@ -134,9 +137,7 @@ class GDriveClient:
         """Build service-account credentials (Google Workspace domains only)."""
         from google.oauth2 import service_account
 
-        creds = service_account.Credentials.from_service_account_file(
-            key_path, scopes=SCOPES
-        )
+        creds = service_account.Credentials.from_service_account_file(key_path, scopes=SCOPES)
         subject = impersonate or os.environ.get("GDRIVE_IMPERSONATE")
         if subject:
             creds = creds.with_subject(subject)
@@ -261,11 +262,7 @@ class GDriveClient:
         """
         # getStartPageToken takes supportsAllDrives + driveId only; do NOT pass
         # includeItemsFromAllDrives here (that's for changes.list / files.list).
-        resp = (
-            self._svc.changes()
-            .getStartPageToken(supportsAllDrives=True)
-            .execute()
-        )
+        resp = self._svc.changes().getStartPageToken(supportsAllDrives=True).execute()
         return resp["startPageToken"]
 
     def list_changes(self, page_token: str) -> tuple[list[dict[str, Any]], str]:
@@ -328,11 +325,7 @@ class GDriveClient:
         The API hard-limits exports to 10 MB.  Use text/plain for LLM ingestion
         (much smaller than PDF for large documents).
         """
-        return (
-            self._svc.files()
-            .export(fileId=file_id, mimeType=mime_type)
-            .execute()
-        )
+        return self._svc.files().export(fileId=file_id, mimeType=mime_type).execute()
 
     def download_file(self, file_id: str) -> bytes:
         """Download binary file content (PDF, DOCX, etc.).
@@ -341,6 +334,7 @@ class GDriveClient:
         should be skipped (metadata-only).
         """
         import io
+
         from googleapiclient.http import MediaIoBaseDownload
 
         request = self._svc.files().get_media(fileId=file_id, supportsAllDrives=True)

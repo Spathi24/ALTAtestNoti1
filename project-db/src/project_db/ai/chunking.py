@@ -9,9 +9,11 @@ embedding models use) when available, falling back to a cheap chars/4 estimate
 so the chunker -- and the test suite -- never depends on a network download.
 The fallback only affects WHERE boundaries land, never correctness.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # tiktoken's encoding is loaded lazily + cached; if it (or its vocab download)
 # is unavailable we fall back to a heuristic.  Module-level cache so we try the
@@ -29,7 +31,7 @@ def _get_encoder() -> Any:
         import tiktoken
 
         _ENCODER = tiktoken.get_encoding("cl100k_base")
-    except Exception:  # noqa: BLE001 -- missing lib OR offline vocab fetch
+    except Exception:
         _ENCODER = None
     return _ENCODER
 
@@ -42,7 +44,7 @@ def count_tokens(text: str) -> int:
     if enc is not None:
         try:
             return len(enc.encode(text))
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     return max(1, len(text) // 4)
 
@@ -56,8 +58,9 @@ def _split_paragraphs(text: str) -> list[str]:
     return [p for p in raw if p]
 
 
-def _split_oversized(paragraph: str, target_tokens: int,
-                     counter: Callable[[str], int]) -> list[str]:
+def _split_oversized(
+    paragraph: str, target_tokens: int, counter: Callable[[str], int]
+) -> list[str]:
     """Break a single paragraph that exceeds the target into token-sized
     pieces, preferring sentence then line then hard splits."""
     if counter(paragraph) <= target_tokens:
@@ -91,7 +94,7 @@ def _split_oversized(paragraph: str, target_tokens: int,
             final.append(piece)
         else:
             for i in range(0, len(piece), approx_chars):
-                final.append(piece[i:i + approx_chars])
+                final.append(piece[i : i + approx_chars])
     return final
 
 
@@ -143,7 +146,4 @@ def chunk_document_text(
     if buf:
         chunks.append("\n\n".join(buf))
 
-    return [
-        {"chunk_index": i, "text": c, "token_count": count(c)}
-        for i, c in enumerate(chunks)
-    ]
+    return [{"chunk_index": i, "text": c, "token_count": count(c)} for i, c in enumerate(chunks)]

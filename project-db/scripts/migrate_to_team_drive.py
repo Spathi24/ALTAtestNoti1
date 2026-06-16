@@ -33,6 +33,7 @@ Usage
 Idempotent: after a successful --apply there are no 2-row duplicates left, so a
 re-run is a no-op.
 """
+
 from __future__ import annotations
 
 import sys
@@ -48,8 +49,9 @@ CUTOFF = datetime(2026, 6, 10, 16, 30, 0)
 def main(apply: bool) -> int:
     try:
         from project_db.cli import force_utf8_output
+
         force_utf8_output()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     from project_db.db import get_engine, session_scope
@@ -76,19 +78,22 @@ def main(apply: bool) -> int:
         dupes = {n: ps for n, ps in by_name.items() if len(ps) == 2}
 
         if not dupes:
-            print("No 2-row duplicate projects found -- project merge already "
-                  "done. Nothing to do.")
+            print("No 2-row duplicate projects found -- project merge already done. Nothing to do.")
             return 0
 
         def n_new(pid) -> int:
-            return (s.query(Document)
-                    .filter(Document.project_id == pid,
-                            Document.created_at >= CUTOFF).count())
+            return (
+                s.query(Document)
+                .filter(Document.project_id == pid, Document.created_at >= CUTOFF)
+                .count()
+            )
 
         def n_old(pid) -> int:
-            return (s.query(Document)
-                    .filter(Document.project_id == pid,
-                            Document.created_at < CUTOFF).count())
+            return (
+                s.query(Document)
+                .filter(Document.project_id == pid, Document.created_at < CUTOFF)
+                .count()
+            )
 
         total_docs_moved = 0
         total_docs_trashed = 0
@@ -113,31 +118,36 @@ def main(apply: bool) -> int:
 
             has_monday = bool(
                 s.query(ExternalId)
-                .filter_by(canonical_id=survivor.canonical_id,
-                           source=SourceSystem.MONDAY).first()
+                .filter_by(canonical_id=survivor.canonical_id, source=SourceSystem.MONDAY)
+                .first()
             )
 
-            loser_docs = (s.query(Document)
-                          .filter(Document.project_id == loser.canonical_id).all())
+            loser_docs = s.query(Document).filter(Document.project_id == loser.canonical_id).all()
             survivor_old_docs = (
                 s.query(Document)
-                .filter(Document.project_id == survivor.canonical_id,
-                        Document.created_at < CUTOFF,
-                        Document.is_trashed.is_(False)).all()
+                .filter(
+                    Document.project_id == survivor.canonical_id,
+                    Document.created_at < CUTOFF,
+                    Document.is_trashed.is_(False),
+                )
+                .all()
             )
 
             print(f"- {name}{'  [MONDAY-linked]' if has_monday else ''}")
-            print(f"    survivor {str(survivor.canonical_id)[:8]}  "
-                  f"(old docs: {n_old(survivor.canonical_id)}, "
-                  f"derived FRs: "
-                  f"{s.query(FinancialRecord).filter_by(project_id=survivor.canonical_id).count()}, "
-                  f"obligations: "
-                  f"{s.query(ContractObligation).filter_by(project_id=survivor.canonical_id).count()})")
-            print(f"    loser    {str(loser.canonical_id)[:8]}  "
-                  f"-> re-point {len(loser_docs)} team-Drive docs to survivor, "
-                  f"delete row")
-            print(f"    trash    {len(survivor_old_docs)} old personal-Drive docs "
-                  f"on survivor")
+            print(
+                f"    survivor {str(survivor.canonical_id)[:8]}  "
+                f"(old docs: {n_old(survivor.canonical_id)}, "
+                f"derived FRs: "
+                f"{s.query(FinancialRecord).filter_by(project_id=survivor.canonical_id).count()}, "
+                f"obligations: "
+                f"{s.query(ContractObligation).filter_by(project_id=survivor.canonical_id).count()})"
+            )
+            print(
+                f"    loser    {str(loser.canonical_id)[:8]}  "
+                f"-> re-point {len(loser_docs)} team-Drive docs to survivor, "
+                f"delete row"
+            )
+            print(f"    trash    {len(survivor_old_docs)} old personal-Drive docs on survivor")
 
             if apply:
                 # 1. Move the team-Drive documents onto the survivor.
@@ -155,15 +165,21 @@ def main(apply: bool) -> int:
                 #    team-Drive folder ExternalId, drop its stale old-folder one.
                 loser_drive_ext = (
                     s.query(ExternalId)
-                    .filter_by(canonical_id=loser.canonical_id,
-                               source=SourceSystem.GOOGLE_DRIVE,
-                               entity_type="Project").all()
+                    .filter_by(
+                        canonical_id=loser.canonical_id,
+                        source=SourceSystem.GOOGLE_DRIVE,
+                        entity_type="Project",
+                    )
+                    .all()
                 )
                 old_drive_ext = (
                     s.query(ExternalId)
-                    .filter_by(canonical_id=survivor.canonical_id,
-                               source=SourceSystem.GOOGLE_DRIVE,
-                               entity_type="Project").all()
+                    .filter_by(
+                        canonical_id=survivor.canonical_id,
+                        source=SourceSystem.GOOGLE_DRIVE,
+                        entity_type="Project",
+                    )
+                    .all()
                 )
                 for e in old_drive_ext:
                     s.delete(e)
@@ -220,8 +236,7 @@ def main(apply: bool) -> int:
             # Roll back any flush side-effects defensively.
             s.rollback()
         else:
-            print("\nAPPLIED. Duplicate projects consolidated onto the "
-                  "team-Drive folders.")
+            print("\nAPPLIED. Duplicate projects consolidated onto the team-Drive folders.")
             print("Next (when OpenAI credits are live):")
             print("  project_db extract-content")
             print("  project_db embed-documents")

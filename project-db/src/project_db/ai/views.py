@@ -15,8 +15,10 @@ Design rules for new reports (matters for the Phase-3 LLM tool layer too):
 
 Add new reports here.  The naming convention is ``report_<topic>(...)``.
 """
+
 from __future__ import annotations
 
+import re as _re
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -53,6 +55,7 @@ def _ser(value: Any) -> Any:
     the desired "PROPOSED".
     """
     import enum as _enum
+
     if value is None:
         return None
     if isinstance(value, _enum.Enum):
@@ -82,11 +85,7 @@ def _resolve_project(session: Session, ref: str) -> Project | None:
     except (ValueError, AttributeError):
         pass
     # Substring match on name (case-insensitive)
-    return (
-        session.query(Project)
-        .filter(Project.name.ilike(f"%{ref}%"))
-        .first()
-    )
+    return session.query(Project).filter(Project.name.ilike(f"%{ref}%")).first()
 
 
 def _crm_deal_for_project_placeholder(session: Session, project: Project) -> Deal | None:
@@ -179,7 +178,9 @@ def report_ar_aging(session: Session) -> list[dict[str, Any]]:
             func.sum(Invoice.amount),
             func.count(Invoice.canonical_id),
         )
-        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.OVERDUE, InvoiceStatus.PARTIAL]))
+        .filter(
+            Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.OVERDUE, InvoiceStatus.PARTIAL])
+        )
         .group_by(Invoice.status)
         .all()
     )
@@ -228,7 +229,8 @@ def report_project_overview(session: Session, project_ref: str) -> dict[str, Any
     pid = project.canonical_id
     client = (
         session.query(Client).filter_by(canonical_id=project.client_id).one_or_none()
-        if project.client_id else None
+        if project.client_id
+        else None
     )
 
     tasks_all = session.query(Task).filter_by(project_id=pid).all()
@@ -237,8 +239,7 @@ def report_project_overview(session: Session, project_ref: str) -> dict[str, Any
     daily_logs_all = session.query(DailyLog).filter_by(project_id=pid).all()
 
     tasks_no_dates = [
-        t for t in tasks_all
-        if t.start_date is None and t.end_date is None and t.due_date is None
+        t for t in tasks_all if t.start_date is None and t.end_date is None and t.due_date is None
     ]
 
     # Top 10 recent docs by source-side modified time.
@@ -249,9 +250,7 @@ def report_project_overview(session: Session, project_ref: str) -> dict[str, Any
     )[:10]
 
     external_ids = (
-        session.query(ExternalId)
-        .filter_by(entity_type="Project", canonical_id=pid)
-        .all()
+        session.query(ExternalId).filter_by(entity_type="Project", canonical_id=pid).all()
     )
 
     return {
@@ -266,8 +265,7 @@ def report_project_overview(session: Session, project_ref: str) -> dict[str, Any
             "contract_amount": _ser(project.contract_amount),
         },
         "client": (
-            {"canonical_id": _ser(client.canonical_id), "name": client.name}
-            if client else None
+            {"canonical_id": _ser(client.canonical_id), "name": client.name} if client else None
         ),
         "stats": {
             "task_count": len(tasks_all),
@@ -352,9 +350,7 @@ def report_docs_for_project(session: Session, project_ref: str) -> dict[str, Any
     }
 
 
-def report_tasks_without_dates(
-    session: Session, project_ref: str | None = None
-) -> dict[str, Any]:
+def report_tasks_without_dates(session: Session, project_ref: str | None = None) -> dict[str, Any]:
     """Tasks missing start/end/due dates -- the core "blind spot" problem.
 
     Per STRATEGY.md: only 11% of Monday tasks are dated.  This report surfaces
@@ -375,10 +371,14 @@ def report_tasks_without_dates(
     tasks = q.all()
     # Pre-fetch projects + their docs counts so we can give folder_path context.
     project_ids = {t.project_id for t in tasks}
-    projects = {
-        p.canonical_id: p
-        for p in session.query(Project).filter(Project.canonical_id.in_(project_ids)).all()
-    } if project_ids else {}
+    projects = (
+        {
+            p.canonical_id: p
+            for p in session.query(Project).filter(Project.canonical_id.in_(project_ids)).all()
+        }
+        if project_ids
+        else {}
+    )
 
     return {
         "scope": "single-project" if project else "all-projects",
@@ -389,7 +389,8 @@ def report_tasks_without_dates(
                 "title": t.title,
                 "status": _ser(t.status),
                 "project_name": projects.get(t.project_id).name
-                    if projects.get(t.project_id) else None,
+                if projects.get(t.project_id)
+                else None,
                 "project_id": _ser(t.project_id),
                 "is_subitem": bool(t.is_subitem),
                 "monday_status_label": t.monday_status_label,
@@ -413,7 +414,7 @@ def report_missing_documents(session: Session) -> dict[str, Any]:
     A project with no PDF, Google Doc, or DOCX is suspicious -- the contract
     is probably somewhere outside Drive (or our folder match missed it).
     """
-    from sqlalchemy import exists, and_
+    from sqlalchemy import and_, exists
 
     contract_exists = exists().where(
         and_(
@@ -431,10 +432,7 @@ def report_missing_documents(session: Session) -> dict[str, Any]:
         .all()
     )
 
-    projects = [
-        p for p in projects
-        if not _is_crm_deal_placeholder_project(session, p)
-    ]
+    projects = [p for p in projects if not _is_crm_deal_placeholder_project(session, p)]
 
     return {
         "missing_count": len(projects),
@@ -452,8 +450,6 @@ def report_missing_documents(session: Session) -> dict[str, Any]:
 
 
 # Picks up "$123,456.78" / "$123,456" / "$123.45" (with optional decimals + commas).
-import re as _re
-
 _MONEY_RE = _re.compile(r"\$\s?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?")
 
 
@@ -509,11 +505,13 @@ def report_budget_vs_contract(
     per_doc: list[dict[str, Any]] = []
     for doc, txt in rows:
         amounts = _extract_money_amounts(txt.extracted_text)
-        per_doc.append({
-            "document_name": doc.name,
-            "amounts_found": amounts,
-            "max_amount": max(amounts) if amounts else None,
-        })
+        per_doc.append(
+            {
+                "document_name": doc.name,
+                "amounts_found": amounts,
+                "max_amount": max(amounts) if amounts else None,
+            }
+        )
 
     # Aggregate: the biggest number across all contract docs is our best guess.
     all_amounts = [a for d in per_doc for a in d["amounts_found"]]
@@ -554,15 +552,11 @@ def _representative_amount(records: list[FinancialRecord]) -> Decimal:
     if totals:
         return max(totals)
     line_items = [
-        r.amount for r in records
-        if r.record_kind == "line_item" and r.amount is not None
+        r.amount for r in records if r.record_kind == "line_item" and r.amount is not None
     ]
     if line_items:
         return sum(line_items, Decimal(0))
-    rest = [
-        r.amount for r in records
-        if r.record_kind != "tax" and r.amount is not None
-    ]
+    rest = [r.amount for r in records if r.record_kind != "tax" and r.amount is not None]
     return sum(rest, Decimal(0))
 
 
@@ -592,11 +586,7 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         .filter(FinancialRecord.project_id == project.canonical_id)
         .all()
     )
-    _docs = (
-        session.query(Document)
-        .filter(Document.project_id == project.canonical_id)
-        .all()
-    )
+    _docs = session.query(Document).filter(Document.project_id == project.canonical_id).all()
     doc_names = {d.canonical_id: d.name for d in _docs}
     doc_folders = {d.canonical_id: d.folder_path for d in _docs}
 
@@ -610,16 +600,22 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     # with no re-extraction -- the same free-recompute discipline as money_type.
     from project_db.ai.financials import (
         _name_is_rollup as _is_rollup_name,
+    )
+    from project_db.ai.financials import (
         content_is_rollup as _is_rollup_content,
     )
 
     _rec_doc_ids = {r.document_id for r in records if r.document_id}
-    doc_texts = {
-        row[0]: row[1]
-        for row in session.query(
-            DocumentText.document_id, DocumentText.extracted_text
-        ).filter(DocumentText.document_id.in_(_rec_doc_ids)).all()
-    } if _rec_doc_ids else {}
+    doc_texts = (
+        {
+            row[0]: row[1]
+            for row in session.query(DocumentText.document_id, DocumentText.extracted_text)
+            .filter(DocumentText.document_id.in_(_rec_doc_ids))
+            .all()
+        }
+        if _rec_doc_ids
+        else {}
+    )
 
     def _eff_rollup(r: FinancialRecord) -> bool:
         return (
@@ -645,12 +641,16 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     doc_roles_by_id: dict[Any, set[str]] = {}
     for r in primary:
         doc_roles_by_id.setdefault(r.document_id, set()).add(r.doc_role or "other")
-    explicit_status = {
-        s.document_id: bool(s.confirmed)
-        for s in session.query(DocumentFinancialStatus)
-        .filter(DocumentFinancialStatus.document_id.in_(primary_doc_ids))
-        .all()
-    } if primary_doc_ids else {}
+    explicit_status = (
+        {
+            s.document_id: bool(s.confirmed)
+            for s in session.query(DocumentFinancialStatus)
+            .filter(DocumentFinancialStatus.document_id.in_(primary_doc_ids))
+            .all()
+        }
+        if primary_doc_ids
+        else {}
+    )
 
     def _doc_confirmed(doc_id: Any) -> bool:
         if doc_id in explicit_status:
@@ -666,18 +666,25 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
         for r in recs:
             groups.setdefault((r.document_id, r.direction or "unknown"), []).append(r)
         dir_totals: dict[str, Decimal] = {
-            "client_in": Decimal(0), "contractor_out": Decimal(0), "unknown": Decimal(0),
+            "client_in": Decimal(0),
+            "contractor_out": Decimal(0),
+            "unknown": Decimal(0),
         }
         per_doc: dict[Any, dict[str, Any]] = {}
         for (doc_id, direction), grp in groups.items():
             rep = _representative_amount(grp)
             dir_totals[direction] = dir_totals.get(direction, Decimal(0)) + rep
-            entry = per_doc.setdefault(doc_id, {
-                "document_id": _ser(doc_id),
-                "document_name": doc_names.get(doc_id, "(unknown document)"),
-                "client_in": Decimal(0), "contractor_out": Decimal(0),
-                "unknown": Decimal(0), "record_count": 0,
-            })
+            entry = per_doc.setdefault(
+                doc_id,
+                {
+                    "document_id": _ser(doc_id),
+                    "document_name": doc_names.get(doc_id, "(unknown document)"),
+                    "client_in": Decimal(0),
+                    "contractor_out": Decimal(0),
+                    "unknown": Decimal(0),
+                    "record_count": 0,
+                },
+            )
             entry[direction] = entry.get(direction, Decimal(0)) + rep
             entry["record_count"] += len(grp)
         return {"dir_totals": dir_totals, "per_doc": per_doc}
@@ -704,16 +711,18 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
 
     per_document_rows = []
     for doc_id, entry in per_document.items():
-        per_document_rows.append({
-            "document_id": entry["document_id"],
-            "document_name": entry["document_name"],
-            "client_in": float(entry.get("client_in", Decimal(0))),
-            "contractor_out": float(entry.get("contractor_out", Decimal(0))),
-            "unknown": float(entry.get("unknown", Decimal(0))),
-            "record_count": entry["record_count"],
-            "confirmed": doc_id in confirmed_doc_ids,
-            "confirmed_source": "explicit" if doc_id in explicit_status else "default",
-        })
+        per_document_rows.append(
+            {
+                "document_id": entry["document_id"],
+                "document_name": entry["document_name"],
+                "client_in": float(entry.get("client_in", Decimal(0))),
+                "contractor_out": float(entry.get("contractor_out", Decimal(0))),
+                "unknown": float(entry.get("unknown", Decimal(0))),
+                "record_count": entry["record_count"],
+                "confirmed": doc_id in confirmed_doc_ids,
+                "confirmed_source": "explicit" if doc_id in explicit_status else "default",
+            }
+        )
     per_document_rows.sort(
         key=lambda r: r["client_in"] + r["contractor_out"] + r["unknown"],
         reverse=True,
@@ -750,8 +759,10 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
 
     def _mt(r: FinancialRecord) -> str:
         return classify_money_type(
-            r.direction, r.record_kind,
-            doc_names.get(r.document_id), doc_folders.get(r.document_id),
+            r.direction,
+            r.record_kind,
+            doc_names.get(r.document_id),
+            doc_folders.get(r.document_id),
         )
 
     def _money_by_type(recs: list[FinancialRecord]) -> dict[str, float]:
@@ -770,10 +781,9 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     supplier_cost = by_money_type.get("supplier_cost", 0.0)
     buyout_cost = by_money_type.get("buyout_cost", 0.0)
     other_amt = by_money_type.get("other", 0.0)
-    confirmed_construction_margin = (
-        confirmed_by_money_type.get("contract_revenue", 0.0)
-        - confirmed_by_money_type.get("supplier_cost", 0.0)
-    )
+    confirmed_construction_margin = confirmed_by_money_type.get(
+        "contract_revenue", 0.0
+    ) - confirmed_by_money_type.get("supplier_cost", 0.0)
 
     # Coverage / confidence: how much of the project's money landed in an
     # INTERPRETABLE bucket vs 'other' (direction unknown / a project type the
@@ -781,13 +791,9 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
     # margin -- should not be trusted at face value.  Surfaced loudly so an
     # unmodeled project (e.g. the 6554 real-estate development deal: asking
     # price, loan, lease income) does NOT masquerade as a confident margin.
-    interpretable = sum(
-        v for k, v in by_money_type.items() if k != "other"
-    )
+    interpretable = sum(v for k, v in by_money_type.items() if k != "other")
     total_primary_money = interpretable + other_amt
-    classified_ratio = (
-        interpretable / total_primary_money if total_primary_money else None
-    )
+    classified_ratio = interpretable / total_primary_money if total_primary_money else None
     low_confidence = classified_ratio is not None and classified_ratio < 0.5
 
     money_summary = {
@@ -802,7 +808,8 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "Agency buyout: margin = client-agreed budget minus actual buyout "
             "cost. The agreed budget was not found in the documents; supply it "
             "to compute buyout margin."
-            if buyout_cost else None
+            if buyout_cost
+            else None
         ),
         "classified_ratio": classified_ratio,
         "low_confidence": low_confidence,
@@ -812,7 +819,8 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "model does not yet handle (e.g. a real-estate development / "
             "investment deal -- asking price, financing, lease income). Treat "
             "the margin with caution; see the 'other' bucket."
-            if low_confidence else None
+            if low_confidence
+            else None
         ),
     }
 
@@ -871,16 +879,14 @@ def report_project_financials(session: Session, project_ref: str) -> dict[str, A
             "Totals sum PRIMARY transaction documents only; internal roll-up / "
             "tracking sheets are excluded and shown under rollup_crosscheck to "
             "avoid double-counting. Run extract-financials to (re)populate."
-            if records else
-            "No financial records yet. Run: project_db extract-financials "
+            if records
+            else "No financial records yet. Run: project_db extract-financials "
             f"--project {project.canonical_id}"
         ),
     }
 
 
-def report_database_overview(
-    session: Session, *, max_tasks: int = 600
-) -> dict[str, Any]:
+def report_database_overview(session: Session, *, max_tasks: int = 600) -> dict[str, Any]:
     """Whole-database canonical snapshot -- the context for the LLM `ask` fallback.
 
     Every structured operational fact ALTA holds: projects (with rolled-up
@@ -913,33 +919,30 @@ def report_database_overview(
     )
     invoices_by_project: dict[Any, int] = {}
     for inv in invoices:
-        invoices_by_project[inv.project_id] = (
-            invoices_by_project.get(inv.project_id, 0) + 1
-        )
+        invoices_by_project[inv.project_id] = invoices_by_project.get(inv.project_id, 0) + 1
 
     project_name_by_id = {p.canonical_id: p.name for p in projects}
 
     project_rows: list[dict[str, Any]] = []
     for p in projects:
         ptasks = tasks_by_project.get(p.canonical_id, [])
-        dateless = sum(
-            1 for t in ptasks
-            if not t.start_date and not t.end_date and not t.due_date
-        )
+        dateless = sum(1 for t in ptasks if not t.start_date and not t.end_date and not t.due_date)
         client = clients.get(p.client_id)
-        project_rows.append({
-            "name": p.name,
-            "status": _ser(p.status),
-            "start_date": _ser(p.start_date),
-            "end_date": _ser(p.end_date),
-            "budget_amount": _ser(p.budget_amount),
-            "contract_amount": _ser(p.contract_amount),
-            "client": client.name if client else None,
-            "task_count": len(ptasks),
-            "tasks_without_dates": dateless,
-            "document_count": docs_by_project.get(p.canonical_id, 0),
-            "invoice_count": invoices_by_project.get(p.canonical_id, 0),
-        })
+        project_rows.append(
+            {
+                "name": p.name,
+                "status": _ser(p.status),
+                "start_date": _ser(p.start_date),
+                "end_date": _ser(p.end_date),
+                "budget_amount": _ser(p.budget_amount),
+                "contract_amount": _ser(p.contract_amount),
+                "client": client.name if client else None,
+                "task_count": len(ptasks),
+                "tasks_without_dates": dateless,
+                "document_count": docs_by_project.get(p.canonical_id, 0),
+                "invoice_count": invoices_by_project.get(p.canonical_id, 0),
+            }
+        )
 
     task_rows = [
         {
@@ -995,9 +998,7 @@ def report_database_overview(
         .group_by(Document.category)
         .all()
     )
-    total_docs = (
-        session.query(Document).filter(Document.is_trashed.is_(False)).count()
-    )
+    total_docs = session.query(Document).filter(Document.is_trashed.is_(False)).count()
 
     return {
         "generated_on": date.today().isoformat(),
@@ -1018,8 +1019,7 @@ def report_database_overview(
         "clients": sorted(c.name for c in clients.values() if c.name),
         "invoices": invoice_rows,
         "documents_by_category": {
-            (str(k) if k is not None else "uncategorized"): v
-            for k, v in doc_categories.items()
+            (str(k) if k is not None else "uncategorized"): v for k, v in doc_categories.items()
         },
     }
 
@@ -1044,13 +1044,10 @@ def report_doctor(session: Session) -> dict[str, Any]:
     project_rows: list[dict[str, Any]] = []
     for p in projects:
         proj_by_id[p.canonical_id] = p
-        exts = (
-            session.query(ExternalId)
-            .filter(ExternalId.canonical_id == p.canonical_id)
-            .all()
-        )
+        exts = session.query(ExternalId).filter(ExternalId.canonical_id == p.canonical_id).all()
         drive = [
-            e for e in exts
+            e
+            for e in exts
             if e.source == SourceSystem.GOOGLE_DRIVE
             and (e.external_key or "").startswith("folder:")
         ]
@@ -1092,27 +1089,27 @@ def report_doctor(session: Session) -> dict[str, Any]:
         for civic in extract_civic_numbers(p.name or ""):
             civic_seen.setdefault(civic, []).append(p.name)
 
-        project_rows.append({
-            "canonical_id": str(p.canonical_id),
-            "name": p.name,
-            "status": _ser(p.status),
-            "drive_count": len(drive),
-            "monday_count": len(monday),
-            "doc_count": ndoc,
-            "task_count": ntask,
-            "is_crm_deal_placeholder": is_crm_deal_placeholder,
-            "crm_deal_name": crm_deal.name if crm_deal else None,
-            "sources_label": ", ".join(sources) or "NONE",
-            "flags": per_project_flags,
-        })
+        project_rows.append(
+            {
+                "canonical_id": str(p.canonical_id),
+                "name": p.name,
+                "status": _ser(p.status),
+                "drive_count": len(drive),
+                "monday_count": len(monday),
+                "doc_count": ndoc,
+                "task_count": ntask,
+                "is_crm_deal_placeholder": is_crm_deal_placeholder,
+                "crm_deal_name": crm_deal.name if crm_deal else None,
+                "sources_label": ", ".join(sources) or "NONE",
+                "flags": per_project_flags,
+            }
+        )
 
     civic_duplicates: list[dict[str, Any]] = []
     for civic, names in sorted(civic_seen.items()):
         if len(names) > 1:
             civic_duplicates.append({"civic": civic, "names": names})
-            flags.append(
-                f"civic number {civic} shared by {len(names)} projects: {names}"
-            )
+            flags.append(f"civic number {civic} shared by {len(names)} projects: {names}")
 
     mislinked_rows: list[dict[str, Any]] = []
     for d in (
@@ -1124,13 +1121,15 @@ def report_doctor(session: Session) -> dict[str, Any]:
         if p is None or not d.folder_path:
             continue
         if p.name not in [seg.strip() for seg in d.folder_path.split("/")]:
-            mislinked_rows.append({
-                "document_id": str(d.canonical_id),
-                "document_name": d.name,
-                "folder_path": d.folder_path,
-                "linked_project_id": str(p.canonical_id),
-                "linked_project_name": p.name,
-            })
+            mislinked_rows.append(
+                {
+                    "document_id": str(d.canonical_id),
+                    "document_name": d.name,
+                    "folder_path": d.folder_path,
+                    "linked_project_id": str(p.canonical_id),
+                    "linked_project_name": p.name,
+                }
+            )
     if mislinked_rows:
         flags.append(
             f"{len(mislinked_rows)} document(s) linked to a project that is "
@@ -1150,8 +1149,7 @@ def report_doctor(session: Session) -> dict[str, Any]:
         .all()
     )
     by_category = {
-        (cat or "(none)"): int(n)
-        for cat, n in sorted(category_rows, key=lambda r: -(r[1] or 0))
+        (cat or "(none)"): int(n) for cat, n in sorted(category_rows, key=lambda r: -(r[1] or 0))
     }
     orphans = (
         session.query(Document)
@@ -1193,7 +1191,11 @@ def report_doctor(session: Session) -> dict[str, Any]:
 
 _OBLIGATION_DUE_SOON_DAYS = 30
 _OBLIGATION_STATUS_RANK = {
-    "overdue": 4, "due_soon": 3, "conditional": 2, "upcoming": 1, "open": 0,
+    "overdue": 4,
+    "due_soon": 3,
+    "conditional": 2,
+    "upcoming": 1,
+    "open": 0,
 }
 
 
@@ -1206,7 +1208,7 @@ def _obligation_status(ob: Any, today: date, due_soon_days: int) -> str:
             return "due_soon"
         return "upcoming"
     if ob.trigger:
-        return "conditional"   # depends on a condition, no fixed date
+        return "conditional"  # depends on a condition, no fixed date
     return "open"
 
 
@@ -1238,16 +1240,16 @@ def report_commitments(
     )
     doc_names = {
         d.canonical_id: d.name
-        for d in session.query(Document)
-        .filter(Document.project_id == project.canonical_id)
-        .all()
+        for d in session.query(Document).filter(Document.project_id == project.canonical_id).all()
     }
 
     rows: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
     money = {
-        "owed_to_us_overdue": Decimal(0), "owed_to_us_total": Decimal(0),
-        "owed_by_us_overdue": Decimal(0), "owed_by_us_total": Decimal(0),
+        "owed_to_us_overdue": Decimal(0),
+        "owed_to_us_total": Decimal(0),
+        "owed_by_us_overdue": Decimal(0),
+        "owed_by_us_total": Decimal(0),
     }
     for ob in obs:
         status = _obligation_status(ob, today, due_soon_days)
@@ -1261,23 +1263,25 @@ def report_commitments(
             money["owed_by_us_total"] += amt
             if status == "overdue":
                 money["owed_by_us_overdue"] += amt
-        rows.append({
-            "canonical_id": _ser(ob.canonical_id),
-            "kind": ob.kind,
-            "direction": ob.direction,
-            "status": status,
-            "amount": _ser(ob.amount),
-            "currency": ob.currency,
-            "due_date": _ser(ob.due_date),
-            "trigger": ob.trigger,
-            "description": ob.description,
-            "counterparty": ob.counterparty,
-            "quoted_excerpt": ob.quoted_excerpt,
-            "confidence": ob.confidence,
-            "amount_verified": ob.amount_verified,
-            "document_id": _ser(ob.document_id),
-            "document_name": doc_names.get(ob.document_id),
-        })
+        rows.append(
+            {
+                "canonical_id": _ser(ob.canonical_id),
+                "kind": ob.kind,
+                "direction": ob.direction,
+                "status": status,
+                "amount": _ser(ob.amount),
+                "currency": ob.currency,
+                "due_date": _ser(ob.due_date),
+                "trigger": ob.trigger,
+                "description": ob.description,
+                "counterparty": ob.counterparty,
+                "quoted_excerpt": ob.quoted_excerpt,
+                "confidence": ob.confidence,
+                "amount_verified": ob.amount_verified,
+                "document_id": _ser(ob.document_id),
+                "document_name": doc_names.get(ob.document_id),
+            }
+        )
 
     # Most urgent first (status rank, then larger amounts).
     rows.sort(
@@ -1296,9 +1300,9 @@ def report_commitments(
         "money_at_risk": {k: float(v) for k, v in money.items()},
         "obligations": rows,
         "note": (
-            None if obs else
-            "No obligations extracted yet. Run: project_db extract-obligations "
-            f"{project.name}"
+            None
+            if obs
+            else f"No obligations extracted yet. Run: project_db extract-obligations {project.name}"
         ),
     }
 
@@ -1348,23 +1352,22 @@ def report_value_caught(
     status_counts: dict[str, int] = {}
     per_project: dict[Any, dict[str, Any]] = {}
 
-    obs = (
-        session.query(ContractObligation)
-        .filter(ContractObligation.project_id.isnot(None))
-        .all()
-    )
+    obs = session.query(ContractObligation).filter(ContractObligation.project_id.isnot(None)).all()
     for ob in obs:
         status = _obligation_status(ob, today, due_soon_days)
         status_counts[status] = status_counts.get(status, 0) + 1
         amt = ob.amount if ob.amount is not None else Decimal(0)
-        pp = per_project.setdefault(ob.project_id, {
-            "project_id": _ser(ob.project_id),
-            "project_name": proj_names.get(ob.project_id) or "(unknown project)",
-            "receivables_overdue": Decimal(0),
-            "receivables_due_soon": Decimal(0),
-            "obligations_overdue": Decimal(0),
-            "flagged_count": 0,
-        })
+        pp = per_project.setdefault(
+            ob.project_id,
+            {
+                "project_id": _ser(ob.project_id),
+                "project_name": proj_names.get(ob.project_id) or "(unknown project)",
+                "receivables_overdue": Decimal(0),
+                "receivables_due_soon": Decimal(0),
+                "obligations_overdue": Decimal(0),
+                "flagged_count": 0,
+            },
+        )
         # A scoreboard of DOLLARS: only a positive-amount obligation flags a
         # project (a null/$0 overdue item adds nothing and shouldn't show as "$0").
         contributed = Decimal(0)
@@ -1387,11 +1390,14 @@ def report_value_caught(
     headline_total = money["receivables_overdue"] + money["obligations_overdue"]
 
     breakdown = [
-        {**pp,
-         "receivables_overdue": float(pp["receivables_overdue"]),
-         "receivables_due_soon": float(pp["receivables_due_soon"]),
-         "obligations_overdue": float(pp["obligations_overdue"])}
-        for pp in per_project.values() if pp["flagged_count"] > 0
+        {
+            **pp,
+            "receivables_overdue": float(pp["receivables_overdue"]),
+            "receivables_due_soon": float(pp["receivables_due_soon"]),
+            "obligations_overdue": float(pp["obligations_overdue"]),
+        }
+        for pp in per_project.values()
+        if pp["flagged_count"] > 0
     ]
     breakdown.sort(
         key=lambda r: r["receivables_overdue"] + r["obligations_overdue"],
@@ -1407,8 +1413,9 @@ def report_value_caught(
         "flagged_project_count": len(breakdown),
         "projects": breakdown,
         "note": (
-            None if breakdown else
-            "No money-at-risk surfaced yet -- run extract-obligations on "
+            None
+            if breakdown
+            else "No money-at-risk surfaced yet -- run extract-obligations on "
             "projects to populate the tally."
         ),
     }
@@ -1430,14 +1437,17 @@ def _money_short(value: Any) -> str:
     sign = "-" if x < 0 else ""
     a = abs(x)
     if a >= 1e6:
-        return f"{sign}${(f'{a/1e6:.1f}M').replace('.0M', 'M')}"
+        return f"{sign}${(f'{a / 1e6:.1f}M').replace('.0M', 'M')}"
     if a >= 1e3:
-        return f"{sign}${(f'{a/1e3:.1f}k').replace('.0k', 'k')}"
+        return f"{sign}${(f'{a / 1e3:.1f}k').replace('.0k', 'k')}"
     return f"{sign}${a:.0f}"
 
 
 def report_project_money_line(
-    session: Session, project_ref: str, *, today: date | None = None,
+    session: Session,
+    project_ref: str,
+    *,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """One plain-English sentence summarizing a project's money state.
 
@@ -1469,14 +1479,24 @@ def report_project_money_line(
 
     if not has_records:
         line = f"{name}: no financial records extracted yet (run extract-financials)."
-        return {"project": fin["project"], "line": line,
-                "low_confidence": False, "has_records": False}
+        return {
+            "project": fin["project"],
+            "line": line,
+            "low_confidence": False,
+            "has_records": False,
+        }
 
     if low_conf:
-        line = (f"{name}: money picture LOW CONFIDENCE -- unusual project type; "
-                f"{fin['record_count']} record(s), see Financials.{tail}")
-        return {"project": fin["project"], "line": line,
-                "low_confidence": True, "has_records": True}
+        line = (
+            f"{name}: money picture LOW CONFIDENCE -- unusual project type; "
+            f"{fin['record_count']} record(s), see Financials.{tail}"
+        )
+        return {
+            "project": fin["project"],
+            "line": line,
+            "low_confidence": True,
+            "has_records": True,
+        }
 
     # Headline the CONFIRMED view so the one-liner AGREES with the Financials
     # panel (the money chokepoint). A real margin is shown ONLY when client
@@ -1491,19 +1511,23 @@ def report_project_money_line(
     totals = fin.get("totals", {})
     if conf_rev > 0:
         margin = fin.get("confirmed_construction_margin", conf_rev - conf_cost)
-        line = (f"{name}: revenue {_money_short(conf_rev)} | "
-                f"costs {_money_short(conf_cost)} | "
-                f"margin ~{_money_short(margin)} (confirmed){tail}")
+        line = (
+            f"{name}: revenue {_money_short(conf_rev)} | "
+            f"costs {_money_short(conf_cost)} | "
+            f"margin ~{_money_short(margin)} (confirmed){tail}"
+        )
     else:
         cost_known = conf_cost or totals.get("contractor_out", 0.0)
         quoted = totals.get("client_in", 0.0)
-        line = f"{name}: {_money_short(cost_known)} in costs so far; client revenue not yet confirmed"
+        line = (
+            f"{name}: {_money_short(cost_known)} in costs so far; client revenue not yet confirmed"
+        )
         if quoted:
-            line += (f" ({_money_short(quoted)} quoted on file -- "
-                     f"confirm awarded quotes in Financials)")
+            line += (
+                f" ({_money_short(quoted)} quoted on file -- confirm awarded quotes in Financials)"
+            )
         line += tail
-    return {"project": fin["project"], "line": line,
-            "low_confidence": False, "has_records": True}
+    return {"project": fin["project"], "line": line, "low_confidence": False, "has_records": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1527,10 +1551,10 @@ _SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
 
 # Tunables for the money/schedule detectors.  Named here so they are auditable
 # and a future session can tighten them without spelunking the logic.
-_OVERDUE_HIGH_COUNT = 5           # >= this many overdue tasks on one project -> high
-_OVERDUE_HIGH_DAYS = 30           # any task overdue by >= this many days -> high
-_UNCONFIRMED_PILE_MIN = 20000.0   # unconfirmed quote money >= this -> surface it
-_UNCONFIRMED_PILE_MIN_DOCS = 2    # ...and at least this many unconfirmed docs
+_OVERDUE_HIGH_COUNT = 5  # >= this many overdue tasks on one project -> high
+_OVERDUE_HIGH_DAYS = 30  # any task overdue by >= this many days -> high
+_UNCONFIRMED_PILE_MIN = 20000.0  # unconfirmed quote money >= this -> surface it
+_UNCONFIRMED_PILE_MIN_DOCS = 2  # ...and at least this many unconfirmed docs
 
 
 def report_attention_briefing(
@@ -1557,29 +1581,36 @@ def report_attention_briefing(
     today = today or date.today()
     items: list[dict[str, Any]] = []
 
-    proj_by_id: dict[Any, Project] = {
-        p.canonical_id: p for p in session.query(Project).all()
-    }
+    proj_by_id: dict[Any, Project] = {p.canonical_id: p for p in session.query(Project).all()}
 
     def _name(pid: Any) -> str:
         p = proj_by_id.get(pid)
         return p.name if p and p.name else "(unknown project)"
 
     def _add(
-        project_id: Any, project_name: str, category: str, severity: str,
-        *, weight: float, headline: str, detail: str, link: str,
+        project_id: Any,
+        project_name: str,
+        category: str,
+        severity: str,
+        *,
+        weight: float,
+        headline: str,
+        detail: str,
+        link: str,
     ) -> None:
-        items.append({
-            "project_id": _ser(project_id) if project_id is not None else None,
-            "project_name": project_name,
-            "category": category,
-            "severity": severity,
-            "severity_rank": _SEVERITY_RANK[severity],
-            "weight": float(weight),
-            "headline": headline,
-            "detail": detail,
-            "link": link,
-        })
+        items.append(
+            {
+                "project_id": _ser(project_id) if project_id is not None else None,
+                "project_name": project_name,
+                "category": category,
+                "severity": severity,
+                "severity_rank": _SEVERITY_RANK[severity],
+                "weight": float(weight),
+                "headline": headline,
+                "detail": detail,
+                "link": link,
+            }
+        )
 
     # --- MONEY ---------------------------------------------------------------
     # Only projects that actually have extracted financial records; for each we
@@ -1610,13 +1641,20 @@ def report_attention_briefing(
             #    classified.  Honest "don't trust this margin" flag.
             ratio = ms.get("classified_ratio")
             pct = f"{ratio * 100:.0f}%" if ratio is not None else "an unknown share"
-            _add(pid, name, "money", "medium",
-                 weight=10000 + (1 - (ratio or 0)) * 1000,
-                 headline=f"{name}: money picture is low-confidence",
-                 detail=(f"Only {pct} of this project's money sorted into "
-                         f"revenue/cost buckets, so the margin is unreliable. "
-                         f"Usually a project type the model does not yet model."),
-                 link=link)
+            _add(
+                pid,
+                name,
+                "money",
+                "medium",
+                weight=10000 + (1 - (ratio or 0)) * 1000,
+                headline=f"{name}: money picture is low-confidence",
+                detail=(
+                    f"Only {pct} of this project's money sorted into "
+                    f"revenue/cost buckets, so the margin is unreliable. "
+                    f"Usually a project type the model does not yet model."
+                ),
+                link=link,
+            )
         else:
             # B. Confirmed costs exceed confirmed revenue -- a real loss signal.
             #    Guarded: only when confidence is OK AND there is confirmed
@@ -1626,31 +1664,47 @@ def report_attention_briefing(
             cost = float(cbmt.get("supplier_cost", 0.0) or 0.0)
             if rev > 0 and cost > rev:
                 gap = cost - rev
-                _add(pid, name, "money", "high",
-                     weight=gap,
-                     headline=(f"{name}: confirmed costs exceed confirmed "
-                               f"revenue by {gap:,.0f}"),
-                     detail=(f"Confirmed supplier cost {cost:,.0f} vs confirmed "
-                             f"contract revenue {rev:,.0f}. Possible loss, an "
-                             f"un-filed revenue document, or unbilled work."),
-                     link=link)
+                _add(
+                    pid,
+                    name,
+                    "money",
+                    "high",
+                    weight=gap,
+                    headline=(f"{name}: confirmed costs exceed confirmed revenue by {gap:,.0f}"),
+                    detail=(
+                        f"Confirmed supplier cost {cost:,.0f} vs confirmed "
+                        f"contract revenue {rev:,.0f}. Possible loss, an "
+                        f"un-filed revenue document, or unbilled work."
+                    ),
+                    link=link,
+                )
 
         # C. A pile of unconfirmed quote money -- nudge the confirm/quote toggle.
-        unconfirmed_in = (float(totals.get("client_in", 0.0) or 0.0)
-                          - float(ctotals.get("client_in", 0.0) or 0.0))
-        unconfirmed_out = (float(totals.get("contractor_out", 0.0) or 0.0)
-                           - float(ctotals.get("contractor_out", 0.0) or 0.0))
+        unconfirmed_in = float(totals.get("client_in", 0.0) or 0.0) - float(
+            ctotals.get("client_in", 0.0) or 0.0
+        )
+        unconfirmed_out = float(totals.get("contractor_out", 0.0) or 0.0) - float(
+            ctotals.get("contractor_out", 0.0) or 0.0
+        )
         pile = max(unconfirmed_in, unconfirmed_out)
-        unconfirmed_docs = (int(conf.get("total_primary_docs", 0))
-                            - int(conf.get("confirmed_docs", 0)))
+        unconfirmed_docs = int(conf.get("total_primary_docs", 0)) - int(
+            conf.get("confirmed_docs", 0)
+        )
         if pile >= _UNCONFIRMED_PILE_MIN and unconfirmed_docs >= _UNCONFIRMED_PILE_MIN_DOCS:
-            _add(pid, name, "money", "low",
-                 weight=pile,
-                 headline=f"{name}: {pile:,.0f} in unconfirmed quotes",
-                 detail=(f"{unconfirmed_docs} financial document(s) are quotes "
-                         f"not yet marked confirmed. Confirm which ones count so "
-                         f"the margin reflects money that actually moved."),
-                 link=link)
+            _add(
+                pid,
+                name,
+                "money",
+                "low",
+                weight=pile,
+                headline=f"{name}: {pile:,.0f} in unconfirmed quotes",
+                detail=(
+                    f"{unconfirmed_docs} financial document(s) are quotes "
+                    f"not yet marked confirmed. Confirm which ones count so "
+                    f"the margin reflects money that actually moved."
+                ),
+                link=link,
+            )
 
     # --- SCOPE ---------------------------------------------------------------
     # Pending scope-gap proposals: contract scope items with no matching task.
@@ -1666,13 +1720,20 @@ def report_attention_briefing(
         scope_by_proj[pr.entity_id] = scope_by_proj.get(pr.entity_id, 0) + 1
     for pid, n in scope_by_proj.items():
         name = _name(pid)
-        _add(pid, name, "scope", "medium",
-             weight=n,
-             headline=f"{name}: {n} contract scope item(s) with no task",
-             detail=("Work the contract commits to that is not tracked on the "
-                     "Monday board. Each flagged item carries a quoted excerpt; "
-                     "review and add a task or dismiss."),
-             link=f"/projects/{_ser(pid)}")
+        _add(
+            pid,
+            name,
+            "scope",
+            "medium",
+            weight=n,
+            headline=f"{name}: {n} contract scope item(s) with no task",
+            detail=(
+                "Work the contract commits to that is not tracked on the "
+                "Monday board. Each flagged item carries a quoted excerpt; "
+                "review and add a task or dismiss."
+            ),
+            link=f"/projects/{_ser(pid)}",
+        )
 
     # --- SCHEDULE ------------------------------------------------------------
     # Overdue tasks: a past due date with a not-done, not-cancelled status.
@@ -1698,17 +1759,23 @@ def report_attention_briefing(
         days_over = (today - earliest).days
         n = len(tasks)
         severity = (
-            "high" if (n >= _OVERDUE_HIGH_COUNT or days_over >= _OVERDUE_HIGH_DAYS)
-            else "medium"
+            "high" if (n >= _OVERDUE_HIGH_COUNT or days_over >= _OVERDUE_HIGH_DAYS) else "medium"
         )
         example = next((t.title for t in tasks if t.title), None)
         ex = f' e.g. "{example}"' if example else ""
-        _add(pid, name, "schedule", severity,
-             weight=n * 100 + days_over,
-             headline=f"{name}: {n} task(s) overdue",
-             detail=(f"Earliest due {earliest.isoformat()} ({days_over} day(s) "
-                     f"ago), not marked done.{ex}"),
-             link=f"/projects/{_ser(pid)}")
+        _add(
+            pid,
+            name,
+            "schedule",
+            severity,
+            weight=n * 100 + days_over,
+            headline=f"{name}: {n} task(s) overdue",
+            detail=(
+                f"Earliest due {earliest.isoformat()} ({days_over} day(s) "
+                f"ago), not marked done.{ex}"
+            ),
+            link=f"/projects/{_ser(pid)}",
+        )
 
     # --- DOCUMENTS -----------------------------------------------------------
     # Active/proposed projects with no contract-shaped document on file.
@@ -1716,13 +1783,20 @@ def report_attention_briefing(
         status = (p.get("status") or "").upper()
         severity = "medium" if status == "ACTIVE" else "low"
         name = p.get("name") or "(unknown project)"
-        _add(p.get("canonical_id"), name, "documents", severity,
-             weight=1.0,
-             headline=f"{name}: no contract document on file",
-             detail=("No PDF / Google Doc / DOCX is filed under this project in "
-                     "Drive. The contract may be elsewhere, or the folder match "
-                     "missed it."),
-             link=f"/projects/{p.get('canonical_id')}")
+        _add(
+            p.get("canonical_id"),
+            name,
+            "documents",
+            severity,
+            weight=1.0,
+            headline=f"{name}: no contract document on file",
+            detail=(
+                "No PDF / Google Doc / DOCX is filed under this project in "
+                "Drive. The contract may be elsewhere, or the folder match "
+                "missed it."
+            ),
+            link=f"/projects/{p.get('canonical_id')}",
+        )
 
     # --- COMMITMENTS (Money-at-Risk) -----------------------------------------
     # Overdue / due-soon contract obligations: revenue past due to collect, or a
@@ -1748,31 +1822,54 @@ def report_attention_briefing(
 
         if overdue_in:
             amt = float(sum((o.amount or 0) for o in overdue_in))
-            _add(pid, name, "commitments", "high",
-                 weight=amt or len(overdue_in) * 100,
-                 headline=(f"{name}: {amt:,.0f} past due to collect" if amt
-                           else f"{name}: {len(overdue_in)} overdue receivable(s)"),
-                 detail=(f"{len(overdue_in)} obligation(s) the client owes us are past "
-                         f"due (e.g. \"{_ex(overdue_in[0])}\"). Revenue at risk if not "
-                         f"chased."),
-                 link=link)
+            _add(
+                pid,
+                name,
+                "commitments",
+                "high",
+                weight=amt or len(overdue_in) * 100,
+                headline=(
+                    f"{name}: {amt:,.0f} past due to collect"
+                    if amt
+                    else f"{name}: {len(overdue_in)} overdue receivable(s)"
+                ),
+                detail=(
+                    f"{len(overdue_in)} obligation(s) the client owes us are past "
+                    f'due (e.g. "{_ex(overdue_in[0])}"). Revenue at risk if not '
+                    f"chased."
+                ),
+                link=link,
+            )
         if overdue_out:
             amt = float(sum((o.amount or 0) for o in overdue_out))
-            _add(pid, name, "commitments", "high",
-                 weight=amt or len(overdue_out) * 100,
-                 headline=f"{name}: {len(overdue_out)} obligation(s) overdue",
-                 detail=(f"{len(overdue_out)} payment/deadline obligation(s) we owe are "
-                         f"past due (e.g. \"{_ex(overdue_out[0])}\"). Penalty / late "
-                         f"exposure."),
-                 link=link)
+            _add(
+                pid,
+                name,
+                "commitments",
+                "high",
+                weight=amt or len(overdue_out) * 100,
+                headline=f"{name}: {len(overdue_out)} obligation(s) overdue",
+                detail=(
+                    f"{len(overdue_out)} payment/deadline obligation(s) we owe are "
+                    f'past due (e.g. "{_ex(overdue_out[0])}"). Penalty / late '
+                    f"exposure."
+                ),
+                link=link,
+            )
         if due_soon:
             amt = float(sum((o.amount or 0) for o in due_soon))
-            _add(pid, name, "commitments", "medium",
-                 weight=amt or len(due_soon) * 10,
-                 headline=f"{name}: {len(due_soon)} obligation(s) due soon",
-                 detail=(f"Due within {_OBLIGATION_DUE_SOON_DAYS} days "
-                         f"(e.g. \"{_ex(due_soon[0])}\")."),
-                 link=link)
+            _add(
+                pid,
+                name,
+                "commitments",
+                "medium",
+                weight=amt or len(due_soon) * 10,
+                headline=f"{name}: {len(due_soon)} obligation(s) due soon",
+                detail=(
+                    f'Due within {_OBLIGATION_DUE_SOON_DAYS} days (e.g. "{_ex(due_soon[0])}").'
+                ),
+                link=link,
+            )
 
     # --- RANK + CAP ----------------------------------------------------------
     # Stable two-pass sort: name asc first, then (severity, weight) desc on top,

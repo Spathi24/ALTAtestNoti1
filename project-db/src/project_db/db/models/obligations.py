@@ -12,6 +12,7 @@ against invoices + Monday status + today. Schema-light -- classification columns
 are plain strings validated against a known vocabulary (unknown values warn,
 never crash), and the raw LLM item is kept in ``source_meta_json``.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import (
@@ -30,13 +31,13 @@ from project_db.db.base import Base, CanonicalMixin
 
 # What the obligation is.  Validated at write time; unknown -> "other" + warn.
 OBLIGATION_KINDS = {
-    "payment_milestone",   # e.g. "25% on completion"
-    "retainage",           # holdback / final retainage release
-    "penalty",             # late-completion / liquidated-damages clause
-    "deposit",             # an upfront deposit due
-    "insurance_expiry",    # a certificate/coverage that expires
-    "permit_deadline",     # a permit / filing deadline
-    "settlement",          # a settlement / buyout payment (e.g. tenant key return)
+    "payment_milestone",  # e.g. "25% on completion"
+    "retainage",  # holdback / final retainage release
+    "penalty",  # late-completion / liquidated-damages clause
+    "deposit",  # an upfront deposit due
+    "insurance_expiry",  # a certificate/coverage that expires
+    "permit_deadline",  # a permit / filing deadline
+    "settlement",  # a settlement / buyout payment (e.g. tenant key return)
     "other",
 }
 # Direction of the commitment, from OUR point of view:
@@ -62,9 +63,9 @@ class ContractObligation(Base, CanonicalMixin):
 
     kind = Column(String, nullable=False, default="other")
     direction = Column(String, nullable=False, default="unknown")
-    description = Column(Text, nullable=True)        # what the obligation is
+    description = Column(Text, nullable=True)  # what the obligation is
 
-    amount = Column(Numeric(14, 2), nullable=True)   # null when it's a pure deadline
+    amount = Column(Numeric(14, 2), nullable=True)  # null when it's a pure deadline
     currency = Column(String, nullable=True)
     # An explicit calendar date, when the contract gives one.
     due_date = Column(Date, nullable=True)
@@ -72,7 +73,7 @@ class ContractObligation(Base, CanonicalMixin):
     # e.g. "upon key return", "on substantial completion".  Kept verbatim so the
     # reconciler can surface it even without a date.
     trigger = Column(String, nullable=True)
-    counterparty = Column(String, nullable=True)     # client / sub / authority name
+    counterparty = Column(String, nullable=True)  # client / sub / authority name
 
     # Verbatim evidence -- the exact clause text.  Ctrl-F-able against DocumentText.
     quoted_excerpt = Column(Text, nullable=True)
@@ -83,4 +84,4 @@ class ContractObligation(Base, CanonicalMixin):
     amount_verified = Column(Boolean, nullable=True)
 
     prompt_version = Column(String, nullable=True)
-    source_meta_json = Column(Text, nullable=True)   # raw LLM item -- keep everything
+    source_meta_json = Column(Text, nullable=True)  # raw LLM item -- keep everything

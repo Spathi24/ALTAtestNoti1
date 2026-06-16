@@ -1,19 +1,17 @@
 """Tests for connector sync logic — Monday + QuickBooks dispatch and dedup."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
-import pytest
 from sqlalchemy.orm import Session
 
 from project_db.connectors.base import SyncReport
 from project_db.db.models import (
     Client,
     ExternalId,
-    Invoice,
-    Project,
     SourceSystem,
     Task,
 )
@@ -30,9 +28,7 @@ class TestMondayConnectorInitialization:
 
 class TestMondayConnectorBoardSync:
     @patch("project_db.connectors.monday.connector.MondayClient")
-    def test_sync_classifies_and_processes_boards(
-        self, mock_client_class, session: Session, org
-    ):
+    def test_sync_classifies_and_processes_boards(self, mock_client_class, session: Session, org):
         """Drive a sync end-to-end with mocked Monday client and verify it
         creates canonical entities + ExternalId rows."""
         from project_db.connectors.monday import MondayConnector
@@ -40,9 +36,7 @@ class TestMondayConnectorBoardSync:
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
 
-        mock_client.list_workspaces.return_value = [
-            {"id": "ws1", "name": "Project Management"}
-        ]
+        mock_client.list_workspaces.return_value = [{"id": "ws1", "name": "Project Management"}]
         mock_client.list_boards.return_value = [
             {
                 "id": 999,
@@ -78,9 +72,7 @@ class TestMondayConnectorBoardSync:
 
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.list_workspaces.return_value = [
-            {"id": "ws1", "name": "Project Management"}
-        ]
+        mock_client.list_workspaces.return_value = [{"id": "ws1", "name": "Project Management"}]
         mock_client.list_boards.return_value = [
             {
                 "id": 923,
@@ -105,11 +97,42 @@ class TestMondayConnectorBoardSync:
                 "state": "active",
                 "group": {"title": "Scope of Work"},
                 "column_values": [
-                    {"id": "project_status", "type": "status", "text": "Working on it", "value": None, "label": "Working on it"},
-                    {"id": "project_timeline", "type": "timeline", "text": "", "value": None, "from": "2026-05-01", "to": "2026-05-03"},
-                    {"id": "project_duration", "type": "numbers", "text": "2", "value": None, "number": 2},
-                    {"id": "project_planned_effort", "type": "numbers", "text": "8", "value": None, "number": 8},
-                    {"id": "project_effort_spent", "type": "numbers", "text": "1.5", "value": None, "number": 1.5},
+                    {
+                        "id": "project_status",
+                        "type": "status",
+                        "text": "Working on it",
+                        "value": None,
+                        "label": "Working on it",
+                    },
+                    {
+                        "id": "project_timeline",
+                        "type": "timeline",
+                        "text": "",
+                        "value": None,
+                        "from": "2026-05-01",
+                        "to": "2026-05-03",
+                    },
+                    {
+                        "id": "project_duration",
+                        "type": "numbers",
+                        "text": "2",
+                        "value": None,
+                        "number": 2,
+                    },
+                    {
+                        "id": "project_planned_effort",
+                        "type": "numbers",
+                        "text": "8",
+                        "value": None,
+                        "number": 8,
+                    },
+                    {
+                        "id": "project_effort_spent",
+                        "type": "numbers",
+                        "text": "1.5",
+                        "value": None,
+                        "number": 1.5,
+                    },
                     {"id": "text_sub", "type": "text", "text": "Raul", "value": '"Raul"'},
                     {"id": "text_supplier", "type": "text", "text": "BMR", "value": '"BMR"'},
                 ],
@@ -148,9 +171,7 @@ class TestMondayConnectorBoardSync:
 
 
 class TestMondayConnectorDeltaSync:
-    def test_external_id_last_synced_at_is_recorded(
-        self, session: Session, org, client_factory
-    ):
+    def test_external_id_last_synced_at_is_recorded(self, session: Session, org, client_factory):
         client = client_factory(name="Acme")
         ext = ExternalId(
             source=SourceSystem.MONDAY,
@@ -171,9 +192,7 @@ class TestMondayConnectorDeltaSync:
 
 class TestMondayConnectorWriteBack:
     @patch("project_db.connectors.monday.connector.MondayClient")
-    def test_sync_back_method_exists(
-        self, mock_client_class, session: Session, org
-    ):
+    def test_sync_back_method_exists(self, mock_client_class, session: Session, org):
         """Smoke test that sync_back is callable. Real validation lives in Block 2."""
         from project_db.connectors.monday import MondayConnector
 
@@ -198,9 +217,7 @@ class TestMondayConnectorColumnMapping:
         # The budget column should be recognized heuristically.
         assert any(field == "budget_amount" for field in extractor._heuristic.values())
 
-        item_values = [
-            {"id": "budget", "text": "50000", "type": "numbers", "value": "50000"}
-        ]
+        item_values = [{"id": "budget", "text": "50000", "type": "numbers", "value": "50000"}]
         fields = extractor.extract(item_values)
         assert fields.budget_amount == Decimal("50000")
 
@@ -219,9 +236,7 @@ class TestQuickBooksConnectorImportable:
         assert QuickBooksConnector.source == SourceSystem.QUICKBOOKS
 
     @patch("project_db.connectors.quickbooks.connector.QuickBooksClient")
-    def test_qb_connector_instantiates(
-        self, mock_client_class, session: Session, org
-    ):
+    def test_qb_connector_instantiates(self, mock_client_class, session: Session, org):
         from project_db.connectors.quickbooks import QuickBooksConnector
 
         mock_client_class.return_value = MagicMock()
@@ -231,9 +246,7 @@ class TestQuickBooksConnectorImportable:
 
 class TestQuickBooksConnectorSync:
     @patch("project_db.connectors.quickbooks.connector.QuickBooksClient")
-    def test_sync_creates_client_from_customer(
-        self, mock_client_class, session: Session, org
-    ):
+    def test_sync_creates_client_from_customer(self, mock_client_class, session: Session, org):
         from project_db.connectors.quickbooks import QuickBooksConnector
 
         mock_client = MagicMock()
@@ -287,9 +300,11 @@ class TestConnectorIntegration:
         )
 
         assert qb_result.entity.canonical_id == monday_result.entity.canonical_id
-        ext_ids = session.query(ExternalId).filter_by(
-            canonical_id=monday_result.entity.canonical_id
-        ).all()
+        ext_ids = (
+            session.query(ExternalId)
+            .filter_by(canonical_id=monday_result.entity.canonical_id)
+            .all()
+        )
         assert len(ext_ids) == 2
 
 

@@ -8,6 +8,7 @@ Lookup order for .env:
   2. Current working directory
   3. Each parent of cwd up to filesystem root
 """
+
 from __future__ import annotations
 
 import os

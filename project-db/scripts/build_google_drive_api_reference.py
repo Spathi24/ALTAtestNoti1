@@ -2,7 +2,7 @@ import re
 import time
 from collections import deque
 from pathlib import Path
-from urllib.parse import urljoin, urldefrag
+from urllib.parse import urldefrag, urljoin
 
 import requests
 from bs4 import BeautifulSoup

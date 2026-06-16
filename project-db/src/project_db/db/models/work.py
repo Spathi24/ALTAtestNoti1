@@ -1,9 +1,11 @@
 """Delivery-side entities: Project, Task, DailyLog."""
+
 from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Boolean, Column, Date, Enum as SAEnum, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, Column, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
@@ -28,9 +30,7 @@ class TaskStatus(str, enum.Enum):
 class Project(Base, CanonicalMixin):
     name = Column(String, nullable=False)
     code = Column(String, nullable=True)
-    status = Column(
-        SAEnum(ProjectStatus), nullable=False, default=ProjectStatus.PROPOSED
-    )
+    status = Column(SAEnum(ProjectStatus), nullable=False, default=ProjectStatus.PROPOSED)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     budget_amount = Column(Numeric(12, 2), nullable=True)
@@ -60,9 +60,7 @@ class Project(Base, CanonicalMixin):
 
 class Task(Base, CanonicalMixin):
     title = Column(String, nullable=False)
-    status = Column(
-        SAEnum(TaskStatus), nullable=False, default=TaskStatus.TODO
-    )
+    status = Column(SAEnum(TaskStatus), nullable=False, default=TaskStatus.TODO)
     monday_status_label = Column(String, nullable=True)
     priority = Column(String, nullable=True)
     group_title = Column(String, nullable=True)

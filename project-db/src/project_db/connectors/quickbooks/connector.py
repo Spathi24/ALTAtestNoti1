@@ -23,6 +23,7 @@ This connector demonstrates multi-system ripple effects:
 The QB connector uses REST API + Query Language (not GraphQL).
 Complexity is tracked via simple API call counting (no complex budget like Monday).
 """
+
 from __future__ import annotations
 
 import logging
@@ -72,7 +73,7 @@ class QuickBooksConnector(BaseConnector):
 
             logger.info(self.report.summary())
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._record_failure(f"QB sync failed: {exc}")
 
         return self._finalize()
@@ -90,10 +91,10 @@ class QuickBooksConnector(BaseConnector):
             for qb_cust in qb_customers:
                 try:
                     self._upsert_client(qb_cust)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     self._record_failure(f"Customer {qb_cust.get('Id')}: {exc}")
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Customer sync failed (non-fatal): %s", exc)
 
     @staticmethod
@@ -154,22 +155,22 @@ class QuickBooksConnector(BaseConnector):
             for qb_inv in qb_invoices:
                 try:
                     self._upsert_invoice(qb_inv)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     self._record_failure(f"Invoice {qb_inv.get('DocNumber')}: {exc}")
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Invoice sync failed (non-fatal): %s", exc)
 
     def _upsert_invoice(self, qb_invoice: dict[str, Any]) -> None:
         """Map QB invoice to canonical Invoice.
-        
+
         Links invoices to Projects via QB custom field (job number).
         """
         from project_db.db.models import ExternalId
 
         # Extract job number (often stored in QB custom field as project reference)
         job_number = None
-        if "CustomField" in qb_invoice and qb_invoice["CustomField"]:
+        if qb_invoice.get("CustomField"):
             job_number = qb_invoice["CustomField"][0].get("StringValue")
 
         # Try to link to a Project if job number is available
@@ -249,10 +250,10 @@ class QuickBooksConnector(BaseConnector):
             for qb_est in qb_estimates:
                 try:
                     self._upsert_deal(qb_est)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     self._record_failure(f"Estimate {qb_est.get('DocNumber')}: {exc}")
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Estimate sync failed (non-fatal): %s", exc)
 
     def _upsert_deal(self, qb_estimate: dict[str, Any]) -> None:

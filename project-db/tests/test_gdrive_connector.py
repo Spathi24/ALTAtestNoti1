@@ -4,11 +4,12 @@ All Google API calls are mocked -- no real credentials or network needed.
 The connector is exercised against an in-memory SQLite DB (same as every
 other connector test).
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-import pytest
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers / shared fixtures
@@ -63,7 +64,10 @@ def mock_gdrive_service():
     list_mock = MagicMock()
     list_mock.execute.side_effect = [
         # Root listing: one folder, one loose file
-        {"files": [folder_item, _make_file("root_file", "Overview.pdf", folder_id="root")], "nextPageToken": None},
+        {
+            "files": [folder_item, _make_file("root_file", "Overview.pdf", folder_id="root")],
+            "nextPageToken": None,
+        },
         # folder1 listing: one file
         {"files": [file_item], "nextPageToken": None},
     ]
@@ -87,6 +91,7 @@ def mock_gdrive_service():
 def gdrive_client(mock_gdrive_service):
     """GDriveClient with injected mock service (no real credentials)."""
     from project_db.connectors.gdrive.client import GDriveClient
+
     return GDriveClient(service=mock_gdrive_service)
 
 
@@ -226,7 +231,10 @@ class TestGDriveConnectorFullSync:
         file_item = _make_file("file1", "Scope of Work.pdf", folder_id="folder1")
         list_mock = MagicMock()
         list_mock.execute.side_effect = [
-            {"files": [folder_item, _make_file("root_file", "Overview.pdf", folder_id="root")], "nextPageToken": None},
+            {
+                "files": [folder_item, _make_file("root_file", "Overview.pdf", folder_id="root")],
+                "nextPageToken": None,
+            },
             {"files": [file_item], "nextPageToken": None},
         ]
         mock_gdrive_service.files.return_value.list.return_value = list_mock
@@ -253,7 +261,8 @@ class TestGDriveConnectorFullSync:
 
         def _folder(fid, name, parent):
             return {
-                "id": fid, "name": name,
+                "id": fid,
+                "name": name,
                 "mimeType": "application/vnd.google-apps.folder",
                 "parents": [parent],
             }
@@ -282,11 +291,7 @@ class TestGDriveConnectorFullSync:
         # The connector created the project from the folder...
         project = session.query(Project).filter_by(name="923 Rockland").one()
         # ...and the file under it is linked by ancestry.
-        linked = (
-            session.query(Document)
-            .filter(Document.project_id == project.canonical_id)
-            .all()
-        )
+        linked = session.query(Document).filter(Document.project_id == project.canonical_id).all()
         assert len(linked) == 1
         assert linked[0].storage_ref == "file1"
 
@@ -314,10 +319,11 @@ class TestGDriveConnectorDeltaSync:
         """Delta sync adds a Document for a newly-changed file."""
         from project_db.connectors.gdrive.client import GDriveClient
         from project_db.connectors.gdrive.connector import GDriveConnector
-        from project_db.db.models.docs import Document
 
         # Seed an existing cursor so delta path is taken.
         from project_db.db.models import ExternalId, SourceSystem
+        from project_db.db.models.docs import Document
+
         cursor_row = ExternalId(
             source=SourceSystem.GOOGLE_DRIVE,
             entity_type="SyncState",
@@ -397,18 +403,22 @@ class TestGDriveConnectorRegistry:
 
         cls = get_connector_class(SourceSystem.GOOGLE_DRIVE)
         from project_db.connectors.gdrive.connector import GDriveConnector
+
         assert cls is GDriveConnector
 
 
 class TestFolderNameNormalization:
     def test_normalize_name_strips_punctuation(self):
         from project_db.identity.matcher import normalize_name
+
         assert normalize_name("5768-5770 St. Laurent (Reno)") == "5768 5770 st laurent reno"
 
     def test_normalize_name_collapses_whitespace(self):
         from project_db.identity.matcher import normalize_name
+
         assert normalize_name("923  Rockland   Ave") == "923 rockland ave"
 
     def test_normalize_name_lowercases(self):
         from project_db.identity.matcher import normalize_name
+
         assert normalize_name("ALTA Group") == "alta group"

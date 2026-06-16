@@ -8,6 +8,7 @@ Usage:
     project_db ask "what active projects do we have?"
     project_db list-external Project <canonical-id>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -113,7 +114,7 @@ def cmd_list_boards(_: argparse.Namespace) -> int:
     print("-" * 80)
     for b in boards:
         ws_name = (b.get("workspace") or {}).get("name", "-")
-        print(f"{b['id']:<15} {ws_name:<25} {b.get('state',''):<10} {b['name']}")
+        print(f"{b['id']:<15} {ws_name:<25} {b.get('state', ''):<10} {b['name']}")
     return 0
 
 
@@ -160,10 +161,7 @@ def cmd_inspect_board(args: argparse.Namespace) -> int:
         group_title = (item.get("group") or {}).get("title", "-")
         print(f"{item['id']:<15} {group_title:<20} {item['name']}")
         fields = extractor.extract(item.get("column_values") or [])
-        field_dict = {
-            k: v for k, v in vars(fields).items()
-            if v and v != [] and k != "unmatched"
-        }
+        field_dict = {k: v for k, v in vars(fields).items() if v and v != [] and k != "unmatched"}
         for k, v in field_dict.items():
             print(f"    {k}: {v}")
         if fields.unmatched:
@@ -206,7 +204,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
             embed_provider = get_optional_embedding_provider()
             response = assistant.answer_with_llm(
-                question, provider, embedding_provider=embed_provider,
+                question,
+                provider,
+                embedding_provider=embed_provider,
             )
 
         print(f"[mode={response.mode}", end="")
@@ -219,8 +219,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         else:
             print(json.dumps(response.answer, indent=2, default=str))
         if response.sources:
-            print(f"\n[answered using {len(response.sources)} document "
-                  f"excerpt(s):]")
+            print(f"\n[answered using {len(response.sources)} document excerpt(s):]")
             seen = []
             for s in response.sources:
                 name = s.get("document_name") or "(unknown)"
@@ -289,8 +288,7 @@ def cmd_gdrive_auth(_: argparse.Namespace) -> int:
         from google_auth_oauthlib.flow import InstalledAppFlow
     except ImportError:
         print(
-            "FAIL: google-auth-oauthlib is not installed.\n"
-            "Run: pip install google-auth-oauthlib",
+            "FAIL: google-auth-oauthlib is not installed.\nRun: pip install google-auth-oauthlib",
             file=sys.stderr,
         )
         return 2
@@ -377,9 +375,12 @@ def cmd_extract_content(args: argparse.Namespace) -> int:
         for i, doc in enumerate(docs, 1):
             try:
                 row = extract_and_store(
-                    session=s, client=client, document=doc, overwrite=overwrite,
+                    session=s,
+                    client=client,
+                    document=doc,
+                    overwrite=overwrite,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"  [{i}/{total}] UNHANDLED {doc.name[:40]!r}: {exc}")
                 counts["failed"] += 1
                 continue
@@ -444,24 +445,29 @@ def cmd_embed_documents(args: argparse.Namespace) -> int:
         print(f"Embedding model: {provider.model} ({provider.dims} dims)")
         print("Chunking + embedding (calls the OpenAI embeddings API)...")
         stats = embed_documents_for(
-            s, provider,
+            s,
+            provider,
             project_id=project_id,
             overwrite=bool(args.overwrite),
             limit=int(args.limit) if args.limit else None,
         )
         print()
-        print(f"  Documents: {stats['documents_processed']} embedded, "
-              f"{stats['documents_skipped']} unchanged, of "
-              f"{stats['documents_total']} with text")
+        print(
+            f"  Documents: {stats['documents_processed']} embedded, "
+            f"{stats['documents_skipped']} unchanged, of "
+            f"{stats['documents_total']} with text"
+        )
         print(f"  Chunks embedded:  {stats['chunks_embedded']}")
         print(f"  Tokens (approx):  {stats['tokens_embedded']:,}")
         print(f"  Est. cost (USD):  ${stats['estimated_cost_usd']:.4f}")
         if stats["interrupted"]:
             print("  (interrupted -- progress committed; re-run to continue)")
         cov = embedding_coverage(s)
-        print(f"  Coverage: {cov['documents_embedded']}/"
-              f"{cov['documents_with_text']} docs embedded, "
-              f"{cov['chunks']} chunks total")
+        print(
+            f"  Coverage: {cov['documents_embedded']}/"
+            f"{cov['documents_with_text']} docs embedded, "
+            f"{cov['chunks']} chunks total"
+        )
     return 0
 
 
@@ -494,16 +500,21 @@ def cmd_rag_search(args: argparse.Namespace) -> int:
                 return 2
             project_id = p.canonical_id
         hits = retrieve_chunks(
-            s, provider, args.query,
-            project_id=project_id, top_k=int(args.top_k),
+            s,
+            provider,
+            args.query,
+            project_id=project_id,
+            top_k=int(args.top_k),
         )
         if not hits:
             print("No matching chunks. Run `embed-documents` first.")
             return 0
         print(f"Top {len(hits)} chunk(s) for: {args.query!r}\n")
         for i, h in enumerate(hits, 1):
-            print(f"{i:>2}. sim={h['similarity']:.3f}  {h['document_name']}  "
-                  f"[chunk {h['chunk_index']}]")
+            print(
+                f"{i:>2}. sim={h['similarity']:.3f}  {h['document_name']}  "
+                f"[chunk {h['chunk_index']}]"
+            )
             snippet = " ".join((h["text"] or "")[:240].split())
             print(f"      {snippet}...")
     return 0
@@ -537,9 +548,8 @@ def _cmd_extract_obligations_structured(args: argparse.Namespace) -> int:
         print(f"Project:   {project.name}  ({project.canonical_id})")
         print("Classifying + extracting each document (OpenAI structured outputs)...")
         try:
-            batch = extract_obligations_structured_for_project(
-                s, extractor, project.canonical_id)
-        except Exception as exc:  # noqa: BLE001
+            batch = extract_obligations_structured_for_project(s, extractor, project.canonical_id)
+        except Exception as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
 
@@ -557,19 +567,26 @@ def _cmd_extract_obligations_structured(args: argparse.Namespace) -> int:
             for ob in batch.obligations[:40]:
                 amt = f"${ob.amount:,.2f}" if ob.amount is not None else "(no amount)"
                 when = ob.due_date.isoformat() if ob.due_date else (ob.trigger or "?")
-                verify = "" if ob.amount is None else (
-                    " [verified]" if ob.amount_verified else " [UNVERIFIED]")
+                verify = (
+                    ""
+                    if ob.amount is None
+                    else (" [verified]" if ob.amount_verified else " [UNVERIFIED]")
+                )
                 print(f"    - [{ob.kind}/{ob.direction}] {amt} due {when}{verify}")
 
         rep = report_commitments(s, str(project.canonical_id))
         c = rep.get("counts", {})
         mar = rep.get("money_at_risk", {})
-        print(f"\n  Commitments: {rep.get('obligation_count', 0)} total | "
-              f"overdue {c.get('overdue', 0)} | due-soon {c.get('due_soon', 0)} | "
-              f"conditional {c.get('conditional', 0)}")
-        print(f"  Money at risk: ${mar.get('owed_to_us_overdue', 0):,.2f} overdue to "
-              f"collect | ${mar.get('owed_to_us_total', 0):,.2f} owed to us total | "
-              f"${mar.get('owed_by_us_total', 0):,.2f} owed by us total")
+        print(
+            f"\n  Commitments: {rep.get('obligation_count', 0)} total | "
+            f"overdue {c.get('overdue', 0)} | due-soon {c.get('due_soon', 0)} | "
+            f"conditional {c.get('conditional', 0)}"
+        )
+        print(
+            f"  Money at risk: ${mar.get('owed_to_us_overdue', 0):,.2f} overdue to "
+            f"collect | ${mar.get('owed_to_us_total', 0):,.2f} owed to us total | "
+            f"${mar.get('owed_by_us_total', 0):,.2f} owed by us total"
+        )
     return 0
 
 
@@ -612,7 +629,7 @@ def cmd_extract_obligations(args: argparse.Namespace) -> int:
         print("Extracting contract obligations (this calls the LLM, batched)...")
         try:
             batch = extract_obligations_for_project(s, provider, project.canonical_id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
 
@@ -631,8 +648,11 @@ def cmd_extract_obligations(args: argparse.Namespace) -> int:
             for ob in batch.obligations[:40]:
                 amt = f"${ob.amount:,.2f}" if ob.amount is not None else "(no amount)"
                 when = ob.due_date.isoformat() if ob.due_date else (ob.trigger or "?")
-                verify = "" if ob.amount is None else (
-                    " [verified]" if ob.amount_verified else " [UNVERIFIED]")
+                verify = (
+                    ""
+                    if ob.amount is None
+                    else (" [verified]" if ob.amount_verified else " [UNVERIFIED]")
+                )
                 print(f"    - [{ob.kind}/{ob.direction}] {amt} due {when}{verify}")
                 if ob.description:
                     print(f"        {ob.description}")
@@ -667,9 +687,8 @@ def _cmd_extract_financials_structured(args: argparse.Namespace) -> int:
         print(f"Project:   {project.name}  ({project.canonical_id})")
         print("Classifying + extracting each document (OpenAI structured outputs)...")
         try:
-            batch = extract_financials_structured_for_project(
-                s, extractor, project.canonical_id)
-        except Exception as exc:  # noqa: BLE001
+            batch = extract_financials_structured_for_project(s, extractor, project.canonical_id)
+        except Exception as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
 
@@ -685,13 +704,17 @@ def _cmd_extract_financials_structured(args: argparse.Namespace) -> int:
         rep = report_project_financials(s, str(project.canonical_id))
         t = rep.get("totals", {})
         ms = rep.get("money_summary", {})
-        print(f"\n  Client in {t.get('client_in',0):,.2f} | Contractor out "
-              f"{t.get('contractor_out',0):,.2f} | Unknown {t.get('unknown',0):,.2f} "
-              f"| Margin {t.get('margin',0):,.2f}")
+        print(
+            f"\n  Client in {t.get('client_in', 0):,.2f} | Contractor out "
+            f"{t.get('contractor_out', 0):,.2f} | Unknown {t.get('unknown', 0):,.2f} "
+            f"| Margin {t.get('margin', 0):,.2f}"
+        )
         cr = ms.get("classified_ratio")
         if cr is not None:
-            print(f"  Classified: {cr*100:.0f}%"
-                  + ("  LOW CONFIDENCE" if ms.get("low_confidence") else ""))
+            print(
+                f"  Classified: {cr * 100:.0f}%"
+                + ("  LOW CONFIDENCE" if ms.get("low_confidence") else "")
+            )
     return 0
 
 
@@ -747,9 +770,12 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
             if args.max_docs:
                 kwargs["max_documents"] = int(args.max_docs)
             batch = extract_financials_for_project(
-                s, provider, project.canonical_id, **kwargs,
+                s,
+                provider,
+                project.canonical_id,
+                **kwargs,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
 
@@ -768,20 +794,26 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
         report = report_project_financials(s, str(project.canonical_id))
         totals = report.get("totals", {})
         print("\n--- Money-flow reconciliation (PRIMARY docs only) ---")
-        print(f"  Records:          {report.get('record_count', 0)} "
-              f"(primary {report.get('primary_record_count', 0)} / "
-              f"rollup {report.get('rollup_record_count', 0)})")
+        print(
+            f"  Records:          {report.get('record_count', 0)} "
+            f"(primary {report.get('primary_record_count', 0)} / "
+            f"rollup {report.get('rollup_record_count', 0)})"
+        )
         print(f"  Client in (rev):  {totals.get('client_in', 0):,.2f}")
         print(f"  Contractor out:   {totals.get('contractor_out', 0):,.2f}")
         print(f"  Unknown side:     {totals.get('unknown', 0):,.2f}")
         print(f"  Margin (in-out):  {totals.get('margin', 0):,.2f}")
         xc = report.get("rollup_crosscheck", {})
         if xc.get("document_count"):
-            print(f"\n  Roll-up cross-check ({xc['document_count']} internal "
-                  f"sheet(s), NOT in totals):")
-            print(f"    client_in {xc.get('client_in', 0):,.2f} | "
-                  f"contractor_out {xc.get('contractor_out', 0):,.2f} | "
-                  f"unknown {xc.get('unknown', 0):,.2f}")
+            print(
+                f"\n  Roll-up cross-check ({xc['document_count']} internal "
+                f"sheet(s), NOT in totals):"
+            )
+            print(
+                f"    client_in {xc.get('client_in', 0):,.2f} | "
+                f"contractor_out {xc.get('contractor_out', 0):,.2f} | "
+                f"unknown {xc.get('unknown', 0):,.2f}"
+            )
 
         bmt = report.get("by_money_type", {})
         if bmt:
@@ -791,12 +823,13 @@ def cmd_extract_financials(args: argparse.Namespace) -> int:
             ms = report.get("money_summary", {})
             cr = ms.get("classified_ratio")
             if cr is not None:
-                print(f"  Classified: {cr*100:.0f}% of money in revenue/cost "
-                      f"buckets")
+                print(f"  Classified: {cr * 100:.0f}% of money in revenue/cost buckets")
             if ms.get("confidence_note"):
                 print(f"  {ms['confidence_note']}")
-            print(f"  Construction margin (revenue - supplier cost): "
-                  f"{ms.get('construction_margin', 0):,.2f}")
+            print(
+                f"  Construction margin (revenue - supplier cost): "
+                f"{ms.get('construction_margin', 0):,.2f}"
+            )
             if ms.get("buyout_note"):
                 print(f"  NOTE: {ms['buyout_note']}")
 
@@ -849,14 +882,17 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
         print()
         print("Assembling context...")
         ctx = assemble_project_context(
-            s, project.canonical_id,
+            s,
+            project.canonical_id,
             token_budget=int(args.token_budget),
             max_documents_with_text=int(args.max_docs),
         )
         block = ctx.to_prompt_block()
-        print(f"  context: {len(block):,} chars / ~{len(block)//4:,} tokens")
-        print(f"  tasks={len(ctx.tasks)}  docs={len(ctx.documents)}  "
-              f"doc_bodies={len(ctx.document_texts)}  invoices={len(ctx.invoices)}")
+        print(f"  context: {len(block):,} chars / ~{len(block) // 4:,} tokens")
+        print(
+            f"  tasks={len(ctx.tasks)}  docs={len(ctx.documents)}  "
+            f"doc_bodies={len(ctx.document_texts)}  invoices={len(ctx.invoices)}"
+        )
         if ctx.truncated:
             print(f"  truncated: {ctx.truncated}")
         print()
@@ -919,6 +955,7 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
         print("  (first call to a freshly-pulled local model can take 30-180s")
         print("   on CPU while weights load -- subsequent calls are fast)")
         import time as _time
+
         t0 = _time.monotonic()
         try:
             resp = provider.complete(
@@ -931,7 +968,7 @@ def cmd_llm_test(args: argparse.Namespace) -> int:
             print(
                 "\nTroubleshooting:\n"
                 "  - HTTP timeout?  Set OPENAI_TIMEOUT=900 or warm the model:\n"
-                "      ollama run llama3.2:3b \"say hi\"\n"
+                '      ollama run llama3.2:3b "say hi"\n'
                 "  - Connection refused?  Is Ollama running?  ollama ps\n"
                 "  - Model not found?  ollama pull <model>",
                 file=sys.stderr,
@@ -1011,6 +1048,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
             return 2
 
         from project_db.ai.embeddings import get_optional_embedding_provider
+
         embed_provider = get_optional_embedding_provider()
 
         print(f"Provider: {provider.name}")
@@ -1018,18 +1056,22 @@ def cmd_propose(args: argparse.Namespace) -> int:
         print(f"Generating {kind_label} proposals (this calls the LLM)...")
         try:
             batch = generator(
-                s, provider, project.canonical_id,
+                s,
+                provider,
+                project.canonical_id,
                 embedding_provider=embed_provider,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
 
         print()
         print(batch.summary())
         if batch.rag_chunks_used:
-            print(f"  (+{batch.rag_chunks_used} relevance-retrieved document "
-                  f"excerpt(s) used as extra evidence)")
+            print(
+                f"  (+{batch.rag_chunks_used} relevance-retrieved document "
+                f"excerpt(s) used as extra evidence)"
+            )
         for p in batch.proposals:
             val = json.loads(p.proposed_value)
             conf = f"{p.confidence:.2f}" if p.confidence is not None else "?"
@@ -1079,14 +1121,12 @@ def _print_pending_proposals(rows: list[dict[str, Any]]) -> None:
     print("Decide:")
     print("  project_db proposals accept <id>            write one change to Monday")
     print("  project_db proposals accept <id> --dry-run  preview the write")
-    print("  project_db proposals reject <id> [--reason \"...\"]")
+    print('  project_db proposals reject <id> [--reason "..."]')
     print("  project_db proposals accept all --yes       accept every pending proposal")
     print("  project_db proposals reject all --yes       reject every pending proposal")
 
 
-def _accept_all(
-    session: Any, *, decided_by: str, dry_run: bool, assume_yes: bool
-) -> int:
+def _accept_all(session: Any, *, decided_by: str, dry_run: bool, assume_yes: bool) -> int:
     """Accept every PENDING proposal.  Returns a process exit code.
 
     --dry-run previews every write and needs no confirmation.  A real bulk
@@ -1107,10 +1147,7 @@ def _accept_all(
             result = accept_proposal(session, r["proposal_id"], dry_run=True)
             if result.get("ok"):
                 print(f"  {r['proposal_id']}  {result['task_title']}")
-                print(
-                    f"      would write ({result['field']}): "
-                    f"{json.dumps(result['would_write'])}"
-                )
+                print(f"      would write ({result['field']}): {json.dumps(result['would_write'])}")
             else:
                 print(f"  {r['proposal_id']}  SKIP -- {result.get('error')}")
         print("\nNothing was written.  Re-run with --yes to apply.")
@@ -1134,14 +1171,17 @@ def _accept_all(
         return 2
     try:
         connector = MondayConnector(session=session, organization_id=org.canonical_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAIL: could not build Monday connector: {exc}", file=sys.stderr)
         return 2
 
     accepted = failed = 0
     for r in rows:
         result = accept_proposal(
-            session, r["proposal_id"], writeback=connector, decided_by=decided_by,
+            session,
+            r["proposal_id"],
+            writeback=connector,
+            decided_by=decided_by,
         )
         if result.get("ok"):
             accepted += 1
@@ -1156,9 +1196,7 @@ def _accept_all(
     return 0 if failed == 0 else 1
 
 
-def _reject_all(
-    session: Any, *, decided_by: str, reason: str | None, assume_yes: bool
-) -> int:
+def _reject_all(session: Any, *, decided_by: str, reason: str | None, assume_yes: bool) -> int:
     """Reject every PENDING proposal.  Returns a process exit code.
 
     Reject is pure-DB (no Monday write), but REJECTED is terminal -- so the
@@ -1183,7 +1221,10 @@ def _reject_all(
     rejected = failed = 0
     for r in rows:
         result = reject_proposal(
-            session, r["proposal_id"], reason=reason, decided_by=decided_by,
+            session,
+            r["proposal_id"],
+            reason=reason,
+            decided_by=decided_by,
         )
         if result.get("ok"):
             rejected += 1
@@ -1224,8 +1265,7 @@ def cmd_proposals(args: argparse.Namespace) -> int:
                     status = ProposalStatus[args.status.upper()]
                 except KeyError:
                     valid = ", ".join(x.value for x in ProposalStatus)
-                    print(f"FAIL: unknown status {args.status!r}. Valid: {valid}",
-                          file=sys.stderr)
+                    print(f"FAIL: unknown status {args.status!r}. Valid: {valid}", file=sys.stderr)
                     return 2
             rows = list_proposals(s, status=status, kind=args.kind)
             print(f"{len(rows)} proposal(s)")
@@ -1258,12 +1298,17 @@ def cmd_proposals(args: argparse.Namespace) -> int:
             # `reject all` -> bulk reject every pending proposal (--yes gated).
             if target.lower() == "all":
                 return _reject_all(
-                    s, decided_by=decided_by, reason=args.reason,
+                    s,
+                    decided_by=decided_by,
+                    reason=args.reason,
                     assume_yes=args.yes,
                 )
 
             result = reject_proposal(
-                s, target, reason=args.reason, decided_by=decided_by,
+                s,
+                target,
+                reason=args.reason,
+                decided_by=decided_by,
             )
             if not result.get("ok"):
                 print(f"FAIL: {result.get('error')}", file=sys.stderr)
@@ -1294,7 +1339,9 @@ def cmd_proposals(args: argparse.Namespace) -> int:
             # a real bulk write to Monday is gated behind --yes.
             if target.lower() == "all":
                 return _accept_all(
-                    s, decided_by=decided_by, dry_run=args.dry_run,
+                    s,
+                    decided_by=decided_by,
+                    dry_run=args.dry_run,
                     assume_yes=args.yes,
                 )
 
@@ -1322,12 +1369,15 @@ def cmd_proposals(args: argparse.Namespace) -> int:
                 return 2
             try:
                 connector = MondayConnector(session=s, organization_id=org.canonical_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"FAIL: could not build Monday connector: {exc}", file=sys.stderr)
                 return 2
 
             result = accept_proposal(
-                s, target, writeback=connector, decided_by=decided_by,
+                s,
+                target,
+                writeback=connector,
+                decided_by=decided_by,
             )
             if not result.get("ok"):
                 print(f"FAIL: {result.get('error')}", file=sys.stderr)
@@ -1395,7 +1445,7 @@ def cmd_daily(args: argparse.Namespace) -> int:
                     max_documents_with_text=int(args.max_docs),
                     max_output_tokens=int(args.max_output_tokens),
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"FAIL: {exc}", file=sys.stderr)
                 return 1
             print(batch.summary())
@@ -1410,7 +1460,8 @@ def cmd_daily(args: argparse.Namespace) -> int:
         budget = report_budget_vs_contract(s, str(project.canonical_id))
         missing_docs = report_missing_documents(s)
         pending = [
-            row for row in list_proposals(s, status=ProposalStatus.PENDING)
+            row
+            for row in list_proposals(s, status=ProposalStatus.PENDING)
             if row.get("project_name") == project.name
         ]
 
@@ -1463,15 +1514,12 @@ def cmd_daily(args: argparse.Namespace) -> int:
                 print(f"  ... {len(tasks) - int(args.limit)} more")
             if not args.propose_timelines:
                 print(
-                    "  Generate proposals: "
-                    f"project_db daily \"{project.name}\" --propose-timelines"
+                    f'  Generate proposals: project_db daily "{project.name}" --propose-timelines'
                 )
         else:
             print("  none")
 
-        missing_ids = {
-            row.get("canonical_id") for row in missing_docs.get("projects", [])
-        }
+        missing_ids = {row.get("canonical_id") for row in missing_docs.get("projects", [])}
         print()
         print("Trust Checks")
         if str(project.canonical_id) in missing_ids:
@@ -1521,10 +1569,14 @@ def cmd_field_note(args: argparse.Namespace) -> int:
         print()
 
         from project_db.ai.embeddings import get_optional_embedding_provider
+
         embed_provider = get_optional_embedding_provider()
 
         batch = ingest_field_note(
-            s, extractor, project.canonical_id, note_text,
+            s,
+            extractor,
+            project.canonical_id,
+            note_text,
             channel=NoteChannel.CLI,
             embedding_provider=embed_provider,
         )
@@ -1589,8 +1641,7 @@ def cmd_gmail_auth(_: argparse.Namespace) -> int:
         from google_auth_oauthlib.flow import InstalledAppFlow
     except ImportError:
         print(
-            "FAIL: google-auth-oauthlib is not installed.\n"
-            "Run: pip install google-auth-oauthlib",
+            "FAIL: google-auth-oauthlib is not installed.\nRun: pip install google-auth-oauthlib",
             file=sys.stderr,
         )
         return 2
@@ -1652,6 +1703,7 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
     print("[poll-mail] polling...")
 
     from project_db.ai.embeddings import get_optional_embedding_provider
+
     embed_provider = get_optional_embedding_provider()
 
     with session_scope() as s:
@@ -1766,20 +1818,25 @@ def cmd_commitments(args: argparse.Namespace) -> int:
         return 0
 
     m = data["money_at_risk"]
-    print(f"  Money at risk -- to collect (overdue): ${m['owed_to_us_overdue']:,.0f} "
-          f"of ${m['owed_to_us_total']:,.0f}  |  we owe (overdue): "
-          f"${m['owed_by_us_overdue']:,.0f} of ${m['owed_by_us_total']:,.0f}")
-    print("  by status: " + ", ".join(
-        f"{k} {v}" for k, v in sorted(data["counts"].items())))
+    print(
+        f"  Money at risk -- to collect (overdue): ${m['owed_to_us_overdue']:,.0f} "
+        f"of ${m['owed_to_us_total']:,.0f}  |  we owe (overdue): "
+        f"${m['owed_by_us_overdue']:,.0f} of ${m['owed_by_us_total']:,.0f}"
+    )
+    print("  by status: " + ", ".join(f"{k} {v}" for k, v in sorted(data["counts"].items())))
     print()
 
-    tag = {"overdue": "[OVERDUE]", "due_soon": "[SOON]   ",
-           "conditional": "[COND]   ", "upcoming": "[FUTURE] ", "open": "[OPEN]   "}
+    tag = {
+        "overdue": "[OVERDUE]",
+        "due_soon": "[SOON]   ",
+        "conditional": "[COND]   ",
+        "upcoming": "[FUTURE] ",
+        "open": "[OPEN]   ",
+    }
     for ob in data["obligations"][:40]:
         amt = f"${float(ob['amount']):,.2f}" if ob["amount"] is not None else "(no amount)"
         when = ob["due_date"] or (ob["trigger"] or "?")
-        print(f"  {tag.get(ob['status'], '')} [{ob['kind']}/{ob['direction']}] "
-              f"{amt} due {when}")
+        print(f"  {tag.get(ob['status'], '')} [{ob['kind']}/{ob['direction']}] {amt} due {when}")
         if ob["description"]:
             print(f"       {ob['description']}")
     return 0
@@ -1803,8 +1860,10 @@ def cmd_value_caught(args: argparse.Namespace) -> int:
         data = report_value_caught(s)
 
     print(f"=== VALUE CAUGHT ({data['generated_on']}) ===")
-    print(f"  ALTA has surfaced ${data['headline_total']:,.0f} needing attention "
-          f"across {data['flagged_project_count']} project(s).")
+    print(
+        f"  ALTA has surfaced ${data['headline_total']:,.0f} needing attention "
+        f"across {data['flagged_project_count']} project(s)."
+    )
     m = data["money"]
     print(f"    - Revenue past due to collect (overdue): ${m['receivables_overdue']:,.0f}")
     print(f"    - Receivables due soon:                   ${m['receivables_due_soon']:,.0f}")
@@ -1816,9 +1875,11 @@ def cmd_value_caught(args: argparse.Namespace) -> int:
     print("  By project:")
     for p in data["projects"][:30]:
         total = p["receivables_overdue"] + p["obligations_overdue"]
-        print(f"    ${total:>12,.0f}  {p['project_name']}  "
-              f"(collect ${p['receivables_overdue']:,.0f} / owe "
-              f"${p['obligations_overdue']:,.0f})")
+        print(
+            f"    ${total:>12,.0f}  {p['project_name']}  "
+            f"(collect ${p['receivables_overdue']:,.0f} / owe "
+            f"${p['obligations_overdue']:,.0f})"
+        )
     return 0
 
 
@@ -1867,18 +1928,23 @@ def cmd_briefing(args: argparse.Namespace) -> int:
 
     n = data["item_count"]
     if not n:
-        print("Nothing needs attention -- no money, scope, schedule, or "
-              "document flags across the portfolio.")
+        print(
+            "Nothing needs attention -- no money, scope, schedule, or "
+            "document flags across the portfolio."
+        )
         return 0
 
     bysev = data["by_severity"]
     print(f"=== ATTENTION BRIEFING ({data['generated_on']}) ===")
-    print(f"  {n} item(s) across {data['project_count']} project(s): "
-          f"{bysev.get('high', 0)} high / {bysev.get('medium', 0)} medium / "
-          f"{bysev.get('low', 0)} low")
-    print("  by area: " + ", ".join(
-        f"{cat} {cnt}" for cat, cnt in sorted(data["by_category"].items())
-    ))
+    print(
+        f"  {n} item(s) across {data['project_count']} project(s): "
+        f"{bysev.get('high', 0)} high / {bysev.get('medium', 0)} medium / "
+        f"{bysev.get('low', 0)} low"
+    )
+    print(
+        "  by area: "
+        + ", ".join(f"{cat} {cnt}" for cat, cnt in sorted(data["by_category"].items()))
+    )
     print()
 
     tag = {"high": "[HIGH] ", "medium": "[MED]  ", "low": "[LOW]  "}
@@ -1886,8 +1952,7 @@ def cmd_briefing(args: argparse.Namespace) -> int:
         print(f"{i:>2}. {tag.get(it['severity'], '')}{it['headline']}")
         print(f"      ({it['category']}) {it['detail']}")
     if data["truncated"]:
-        print(f"\n  ... and {n - data['shown_count']} more "
-              f"(showing top {data['shown_count']}).")
+        print(f"\n  ... and {n - data['shown_count']} more (showing top {data['shown_count']}).")
     return 0
 
 
@@ -1942,9 +2007,7 @@ def cmd_import_roadmap(args: argparse.Namespace) -> int:
         print(f"FAIL: {result.get('error')}", file=sys.stderr)
         return 1
 
-    breakdown = " / ".join(
-        f"{n} {phase}" for phase, n in result["by_phase"].items() if n
-    )
+    breakdown = " / ".join(f"{n} {phase}" for phase, n in result["by_phase"].items() if n)
     print(f"OK -- imported {result['total']} task(s): {breakdown}")
     if result["overwrote"]:
         print(f"  (replaced {result['overwrote']} existing row(s))")
@@ -1971,12 +2034,11 @@ def cmd_classify_roadmap(args: argparse.Namespace) -> int:
 
     try:
         provider = get_default_provider()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAIL: could not build LLM provider: {exc}", file=sys.stderr)
         return 2
 
-    print("Calling Sonnet to classify roadmap tasks (this is a single "
-          "LLM call; ~5-15s)...")
+    print("Calling Sonnet to classify roadmap tasks (this is a single LLM call; ~5-15s)...")
     with session_scope() as s:
         result = classify_roadmap_actors(s, provider)
 
@@ -1991,8 +2053,10 @@ def cmd_classify_roadmap(args: argparse.Namespace) -> int:
         print(f"\n{len(result['errors'])} item(s) rejected as malformed:")
         for e in result["errors"][:10]:
             print(f"  - {e}")
-    print("\nReview the results with:  project_db ask "
-          "\"list roadmap tasks by actor\"  (placeholder -- use /db/roadmap_task)")
+    print(
+        "\nReview the results with:  project_db ask "
+        '"list roadmap tasks by actor"  (placeholder -- use /db/roadmap_task)'
+    )
     print("Or open the UI:  http://127.0.0.1:8000/db/roadmap_task")
     return 0
 
@@ -2024,13 +2088,8 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
 
     if not args.yes:
         print("rebuild will RE-DERIVE the canonical database:")
-        print(
-            f"  - drop {n_proj} project(s), all tasks / leads / deals / "
-            f"clients / external-ids"
-        )
-        print(
-            f"  - export {n_prop} proposal(s) to JSON, then drop them"
-        )
+        print(f"  - drop {n_proj} project(s), all tasks / leads / deals / clients / external-ids")
+        print(f"  - export {n_prop} proposal(s) to JSON, then drop them")
         print(f"  - preserve {n_doc} document(s) and their extracted text")
         print("  - re-sync Google Drive, then Monday")
         print("\nRe-run to proceed:  project_db rebuild --yes")
@@ -2039,7 +2098,8 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
     from datetime import datetime
     from pathlib import Path
 
-    from sqlalchemy import inspect as sa_inspect, text
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
 
     # --- Preflight -------------------------------------------------------
     # Build every connector BEFORE touching the database.  Constructing the
@@ -2061,7 +2121,7 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             connector_cls = get_connector_class(source)
             with session_scope() as s:
                 connector_cls(session=s, organization_id=org_id)  # construct only
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(
                 f"FAIL preflight: cannot initialise the {label} connector.",
                 file=sys.stderr,
@@ -2093,15 +2153,22 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             Path(__file__).resolve().parent.parent.parent
             / f"proposals_backup_{datetime.utcnow():%Y%m%d_%H%M%S}.json"
         )
-        backup.write_text(
-            json.dumps(proposal_dump, indent=2, default=str), encoding="utf-8"
-        )
+        backup.write_text(json.dumps(proposal_dump, indent=2, default=str), encoding="utf-8")
         print(f"[rebuild] exported {len(proposal_dump)} proposal(s) -> {backup}")
 
     # --- Wipe connector-derived rows -------------------------------------
     derived = [
-        "proposal", "task", "invoice", "daily_log", "project",
-        "lead", "deal", "client", "vendor", "property", "user",
+        "proposal",
+        "task",
+        "invoice",
+        "daily_log",
+        "project",
+        "lead",
+        "deal",
+        "client",
+        "vendor",
+        "property",
+        "user",
         "external_id",
     ]
     existing = set(sa_inspect(engine).get_table_names())
@@ -2114,10 +2181,7 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
         # Detach preserved Documents from rows about to be deleted so no
         # foreign key dangles once FK enforcement is back on.
         conn.execute(
-            text(
-                "UPDATE document SET project_id=NULL, deal_id=NULL, "
-                "client_id=NULL, category=NULL"
-            )
+            text("UPDATE document SET project_id=NULL, deal_id=NULL, client_id=NULL, category=NULL")
         )
         for table in derived:
             if table in existing:
@@ -2141,11 +2205,10 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             print(f"  {report.summary()}")
             for err in report.errors[:10]:
                 print(f"    - {err}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  FAIL: {label} sync errored: {exc}", file=sys.stderr)
             print(
-                "  DB is mid-rebuild -- fix the issue and re-run "
-                "`project_db rebuild --yes`.",
+                "  DB is mid-rebuild -- fix the issue and re-run `project_db rebuild --yes`.",
                 file=sys.stderr,
             )
             return 1
@@ -2199,8 +2262,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         import uvicorn
     except ImportError:
         print(
-            "uvicorn not installed.  Install the UI extra:\n"
-            "    pip install -e \".[ui]\"",
+            'uvicorn not installed.  Install the UI extra:\n    pip install -e ".[ui]"',
             file=sys.stderr,
         )
         return 2
@@ -2220,18 +2282,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 refresh_state.mark_running()
                 with session_scope() as s:
                     rep = run_refresh(
-                        s, delta=True, embed=True,
+                        s,
+                        delta=True,
+                        embed=True,
                         log=lambda m: print(m, file=sys.stderr),
                     )
                 refresh_state.set_last(rep)
                 print(f"[refresh] done: {rep.one_line()}", file=sys.stderr)
-            except Exception as exc:  # noqa: BLE001 -- background, never crash serve
+            except Exception as exc:
                 refresh_state.set_last(None)
                 print(f"[refresh] background refresh errored: {exc}", file=sys.stderr)
 
         threading.Thread(target=_bg_refresh, name="alta-refresh", daemon=True).start()
-        print("[refresh] background data refresh started "
-              "(delta sync + re-embed changed docs; --no-refresh to disable)")
+        print(
+            "[refresh] background data refresh started "
+            "(delta sync + re-embed changed docs; --no-refresh to disable)"
+        )
 
     from project_db.web.app import create_app
 
@@ -2310,9 +2376,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     daily.set_defaults(func=cmd_daily)
 
-    le = sub.add_parser(
-        "list-external", help="Show all external IDs for one canonical entity"
-    )
+    le = sub.add_parser("list-external", help="Show all external IDs for one canonical entity")
     le.add_argument("entity_type", help="e.g. Project, Client")
     le.add_argument("canonical_id", help="UUID of the canonical entity")
     le.set_defaults(func=cmd_list_external)
@@ -2341,16 +2405,19 @@ def build_parser() -> argparse.ArgumentParser:
     ps = proposals_sub.add_parser("show", help="Show one proposal in full detail")
     ps.add_argument("proposal_id", help="Proposal canonical UUID")
     pr = proposals_sub.add_parser(
-        "reject", help="Reject a PENDING proposal (status -> REJECTED; no Monday write)",
+        "reject",
+        help="Reject a PENDING proposal (status -> REJECTED; no Monday write)",
     )
     pr.add_argument(
-        "proposal_id", nargs="?",
+        "proposal_id",
+        nargs="?",
         help="Proposal UUID, or 'all'. Omit to list pending proposals.",
     )
     pr.add_argument("--reason", help="Why it was rejected (stored on the proposal)")
     pr.add_argument("--by", help="Who rejected it (default: OS username)")
     pr.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Required to confirm 'reject all'",
     )
     pa = proposals_sub.add_parser(
@@ -2358,16 +2425,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Accept a PENDING proposal -- writes the change back to Monday",
     )
     pa.add_argument(
-        "proposal_id", nargs="?",
+        "proposal_id",
+        nargs="?",
         help="Proposal UUID, or 'all'. Omit to list pending proposals.",
     )
     pa.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Preview the Monday write without applying it or changing status",
     )
     pa.add_argument("--by", help="Who accepted it (default: OS username)")
     pa.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Required to confirm 'accept all'",
     )
     proposals.set_defaults(func=cmd_proposals)
@@ -2378,19 +2448,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lt.add_argument("project", help="Project name fragment or canonical UUID")
     lt.add_argument(
-        "--token-budget", default=20_000, type=int,
+        "--token-budget",
+        default=20_000,
+        type=int,
         help="Cap on assembled-context size (default 20k tokens; small models choke on more)",
     )
     lt.add_argument(
-        "--max-docs", default=3, type=int,
+        "--max-docs",
+        default=3,
+        type=int,
         help="Max number of document bodies to attach (default 3)",
     )
     lt.add_argument(
-        "--max-output-tokens", default=300, type=int,
+        "--max-output-tokens",
+        default=300,
+        type=int,
         help="Output cap (default 300; lower = faster on slow CPU models)",
     )
     lt.add_argument(
-        "--verbose", action="store_true",
+        "--verbose",
+        action="store_true",
         help="Dump system prompt, user prompt excerpt, context, and timing metadata",
     )
     lt.set_defaults(func=cmd_llm_test)
@@ -2398,16 +2475,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "doctor",
         help="Audit canonical-data integrity (read-only): phantom/duplicate "
-             "projects, mislinked or orphaned documents",
+        "projects, mislinked or orphaned documents",
     ).set_defaults(func=cmd_doctor)
 
     briefing = sub.add_parser(
         "briefing",
         help="Attention briefing (read-only): ranked money/scope/schedule/"
-             "document flags across the portfolio. No LLM.",
+        "document flags across the portfolio. No LLM.",
     )
     briefing.add_argument(
-        "--limit", type=int, default=25,
+        "--limit",
+        type=int,
+        default=25,
         help="Maximum number of items to show (default 25)",
     )
     briefing.set_defaults(func=cmd_briefing)
@@ -2415,7 +2494,7 @@ def build_parser() -> argparse.ArgumentParser:
     commit = sub.add_parser(
         "commitments",
         help="Money-at-Risk for a project (read-only): contract obligations "
-             "with overdue/due-soon status. No LLM.",
+        "with overdue/due-soon status. No LLM.",
     )
     commit.add_argument("project", help="Project canonical UUID or name fragment")
     commit.set_defaults(func=cmd_commitments)
@@ -2423,14 +2502,14 @@ def build_parser() -> argparse.ArgumentParser:
     vc = sub.add_parser(
         "value-caught",
         help="ROI scoreboard (read-only): total money ALTA has surfaced as "
-             "needing action across the portfolio. No LLM.",
+        "needing action across the portfolio. No LLM.",
     )
     vc.set_defaults(func=cmd_value_caught)
 
     ml = sub.add_parser(
         "money-line",
         help="One-line money summary for a project (read-only): revenue / costs "
-             "/ margin + overdue obligations. No LLM.",
+        "/ margin + overdue obligations. No LLM.",
     )
     ml.add_argument("project", help="Project canonical UUID or name fragment")
     ml.set_defaults(func=cmd_money_line)
@@ -2438,7 +2517,7 @@ def build_parser() -> argparse.ArgumentParser:
     rebuild = sub.add_parser(
         "rebuild",
         help="Re-derive the canonical DB from Drive + Monday (drops derived "
-             "rows, preserves documents + extracted text). Requires --yes.",
+        "rows, preserves documents + extracted text). Requires --yes.",
     )
     rebuild.add_argument(
         "--yes",
@@ -2463,89 +2542,91 @@ def build_parser() -> argparse.ArgumentParser:
     ef = sub.add_parser(
         "extract-financials",
         help="Extract monetary records (quotes/invoices/receipts) from a "
-             "project's Drive documents into FinancialRecord, then print the "
-             "two-sided money-flow reconciliation.  Calls the LLM; "
-             "fresh-snapshot per run.",
+        "project's Drive documents into FinancialRecord, then print the "
+        "two-sided money-flow reconciliation.  Calls the LLM; "
+        "fresh-snapshot per run.",
     )
     ef.add_argument("project", help="Project canonical UUID or name fragment")
     ef.add_argument(
-        "--max-docs", type=int, default=None,
+        "--max-docs",
+        type=int,
+        default=None,
         help="Cap the number of financial documents processed (default: all "
-             "candidates; documents are batched across multiple LLM calls)",
+        "candidates; documents are batched across multiple LLM calls)",
     )
     ef.add_argument(
-        "--structured", action="store_true",
+        "--structured",
+        action="store_true",
         help="Use the OpenAI structured-outputs extractor (classifies each doc; "
-             "no keyword/roll-up heuristics). Needs OPENAI_API_KEY. Recommended.",
+        "no keyword/roll-up heuristics). Needs OPENAI_API_KEY. Recommended.",
     )
     ef.set_defaults(func=cmd_extract_financials)
 
     eo = sub.add_parser(
         "extract-obligations",
         help="Extract dated/dollar obligations (milestones, retainage, "
-             "penalties, deposits, settlements, deadlines) from a project's "
-             "contract documents. Calls the LLM; fresh-snapshot per run.",
+        "penalties, deposits, settlements, deadlines) from a project's "
+        "contract documents. Calls the LLM; fresh-snapshot per run.",
     )
     eo.add_argument("project", help="Project canonical UUID or name fragment")
     eo.add_argument(
-        "--structured", action="store_true",
+        "--structured",
+        action="store_true",
         help="Use the OpenAI structured-outputs extractor (classifies each doc; "
-             "no keyword gate). Needs OPENAI_API_KEY. Recommended.",
+        "no keyword gate). Needs OPENAI_API_KEY. Recommended.",
     )
     eo.set_defaults(func=cmd_extract_obligations)
 
     ed = sub.add_parser(
         "embed-documents",
         help="Embed document text into vectors for RAG (OpenAI embeddings). "
-             "Idempotent; skips unchanged docs. Run after extract-content.",
+        "Idempotent; skips unchanged docs. Run after extract-content.",
     )
-    ed.add_argument("--project", default=None,
-                    help="Limit to one project (UUID or name fragment)")
-    ed.add_argument("--overwrite", action="store_true",
-                    help="Re-embed even unchanged documents")
-    ed.add_argument("--limit", type=int, default=None,
-                    help="Cap the number of documents processed")
+    ed.add_argument("--project", default=None, help="Limit to one project (UUID or name fragment)")
+    ed.add_argument("--overwrite", action="store_true", help="Re-embed even unchanged documents")
+    ed.add_argument("--limit", type=int, default=None, help="Cap the number of documents processed")
     ed.set_defaults(func=cmd_embed_documents)
 
     rs = sub.add_parser(
         "rag-search",
-        help="Retrieve the most relevant document chunks for a query (RAG "
-             "debug surface).",
+        help="Retrieve the most relevant document chunks for a query (RAG debug surface).",
     )
     rs.add_argument("query", help="The search query")
-    rs.add_argument("--project", default=None,
-                    help="Limit retrieval to one project (UUID or name fragment)")
-    rs.add_argument("--top-k", type=int, default=8,
-                    help="Number of chunks to return (default 8)")
+    rs.add_argument(
+        "--project", default=None, help="Limit retrieval to one project (UUID or name fragment)"
+    )
+    rs.add_argument("--top-k", type=int, default=8, help="Number of chunks to return (default 8)")
     rs.set_defaults(func=cmd_rag_search)
 
     impr = sub.add_parser(
         "import-roadmap",
         help="Import the canonical design-phase roadmap from an xlsx into "
-             "the roadmap_task table (Layer 1 of the roadmap integration).",
+        "the roadmap_task table (Layer 1 of the roadmap integration).",
     )
     impr.add_argument(
-        "path", nargs="?", default=None,
+        "path",
+        nargs="?",
+        default=None,
         help="Path to the roadmap xlsx (defaults to docs/Project Roadmap.xlsx)",
     )
     impr.add_argument(
-        "--overwrite", action="store_true",
-        help="Drop existing roadmap_task rows before importing (required "
-             "on re-import after edits)",
+        "--overwrite",
+        action="store_true",
+        help="Drop existing roadmap_task rows before importing (required on re-import after edits)",
     )
     impr.set_defaults(func=cmd_import_roadmap)
 
     classify = sub.add_parser(
         "classify-roadmap",
         help="Use Sonnet to draft actor (ARCHITECT/CONTRACTOR/BOTH) for "
-             "each roadmap_task row.  Single LLM call.  Re-runnable.",
+        "each roadmap_task row.  Single LLM call.  Re-runnable.",
     )
     classify.set_defaults(func=cmd_classify_roadmap)
 
     fn = sub.add_parser(
         "field-note",
         help="Submit a plain-language field note -- classifies, task-matches, and "
-             "creates PENDING Proposals for human review. Needs OPENAI_API_KEY.",
+        "creates PENDING Proposals for human review. Needs OPENAI_API_KEY.",
     )
     fn.add_argument("project", help="Project name fragment or canonical UUID")
     fn.add_argument("note", nargs="+", help="The field note text (quoted or multiple words)")
@@ -2554,21 +2635,21 @@ def build_parser() -> argparse.ArgumentParser:
     gauth = sub.add_parser(
         "gmail-auth",
         help="One-time OAuth browser flow to authorize Gmail access (fieldnotes mailbox). "
-             "Run once; subsequent poll-mail runs refresh silently.",
+        "Run once; subsequent poll-mail runs refresh silently.",
     )
     gauth.set_defaults(func=cmd_gmail_auth)
 
     poll = sub.add_parser(
         "poll-mail",
         help="Poll the Gmail fieldnotes mailbox; ingest new notes as PENDING Proposals. "
-             "Safe to re-run (Message-ID dedup). Needs OPENAI_API_KEY + gmail-auth done.",
+        "Safe to re-run (Message-ID dedup). Needs OPENAI_API_KEY + gmail-auth done.",
     )
     poll.set_defaults(func=cmd_poll_mail)
 
     retry = sub.add_parser(
         "retry-quarantined",
         help="Clear quarantined EmailIngest rows so poll-mail reprocesses them. "
-             "Run once after upgrading to the open-roster behaviour.",
+        "Run once after upgrading to the open-roster behaviour.",
     )
     retry.set_defaults(func=cmd_retry_quarantined)
 
@@ -2577,11 +2658,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch the local web UI on 127.0.0.1 (localhost only, no auth)",
     )
     serve.add_argument(
-        "--port", type=int, default=8000,
+        "--port",
+        type=int,
+        default=8000,
         help="TCP port to bind on 127.0.0.1 (default 8000)",
     )
     serve.add_argument(
-        "--no-refresh", action="store_true",
+        "--no-refresh",
+        action="store_true",
         help="Skip the background data refresh (delta sync + re-embed) on startup",
     )
     serve.set_defaults(func=cmd_serve)
@@ -2591,11 +2675,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull fresh data (delta sync) then re-embed only CHANGED documents",
     )
     refresh.add_argument(
-        "--full", action="store_true",
+        "--full",
+        action="store_true",
         help="Force a full sync instead of delta",
     )
     refresh.add_argument(
-        "--no-embed", action="store_true",
+        "--no-embed",
+        action="store_true",
         help="Sync only; skip the re-embedding step",
     )
     refresh.set_defaults(func=cmd_refresh)

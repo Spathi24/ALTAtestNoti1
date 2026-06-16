@@ -3,6 +3,7 @@
 Usage:
     from project_db.db.models import Project, Client, ExternalId, SourceSystem
 """
+
 from project_db.db.models.canonical import (
     ExternalId,
     Organization,
@@ -12,7 +13,6 @@ from project_db.db.models.core import Client, Property, User, Vendor
 from project_db.db.models.crm import Deal, Lead, LeadStage
 from project_db.db.models.docs import Document, DocumentText
 from project_db.db.models.field_notes import FieldNote, NoteChannel, NoteClass
-from project_db.db.models.workers import EmailIngest, Worker
 from project_db.db.models.finance import (
     FINANCIAL_DIRECTIONS,
     FINANCIAL_DOC_ROLES,
@@ -42,32 +42,33 @@ from project_db.db.models.work import (
     Task,
     TaskStatus,
 )
+from project_db.db.models.workers import EmailIngest, Worker
 
 __all__ = [
+    "FINANCIAL_DIRECTIONS",
+    "FINANCIAL_DOC_ROLES",
+    "FINANCIAL_RECORD_KINDS",
+    "OBLIGATION_DIRECTIONS",
+    "OBLIGATION_KINDS",
+    "ROADMAP_PHASE_ORDER",
     "Client",
     "ContractObligation",
     "DailyLog",
     "Deal",
     "Document",
     "DocumentChunk",
-    "OBLIGATION_DIRECTIONS",
-    "OBLIGATION_KINDS",
     "DocumentFinancialStatus",
     "DocumentText",
-    "ExternalId",
     "EmailIngest",
+    "ExternalId",
     "FieldNote",
-    "NoteChannel",
-    "NoteClass",
-    "Worker",
-    "FINANCIAL_DIRECTIONS",
-    "FINANCIAL_DOC_ROLES",
-    "FINANCIAL_RECORD_KINDS",
     "FinancialRecord",
     "Invoice",
     "InvoiceStatus",
     "Lead",
     "LeadStage",
+    "NoteChannel",
+    "NoteClass",
     "Organization",
     "Project",
     "ProjectStatus",
@@ -77,10 +78,10 @@ __all__ = [
     "RoadmapActor",
     "RoadmapPhase",
     "RoadmapTask",
-    "ROADMAP_PHASE_ORDER",
     "SourceSystem",
     "Task",
     "TaskStatus",
     "User",
     "Vendor",
+    "Worker",
 ]

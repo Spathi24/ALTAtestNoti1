@@ -1,13 +1,13 @@
 """Tests for the AI assistant + canned reports."""
+
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
 
-import pytest
 from sqlalchemy.orm import Session
 
-from project_db.ai import AiAssistant, REPORT_REGISTRY
+from project_db.ai import REPORT_REGISTRY, AiAssistant
 from project_db.ai.providers import LLMProvider, LLMProviderError, MockLLMProvider
 from project_db.ai.views import (
     report_active_projects,
@@ -17,11 +17,7 @@ from project_db.ai.views import (
     report_entity_external_ids,
 )
 from project_db.db.models import (
-    Client,
-    Deal,
     ExternalId,
-    Invoice,
-    Project,
     SourceSystem,
 )
 from project_db.db.models.crm import LeadStage
@@ -143,8 +139,15 @@ class TestDatabaseOverview:
     def test_overview_shape_and_totals(self, session: Session, populated_db):
         ov = report_database_overview(session)
         for key in (
-            "generated_on", "totals", "projects", "tasks", "deals",
-            "leads", "clients", "invoices", "documents_by_category",
+            "generated_on",
+            "totals",
+            "projects",
+            "tasks",
+            "deals",
+            "leads",
+            "clients",
+            "invoices",
+            "documents_by_category",
         ):
             assert key in ov, f"missing section: {key}"
         assert ov["totals"]["projects"] == 2
@@ -183,18 +186,14 @@ class TestDatabaseOverview:
 
 
 class TestAnswerWithLlm:
-    def test_returns_llm_mode_with_provider_text(
-        self, session: Session, populated_db
-    ):
+    def test_returns_llm_mode_with_provider_text(self, session: Session, populated_db):
         provider = MockLLMProvider(responses=["We have 2 active projects."])
         resp = AiAssistant(session).answer_with_llm("how many projects?", provider)
         assert resp.mode == "llm"
         assert resp.used_report is None
         assert resp.answer == "We have 2 active projects."
 
-    def test_feeds_db_snapshot_and_question_to_provider(
-        self, session: Session, populated_db
-    ):
+    def test_feeds_db_snapshot_and_question_to_provider(self, session: Session, populated_db):
         provider = MockLLMProvider(responses=["ok"])
         AiAssistant(session).answer_with_llm("what is going on here", provider)
         assert len(provider.calls) == 1

@@ -16,6 +16,7 @@ metadata to answer real questions without re-hitting the API:
   - is_trashed:        soft-delete signal from Drive
   - source_meta_json:  raw payload for anything we don't promote to a column
 """
+
 from __future__ import annotations
 
 from datetime import datetime

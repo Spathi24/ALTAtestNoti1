@@ -4,12 +4,13 @@ The DB URL is read from `PROJECT_DB_URL` in the environment. For local dev,
 sqlite works out of the box (with UUID stored as TEXT — see `base.py`); for
 production use Postgres.
 """
+
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine

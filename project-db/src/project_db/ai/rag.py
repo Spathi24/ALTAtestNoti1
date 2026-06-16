@@ -16,6 +16,7 @@ Two entry points, both deterministic given a provider:
 The LLM never sees the vectors -- only the retrieved chunk TEXT, which it cites.
 Arithmetic (cosine) is deterministic; the model's job stays "read + answer".
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,7 +26,7 @@ from typing import Any
 import numpy as np
 from sqlalchemy.orm import Session
 
-from project_db.ai.chunking import chunk_document_text, count_tokens
+from project_db.ai.chunking import chunk_document_text
 from project_db.ai.embeddings import EmbeddingProvider, estimate_cost_usd
 from project_db.db.models import Document, DocumentChunk
 from project_db.db.models.docs import DocumentText
@@ -33,7 +34,7 @@ from project_db.db.models.docs import DocumentText
 
 def _content_hash(text: str, model: str, dims: int) -> str:
     h = hashlib.sha256()
-    h.update(f"{model}|{dims}|".encode("utf-8"))
+    h.update(f"{model}|{dims}|".encode())
     h.update((text or "").strip().encode("utf-8"))
     return h.hexdigest()
 
@@ -101,7 +102,9 @@ def embed_documents_for(
     try:
         for doc, text in docs:
             new_chunks = chunk_document_text(
-                text, target_tokens=target_tokens, overlap_tokens=overlap_tokens,
+                text,
+                target_tokens=target_tokens,
+                overlap_tokens=overlap_tokens,
             )
             if not new_chunks:
                 continue
@@ -131,17 +134,19 @@ def embed_documents_for(
 
             vectors = provider.embed([c["text"] for c in new_chunks])
             for c, vec, chash in zip(new_chunks, vectors, new_hashes):
-                session.add(DocumentChunk(
-                    document_id=doc.canonical_id,
-                    project_id=doc.project_id,
-                    chunk_index=c["chunk_index"],
-                    text=c["text"],
-                    token_count=c["token_count"],
-                    embedding=_pack(vec),
-                    embedding_model=model,
-                    dims=dims,
-                    content_hash=chash,
-                ))
+                session.add(
+                    DocumentChunk(
+                        document_id=doc.canonical_id,
+                        project_id=doc.project_id,
+                        chunk_index=c["chunk_index"],
+                        text=c["text"],
+                        token_count=c["token_count"],
+                        embedding=_pack(vec),
+                        embedding_model=model,
+                        dims=dims,
+                        content_hash=chash,
+                    )
+                )
                 stats["chunks_embedded"] += 1
                 stats["tokens_embedded"] += int(c["token_count"] or 0)
             stats["documents_processed"] += 1
@@ -153,9 +158,7 @@ def embed_documents_for(
         stats["interrupted"] = True
 
     session.commit()
-    stats["estimated_cost_usd"] = round(
-        estimate_cost_usd(stats["tokens_embedded"], model=model), 4
-    )
+    stats["estimated_cost_usd"] = round(estimate_cost_usd(stats["tokens_embedded"], model=model), 4)
     return stats
 
 
@@ -163,11 +166,57 @@ def embed_documents_for(
 # keyword score.  Deliberately small -- domain terms (numbers, names, "scope",
 # "payment") must survive.
 _STOPWORDS = {
-    "the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "is", "are",
-    "be", "by", "at", "as", "it", "this", "that", "with", "from", "we", "our",
-    "what", "does", "do", "how", "which", "when", "where", "shall", "will",
-    "le", "la", "les", "de", "des", "du", "un", "une", "et", "en", "au", "aux",
-    "que", "qui", "pour", "dans", "sur", "est", "sont",
+    "the",
+    "a",
+    "an",
+    "of",
+    "to",
+    "in",
+    "on",
+    "for",
+    "and",
+    "or",
+    "is",
+    "are",
+    "be",
+    "by",
+    "at",
+    "as",
+    "it",
+    "this",
+    "that",
+    "with",
+    "from",
+    "we",
+    "our",
+    "what",
+    "does",
+    "do",
+    "how",
+    "which",
+    "when",
+    "where",
+    "shall",
+    "will",
+    "le",
+    "la",
+    "les",
+    "de",
+    "des",
+    "du",
+    "un",
+    "une",
+    "et",
+    "en",
+    "au",
+    "aux",
+    "que",
+    "qui",
+    "pour",
+    "dans",
+    "sur",
+    "est",
+    "sont",
 }
 
 # Reciprocal-rank-fusion constant (standard default).
@@ -176,7 +225,8 @@ _RRF_K = 60
 
 def _tokenize(text: str | None) -> list[str]:
     return [
-        t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+        t
+        for t in re.findall(r"[a-z0-9]+", (text or "").lower())
         if len(t) >= 2 and t not in _STOPWORDS
     ]
 
@@ -269,9 +319,7 @@ def retrieve_chunks(
     doc_ids = {c.document_id for c in candidates}
     names = {
         d.canonical_id: (d.name, d.url)
-        for d in session.query(Document)
-        .filter(Document.canonical_id.in_(doc_ids))
-        .all()
+        for d in session.query(Document).filter(Document.canonical_id.in_(doc_ids)).all()
     }
 
     out: list[dict[str, Any]] = []
@@ -286,18 +334,20 @@ def retrieve_chunks(
             continue
         c = candidates[i]
         name, url = names.get(c.document_id, (None, None))
-        out.append({
-            "chunk_id": str(c.canonical_id),
-            "document_id": str(c.document_id),
-            "document_name": name,
-            "document_url": url,
-            "project_id": str(c.project_id) if c.project_id else None,
-            "chunk_index": c.chunk_index,
-            "text": c.text,
-            "similarity": round(sim, 4),
-            "keyword_score": round(kscore, 4),
-            "score": round(float(fused[i]), 6),
-        })
+        out.append(
+            {
+                "chunk_id": str(c.canonical_id),
+                "document_id": str(c.document_id),
+                "document_name": name,
+                "document_url": url,
+                "project_id": str(c.project_id) if c.project_id else None,
+                "chunk_index": c.chunk_index,
+                "text": c.text,
+                "similarity": round(sim, 4),
+                "keyword_score": round(kscore, 4),
+                "score": round(float(fused[i]), 6),
+            }
+        )
         if len(out) >= top_k:
             break
     return out
@@ -320,11 +370,7 @@ def embedding_coverage(session: Session) -> dict[str, Any]:
         .distinct()
         .count()
     )
-    total_chunks = (
-        session.query(DocumentChunk)
-        .filter(DocumentChunk.embedding.isnot(None))
-        .count()
-    )
+    total_chunks = session.query(DocumentChunk).filter(DocumentChunk.embedding.isnot(None)).count()
     return {
         "documents_with_text": int(total_text_docs),
         "documents_embedded": int(embedded_docs),

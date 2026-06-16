@@ -13,12 +13,13 @@ This is the core of the multi-source design. Every connector calls
 
 The matcher is pluggable: see `matcher.py`.
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Type, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy.orm import Session
 
@@ -34,10 +35,10 @@ T = TypeVar("T")
 class ResolveResult:
     """What the resolver returns."""
 
-    entity: Any                  # the canonical entity (SQLAlchemy model)
+    entity: Any  # the canonical entity (SQLAlchemy model)
     external_id_row: ExternalId
-    was_created: bool            # True if we created a new canonical entity
-    was_matched: bool            # True if we matched via fuzzy match (not exact)
+    was_created: bool  # True if we created a new canonical entity
+    was_matched: bool  # True if we matched via fuzzy match (not exact)
 
 
 class IdentityResolver:
@@ -52,7 +53,7 @@ class IdentityResolver:
         source: SourceSystem,
         external_key: str,
         external_url: str | None,
-        entity_class: Type[T],
+        entity_class: type[T],
         attrs: dict[str, Any],
         matcher: EntityMatcher | None = None,
         payload_hash: str | None = None,
@@ -81,9 +82,7 @@ class IdentityResolver:
         )
         if existing is not None:
             entity = (
-                self.session.query(entity_class)
-                .filter_by(canonical_id=existing.canonical_id)
-                .one()
+                self.session.query(entity_class).filter_by(canonical_id=existing.canonical_id).one()
             )
             existing.last_synced_at = datetime.utcnow()
             if payload_hash is not None:
@@ -165,7 +164,7 @@ class IdentityResolver:
         self,
         *,
         source: SourceSystem,
-        entity_class: Type[T],
+        entity_class: type[T],
         external_key: str,
     ) -> T | None:
         """Lookup helper — returns the canonical entity or None."""
@@ -181,16 +180,14 @@ class IdentityResolver:
         if ext is None:
             return None
         return (
-            self.session.query(entity_class)
-            .filter_by(canonical_id=ext.canonical_id)
-            .one_or_none()
+            self.session.query(entity_class).filter_by(canonical_id=ext.canonical_id).one_or_none()
         )
 
     def get_external_ids(
         self,
         *,
         canonical_id: Any,
-        entity_class: Type[T] | None = None,
+        entity_class: type[T] | None = None,
     ) -> list[ExternalId]:
         """All external IDs for a given canonical entity."""
         q = self.session.query(ExternalId).filter_by(canonical_id=canonical_id)

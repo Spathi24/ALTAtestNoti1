@@ -11,9 +11,8 @@ This is a first-class UI case, not a 4xx.
 
 Accept renders ``decision_decided`` (green/grey, with a real decided_at).
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -35,6 +34,7 @@ from project_db.web.deps import db
 def _coerce_uuid(value: str):
     """Local UUID coercer that returns None on garbage (vs raising)."""
     import uuid
+
     try:
         return uuid.UUID(str(value))
     except (ValueError, TypeError, AttributeError):
@@ -69,7 +69,8 @@ def _render_idle(
     error: str | None = None,
 ) -> HTMLResponse:
     """Render the decision_idle partial for a PENDING proposal."""
-    from project_db.ai.proposals import _ACCEPTABLE_FIELDS  # noqa: PLC2701
+    from project_db.ai.proposals import _ACCEPTABLE_FIELDS
+
     return templates.TemplateResponse(
         request,
         "_partials/decision_idle.html",
@@ -89,10 +90,7 @@ def _render_stale(
     attempted: str,
 ) -> HTMLResponse:
     """Render the decision_stale fragment when a POST hits non-PENDING."""
-    current = (
-        proposal.status.value if hasattr(proposal.status, "value")
-        else str(proposal.status)
-    )
+    current = proposal.status.value if hasattr(proposal.status, "value") else str(proposal.status)
     return templates.TemplateResponse(
         request,
         "_partials/decision_stale.html",
@@ -113,10 +111,7 @@ def _render_decided(
     task_title: str | None = None,
 ) -> HTMLResponse:
     """Render the decision_decided fragment after a successful mutation."""
-    status = (
-        proposal.status.value if hasattr(proposal.status, "value")
-        else str(proposal.status)
-    )
+    status = proposal.status.value if hasattr(proposal.status, "value") else str(proposal.status)
     return templates.TemplateResponse(
         request,
         "_partials/decision_decided.html",
@@ -164,14 +159,12 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
     @router.get("/proposals", response_class=HTMLResponse)
     def proposals_index(
         request: Request,
-        status: Optional[str] = Query(default=None),
-        kind: Optional[str] = Query(default=None),
+        status: str | None = Query(default=None),
+        kind: str | None = Query(default=None),
         session: Session = Depends(db),
     ) -> HTMLResponse:
         data = ui_views.proposal_queue(session, status=status, kind=kind)
-        return templates.TemplateResponse(
-            request, "proposal_list.html", {"d": data}
-        )
+        return templates.TemplateResponse(request, "proposal_list.html", {"d": data})
 
     # ---------------------------------------------------------------- detail
     @router.get("/proposals/{proposal_id}", response_class=HTMLResponse)
@@ -183,9 +176,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         detail = ui_views.proposal_detail(session, proposal_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Proposal not found")
-        return templates.TemplateResponse(
-            request, "proposal_detail.html", {"p": detail}
-        )
+        return templates.TemplateResponse(request, "proposal_detail.html", {"p": detail})
 
     # ---------------------------------------------------------------- GET decision (cancel + refresh)
     @router.get("/proposals/{proposal_id}/decision", response_class=HTMLResponse)
@@ -225,8 +216,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         if p is None:
             pid = _coerce_uuid(proposal_id)
             existing = (
-                session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
-                if pid else None
+                session.query(Proposal).filter_by(canonical_id=pid).one_or_none() if pid else None
             )
             if existing is None:
                 raise HTTPException(404, "Proposal not found")
@@ -236,15 +226,18 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         # deps.build_monday_writeback to inject a fake.
         try:
             writeback = deps.build_monday_writeback(session)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _render_idle(
-                templates, request, p,
+                templates,
+                request,
+                p,
                 error=f"could not build Monday connector: {exc}",
             )
 
         decided_by = "ui:" + (request.client.host if request.client else "local")
         result = accept_proposal(
-            session, proposal_id,
+            session,
+            proposal_id,
             writeback=writeback,
             dry_run=False,
             decided_by=decided_by,
@@ -257,7 +250,9 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         # Re-read to get the freshly-flipped status, decided_at, etc.
         session.refresh(p)
         return _render_decided(
-            templates, request, p,
+            templates,
+            request,
+            p,
             wrote_to_monday=result.get("wrote_to_monday"),
             task_title=result.get("task_title"),
         )
@@ -275,8 +270,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         if p is None:
             pid = _coerce_uuid(proposal_id)
             existing = (
-                session.query(Proposal).filter_by(canonical_id=pid).one_or_none()
-                if pid else None
+                session.query(Proposal).filter_by(canonical_id=pid).one_or_none() if pid else None
             )
             if existing is None:
                 raise HTTPException(404, "Proposal not found")
@@ -284,7 +278,8 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         decided_by = "ui:" + (request.client.host if request.client else "local")
         result = reject_proposal(
-            session, proposal_id,
+            session,
+            proposal_id,
             reason=(reason or None),
             decided_by=decided_by,
         )
@@ -317,34 +312,47 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         try:
             from project_db.ai.providers import get_default_provider
+
             provider = get_default_provider()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _render_propose_result(
-                templates, request,
-                project_id=project_id, kind="timeline", batch=None,
+                templates,
+                request,
+                project_id=project_id,
+                kind="timeline",
+                batch=None,
                 error=f"could not build LLM provider: {exc}",
             )
 
         try:
             from project_db.ai.embeddings import get_optional_embedding_provider
+
             embed_provider = get_optional_embedding_provider()
-        except Exception:  # noqa: BLE001
+        except Exception:
             embed_provider = None
         try:
             batch = generate_timeline_proposals(
-                session, provider, project.canonical_id,
+                session,
+                provider,
+                project.canonical_id,
                 embedding_provider=embed_provider,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _render_propose_result(
-                templates, request,
-                project_id=project_id, kind="timeline", batch=None,
+                templates,
+                request,
+                project_id=project_id,
+                kind="timeline",
+                batch=None,
                 error=f"proposal generation failed: {exc}",
             )
 
         return _render_propose_result(
-            templates, request,
-            project_id=project_id, kind="timeline", batch=batch,
+            templates,
+            request,
+            project_id=project_id,
+            kind="timeline",
+            batch=batch,
         )
 
     # ---------------------------------------------------------------- POST propose scope
@@ -365,32 +373,45 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         try:
             from project_db.ai.providers import get_default_provider
+
             provider = get_default_provider()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _render_propose_result(
-                templates, request,
-                project_id=project_id, kind="scope", batch=None,
+                templates,
+                request,
+                project_id=project_id,
+                kind="scope",
+                batch=None,
                 error=f"could not build LLM provider: {exc}",
             )
 
         try:
             from project_db.ai.embeddings import get_optional_embedding_provider
+
             embed_provider = get_optional_embedding_provider()
-        except Exception:  # noqa: BLE001
+        except Exception:
             embed_provider = None
         try:
             batch = generate_scope_proposals(
-                session, provider, project.canonical_id,
+                session,
+                provider,
+                project.canonical_id,
                 embedding_provider=embed_provider,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _render_propose_result(
-                templates, request,
-                project_id=project_id, kind="scope", batch=None,
+                templates,
+                request,
+                project_id=project_id,
+                kind="scope",
+                batch=None,
                 error=f"proposal generation failed: {exc}",
             )
 
         return _render_propose_result(
-            templates, request,
-            project_id=project_id, kind="scope", batch=batch,
+            templates,
+            request,
+            project_id=project_id,
+            kind="scope",
+            batch=batch,
         )

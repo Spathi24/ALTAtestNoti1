@@ -12,6 +12,7 @@ downstream is wrong.  Covering:
   * to_prompt_block produces a readable text block
   * Missing project raises ValueError cleanly
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -20,8 +21,6 @@ from decimal import Decimal
 import pytest
 
 from project_db.ai.context import (
-    ProjectContext,
-    _CHARS_PER_TOKEN,
     assemble_project_context,
 )
 from project_db.db.models import (
@@ -35,7 +34,6 @@ from project_db.db.models import (
     TaskStatus,
 )
 from project_db.db.models.work import ProjectStatus
-
 
 # ---------------------------------------------------------------------------
 # Fixture: rich project mirroring what real Drive+Monday data looks like
@@ -57,42 +55,69 @@ def context_fixture(session, client_factory):
     session.commit()
 
     # Tasks: mix of dated and dateless, one subitem.
-    session.add_all([
-        Task(title="Demo walls", status=TaskStatus.DONE,
-             start_date=date(2026, 4, 1), end_date=date(2026, 4, 5),
-             monday_status_label="Done",
-             project_id=p.canonical_id),
-        Task(title="Frame addition", status=TaskStatus.TODO,
-             project_id=p.canonical_id),
-        Task(title="Drywall sub-task", status=TaskStatus.TODO,
-             is_subitem=True,
-             project_id=p.canonical_id),
-    ])
+    session.add_all(
+        [
+            Task(
+                title="Demo walls",
+                status=TaskStatus.DONE,
+                start_date=date(2026, 4, 1),
+                end_date=date(2026, 4, 5),
+                monday_status_label="Done",
+                project_id=p.canonical_id,
+            ),
+            Task(title="Frame addition", status=TaskStatus.TODO, project_id=p.canonical_id),
+            Task(
+                title="Drywall sub-task",
+                status=TaskStatus.TODO,
+                is_subitem=True,
+                project_id=p.canonical_id,
+            ),
+        ]
+    )
 
     # Documents: one trashed, three live (mix of mimes).
     docs = [
-        Document(name="OLD - contract v1.pdf", url="https://drive/x1",
-                 mime_type="application/pdf", storage_ref="d1",
-                 folder_path="Active/923 Rockland/Archive",
-                 size_bytes=1000, modified_at_source=datetime(2026, 1, 1),
-                 is_trashed=True,
-                 project_id=p.canonical_id),
-        Document(name="Contract - 923 Rockland.pdf", url="https://drive/x2",
-                 mime_type="application/pdf", storage_ref="d2",
-                 folder_path="Active/923 Rockland",
-                 size_bytes=12345, modified_at_source=datetime(2026, 4, 10),
-                 project_id=p.canonical_id),
-        Document(name="Scope.docx", url="https://drive/x3",
-                 mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                 storage_ref="d3",
-                 folder_path="Active/923 Rockland",
-                 size_bytes=5000, modified_at_source=datetime(2026, 4, 12),
-                 project_id=p.canonical_id),
-        Document(name="site_photo.heic", url="https://drive/x4",
-                 mime_type="image/heic", storage_ref="d4",
-                 folder_path="Active/923 Rockland/Photos",
-                 size_bytes=3_000_000, modified_at_source=datetime(2026, 4, 14),
-                 project_id=p.canonical_id),
+        Document(
+            name="OLD - contract v1.pdf",
+            url="https://drive/x1",
+            mime_type="application/pdf",
+            storage_ref="d1",
+            folder_path="Active/923 Rockland/Archive",
+            size_bytes=1000,
+            modified_at_source=datetime(2026, 1, 1),
+            is_trashed=True,
+            project_id=p.canonical_id,
+        ),
+        Document(
+            name="Contract - 923 Rockland.pdf",
+            url="https://drive/x2",
+            mime_type="application/pdf",
+            storage_ref="d2",
+            folder_path="Active/923 Rockland",
+            size_bytes=12345,
+            modified_at_source=datetime(2026, 4, 10),
+            project_id=p.canonical_id,
+        ),
+        Document(
+            name="Scope.docx",
+            url="https://drive/x3",
+            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            storage_ref="d3",
+            folder_path="Active/923 Rockland",
+            size_bytes=5000,
+            modified_at_source=datetime(2026, 4, 12),
+            project_id=p.canonical_id,
+        ),
+        Document(
+            name="site_photo.heic",
+            url="https://drive/x4",
+            mime_type="image/heic",
+            storage_ref="d4",
+            folder_path="Active/923 Rockland/Photos",
+            size_bytes=3_000_000,
+            modified_at_source=datetime(2026, 4, 14),
+            project_id=p.canonical_id,
+        ),
     ]
     session.add_all(docs)
     session.commit()
@@ -100,27 +125,40 @@ def context_fixture(session, client_factory):
     # Extracted text for the two contract-shaped docs (HEIC has no DocumentText).
     contract = session.query(Document).filter_by(storage_ref="d2").one()
     scope = session.query(Document).filter_by(storage_ref="d3").one()
-    session.add_all([
-        DocumentText(document_id=contract.canonical_id,
-                     extracted_text="CONTRACT TOTAL: $148,500.00. Deposit: $14,850.",
-                     extraction_method="pdf-pymupdf",
-                     token_count=20),
-        DocumentText(document_id=scope.canonical_id,
-                     extracted_text="Scope of work: demo, frame, drywall, finish.",
-                     extraction_method="docx-python",
-                     token_count=10),
-    ])
+    session.add_all(
+        [
+            DocumentText(
+                document_id=contract.canonical_id,
+                extracted_text="CONTRACT TOTAL: $148,500.00. Deposit: $14,850.",
+                extraction_method="pdf-pymupdf",
+                token_count=20,
+            ),
+            DocumentText(
+                document_id=scope.canonical_id,
+                extracted_text="Scope of work: demo, frame, drywall, finish.",
+                extraction_method="docx-python",
+                token_count=10,
+            ),
+        ]
+    )
 
-    session.add(Invoice(
-        number="INV-001", amount=Decimal("14850.00"),
-        status=InvoiceStatus.PAID, issue_date=date(2026, 3, 5),
-        client_id=c.canonical_id, project_id=p.canonical_id,
-    ))
-    session.add(DailyLog(
-        log_date=date(2026, 4, 10),
-        summary="Crew arrived; demo started on east wall.",
-        project_id=p.canonical_id,
-    ))
+    session.add(
+        Invoice(
+            number="INV-001",
+            amount=Decimal("14850.00"),
+            status=InvoiceStatus.PAID,
+            issue_date=date(2026, 3, 5),
+            client_id=c.canonical_id,
+            project_id=p.canonical_id,
+        )
+    )
+    session.add(
+        DailyLog(
+            log_date=date(2026, 4, 10),
+            summary="Crew arrived; demo started on east wall.",
+            project_id=p.canonical_id,
+        )
+    )
     session.commit()
     return p
 
@@ -174,6 +212,7 @@ class TestAssemble:
 
     def test_unknown_project_raises(self, session):
         import uuid
+
         with pytest.raises(ValueError, match="No Project"):
             assemble_project_context(session, uuid.uuid4())
 
@@ -187,7 +226,8 @@ class TestDocumentBudget:
     def test_max_documents_with_text_cap(self, session, context_fixture):
         # Force the cap to 1 -- only the newest doc should have its body attached.
         ctx = assemble_project_context(
-            session, context_fixture.canonical_id,
+            session,
+            context_fixture.canonical_id,
             max_documents_with_text=1,
         )
         assert len(ctx.document_texts) == 1
@@ -202,17 +242,21 @@ class TestDocumentBudget:
         session.commit()
 
         ctx = assemble_project_context(
-            session, context_fixture.canonical_id,
+            session,
+            context_fixture.canonical_id,
             per_doc_char_cap=500,
         )
-        contract_body = next(d for d in ctx.document_texts if d["name"] == "Contract - 923 Rockland.pdf")
+        contract_body = next(
+            d for d in ctx.document_texts if d["name"] == "Contract - 923 Rockland.pdf"
+        )
         assert len(contract_body["text"]) == 500
         assert contract_body["truncated"] is True
 
     def test_global_token_budget_evicts_doc_bodies(self, session, context_fixture):
         # Set a tiny budget so doc bodies must be dropped.
         ctx = assemble_project_context(
-            session, context_fixture.canonical_id,
+            session,
+            context_fixture.canonical_id,
             token_budget=50,  # ridiculously small
             per_doc_char_cap=2000,
         )
@@ -222,7 +266,8 @@ class TestDocumentBudget:
 
     def test_generous_budget_keeps_everything(self, session, context_fixture):
         ctx = assemble_project_context(
-            session, context_fixture.canonical_id,
+            session,
+            context_fixture.canonical_id,
             token_budget=1_000_000,
         )
         assert len(ctx.document_texts) == 2
@@ -262,7 +307,8 @@ class TestPromptBlock:
 
     def test_truncation_note_appears_when_present(self, session, context_fixture):
         ctx = assemble_project_context(
-            session, context_fixture.canonical_id,
+            session,
+            context_fixture.canonical_id,
             token_budget=50,
         )
         block = ctx.to_prompt_block()
@@ -284,6 +330,7 @@ class TestPromptBlock:
 class TestSerialization:
     def test_to_dict_is_json_serializable(self, session, context_fixture):
         import json
+
         ctx = assemble_project_context(session, context_fixture.canonical_id)
         # Should round-trip without default=str fallback.
         json.dumps(ctx.to_dict())

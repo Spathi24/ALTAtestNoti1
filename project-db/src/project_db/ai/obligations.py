@@ -13,6 +13,7 @@ postures: candidate pre-filter, batched calls, ALL-OR-NOTHING snapshot (a failed
 batch keeps prior rows and writes nothing), validate-don't-crash, conservative
 prompt.  The system prompt is STABLE across docs so prompt caching applies.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,17 +56,43 @@ _CONTRACT_MIMES = {
 # Bilingual keyword prior -- a doc is a candidate if its name/folder OR its text
 # hints at an obligation.  Cheap pre-filter; the LLM still reads the content.
 _OBLIGATION_KEYWORDS = (
-    "payment", "milestone", "deposit", "retainage", "holdback", "retenue",
-    "penalt", "liquidated", "damages", "insurance", "assurance", "permit",
-    "permis", "deadline", "settlement", "quittance", "completion", "achevement",
-    "balance", "final payment", "echeance", "due", "contract", "contrat",
-    "agreement", "entente", "sow", "scope of work", "lease", "bail",
+    "payment",
+    "milestone",
+    "deposit",
+    "retainage",
+    "holdback",
+    "retenue",
+    "penalt",
+    "liquidated",
+    "damages",
+    "insurance",
+    "assurance",
+    "permit",
+    "permis",
+    "deadline",
+    "settlement",
+    "quittance",
+    "completion",
+    "achevement",
+    "balance",
+    "final payment",
+    "echeance",
+    "due",
+    "contract",
+    "contrat",
+    "agreement",
+    "entente",
+    "sow",
+    "scope of work",
+    "lease",
+    "bail",
 )
 
 
 @dataclass
 class ObligationBatch:
     """Outcome of one extraction run -- everything the CLI needs to report."""
+
     project_id: str
     project_name: str
     prompt_version: str
@@ -98,22 +125,26 @@ class _Candidate:
     score: int
 
 
-def _coerce_vocab(value: Any, vocab: set[str], default: str,
-                  batch: ObligationBatch, where: str) -> str:
+def _coerce_vocab(
+    value: Any, vocab: set[str], default: str, batch: ObligationBatch, where: str
+) -> str:
     s = str(value or "").strip().lower()
     if not s:
         return default
     if s in vocab:
         return s
     batch.warnings.append(
-        f"{where}: unknown value {s!r} -- expected one of {sorted(vocab)}; "
-        f"using {default!r}"
+        f"{where}: unknown value {s!r} -- expected one of {sorted(vocab)}; using {default!r}"
     )
     return default
 
 
 def _select_obligation_documents(
-    session: Session, project_id: Any, *, max_documents: int, per_doc_char_cap: int,
+    session: Session,
+    project_id: Any,
+    *,
+    max_documents: int,
+    per_doc_char_cap: int,
 ) -> list[_Candidate]:
     """Contract-shaped docs with text, scored by obligation keywords."""
     rows = (
@@ -142,7 +173,9 @@ def _select_obligation_documents(
 
 
 def _chunk_candidates(
-    candidates: list[_Candidate], char_budget: int, max_docs: int,
+    candidates: list[_Candidate],
+    char_budget: int,
+    max_docs: int,
 ) -> list[list[_Candidate]]:
     batches: list[list[_Candidate]] = []
     cur: list[_Candidate] = []
@@ -173,7 +206,7 @@ def _build_obligation_prompt(chunk: list[_Candidate], company_name: str) -> tupl
         "- settlement: a settlement / buyout payment (e.g. a tenant on key return).\n"
         "- insurance_expiry: an insurance certificate / coverage that expires.\n"
         "- permit_deadline: a permit or filing deadline.\n\n"
-        f"The company you work for is \"{company_name}\". Set direction:\n"
+        f'The company you work for is "{company_name}". Set direction:\n'
         f"- owed_to_us : the CLIENT owes {company_name} (money for us to collect).\n"
         f"- owed_by_us : {company_name} owes someone (a sub, tenant, authority).\n"
         "- unknown    : you cannot tell.\n\n"
@@ -190,7 +223,7 @@ def _build_obligation_prompt(chunk: list[_Candidate], company_name: str) -> tupl
         "date, or a clause.\n"
         "- If an item has NO amount AND NO date AND NO clear trigger, skip it.\n"
         "- Returning few or none is correct.\n"
-        "- Output STRICT JSON only: {\"obligations\": [ ... ]}. No prose, no markdown."
+        '- Output STRICT JSON only: {"obligations": [ ... ]}. No prose, no markdown.'
     )
     lines: list[str] = ["DOCUMENTS:"]
     for i, cand in enumerate(chunk, 1):
@@ -203,14 +236,17 @@ def _build_obligation_prompt(chunk: list[_Candidate], company_name: str) -> tupl
         lines.append(cand.text)
     lines.append(
         "\n\n---\nINSTRUCTION: Extract every obligation from the documents above "
-        "as STRICT JSON {\"obligations\": [...]}. Reference each by its document "
+        'as STRICT JSON {"obligations": [...]}. Reference each by its document '
         "number, and quote the verbatim clause in quoted_excerpt."
     )
     return system, "\n".join(lines)
 
 
 def _build_obligations_for_batch(
-    batch: ObligationBatch, items: list[Any], chunk: list[_Candidate], project_uuid: Any,
+    batch: ObligationBatch,
+    items: list[Any],
+    chunk: list[_Candidate],
+    project_uuid: Any,
 ) -> list[ContractObligation]:
     norm_texts = [_norm(c.text) for c in chunk]
     out: list[ContractObligation] = []
@@ -223,15 +259,19 @@ def _build_obligations_for_batch(
         trigger = _clean_str(item.get("trigger"))
         # Server-side enforcement of the "must be dated or dollar" rule.
         if amount is None and due is None and not trigger:
-            batch.warnings.append(
-                f"obligation {i}: no amount, date, or trigger -- skipped"
-            )
+            batch.warnings.append(f"obligation {i}: no amount, date, or trigger -- skipped")
             continue
 
-        kind = _coerce_vocab(item.get("kind"), OBLIGATION_KINDS, "other",
-                             batch, f"obligation {i} kind")
-        direction = _coerce_vocab(item.get("direction"), OBLIGATION_DIRECTIONS,
-                                  "unknown", batch, f"obligation {i} direction")
+        kind = _coerce_vocab(
+            item.get("kind"), OBLIGATION_KINDS, "other", batch, f"obligation {i} kind"
+        )
+        direction = _coerce_vocab(
+            item.get("direction"),
+            OBLIGATION_DIRECTIONS,
+            "unknown",
+            batch,
+            f"obligation {i} direction",
+        )
 
         # Resolve the source document by 1-based index (single-doc batch: attribute
         # to that doc).  Verify the amount's value against THAT document's text.
@@ -247,23 +287,25 @@ def _build_obligations_for_batch(
             if amount is not None:
                 verified = _amount_in_text(amount, norm_texts[idx])
 
-        out.append(ContractObligation(
-            project_id=project_uuid,
-            document_id=doc_id,
-            kind=kind,
-            direction=direction,
-            description=_clean_str(item.get("description")),
-            amount=amount,
-            currency=_clean_str(item.get("currency")),
-            due_date=due,
-            trigger=trigger,
-            counterparty=_clean_str(item.get("counterparty")),
-            quoted_excerpt=_clean_str(item.get("quoted_excerpt")),
-            confidence=_clamp_confidence(item.get("confidence")),
-            amount_verified=verified,
-            prompt_version=OBLIGATION_PROMPT_VERSION,
-            source_meta_json=json.dumps(item, default=str),
-        ))
+        out.append(
+            ContractObligation(
+                project_id=project_uuid,
+                document_id=doc_id,
+                kind=kind,
+                direction=direction,
+                description=_clean_str(item.get("description")),
+                amount=amount,
+                currency=_clean_str(item.get("currency")),
+                due_date=due,
+                trigger=trigger,
+                counterparty=_clean_str(item.get("counterparty")),
+                quoted_excerpt=_clean_str(item.get("quoted_excerpt")),
+                confidence=_clamp_confidence(item.get("confidence")),
+                amount_verified=verified,
+                prompt_version=OBLIGATION_PROMPT_VERSION,
+                source_meta_json=json.dumps(item, default=str),
+            )
+        )
     return out
 
 
@@ -288,7 +330,8 @@ def extract_obligations_for_project(
     project_uuid = _as_uuid(project_id)
     project = (
         session.query(Project).filter_by(canonical_id=project_uuid).one_or_none()
-        if project_uuid else None
+        if project_uuid
+        else None
     )
     batch = ObligationBatch(
         project_id=str(project_id),
@@ -301,13 +344,14 @@ def extract_obligations_for_project(
         return batch
 
     candidates = _select_obligation_documents(
-        session, project_uuid,
-        max_documents=max_documents, per_doc_char_cap=per_doc_char_cap,
+        session,
+        project_uuid,
+        max_documents=max_documents,
+        per_doc_char_cap=per_doc_char_cap,
     )
     if not candidates:
         batch.skipped_reason = (
-            "no contract-looking documents with extracted text "
-            "(run extract-content first)"
+            "no contract-looking documents with extracted text (run extract-content first)"
         )
         return batch
     batch.documents_considered = len(candidates)
@@ -331,9 +375,7 @@ def extract_obligations_for_project(
             continue
         items = _coerce_item_list(raw, key="obligations")
         batch.llm_raw_item_count += len(items)
-        new_obligations.extend(
-            _build_obligations_for_batch(batch, items, chunk, project_uuid)
-        )
+        new_obligations.extend(_build_obligations_for_batch(batch, items, chunk, project_uuid))
 
     if any_batch_failed:
         batch.obligations = []

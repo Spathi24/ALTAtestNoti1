@@ -14,10 +14,11 @@ If a parser is genuinely missing for a mime type we *do* handle, the
 function returns ``(None, 'failed-no-parser')`` rather than raising, so
 the pipeline keeps going.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_MIMES: set[str] = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",         # .xlsx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
     "application/vnd.google-apps.document",
     "application/vnd.google-apps.spreadsheet",
 }
@@ -55,7 +56,7 @@ def extract_pdf(raw: bytes) -> tuple[str | None, str]:
 
     try:
         doc = fitz.open(stream=raw, filetype="pdf")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("PDF parse failed: %s", exc)
         return None, "failed-parse"
 
@@ -77,9 +78,10 @@ def extract_docx(raw: bytes) -> tuple[str | None, str]:
         return None, "failed-no-parser"
 
     import io
+
     try:
         doc = DocxDocument(io.BytesIO(raw))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("DOCX parse failed: %s", exc)
         return None, "failed-parse"
 
@@ -103,6 +105,8 @@ def extract_docx(raw: bytes) -> tuple[str | None, str]:
 _XLSX_MAX_ROWS_PER_SHEET = 200
 _XLSX_MAX_CHARS_PER_SHEET = 16_000
 _XLSX_MAX_TOTAL_CHARS = 60_000
+
+
 # Trailing empty columns are common in exported sheets; drop them so rows aren't
 # a forest of tabs.
 def _trim_trailing_empty(cells: list) -> list:
@@ -128,9 +132,10 @@ def extract_xlsx(raw: bytes) -> tuple[str | None, str]:
         return None, "failed-no-parser"
 
     import io
+
     try:
         wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("XLSX parse failed: %s", exc)
         return None, "failed-parse"
 
@@ -152,7 +157,10 @@ def extract_xlsx(raw: bytes) -> tuple[str | None, str]:
                 if not any(c not in (None, "") for c in cells):
                     continue
                 nonempty += 1
-                if rows_emitted >= _XLSX_MAX_ROWS_PER_SHEET or sheet_chars >= _XLSX_MAX_CHARS_PER_SHEET:
+                if (
+                    rows_emitted >= _XLSX_MAX_ROWS_PER_SHEET
+                    or sheet_chars >= _XLSX_MAX_CHARS_PER_SHEET
+                ):
                     continue  # keep counting rows_seen so the note is accurate
                 line = "\t".join("" if c is None else str(c) for c in cells)
                 sheet_lines.append(line)
@@ -161,9 +169,7 @@ def extract_xlsx(raw: bytes) -> tuple[str | None, str]:
             if nonempty == 0:
                 # Almost always a never-recalculated formula sheet (data_only
                 # returns None) -- say so rather than emit an empty section.
-                sheet_lines.append(
-                    "(no values -- sheet may contain only uncomputed formulas)"
-                )
+                sheet_lines.append("(no values -- sheet may contain only uncomputed formulas)")
             elif nonempty > rows_emitted:
                 sheet_lines.append(
                     f"(... {nonempty - rows_emitted} more row(s) not shown; "
@@ -186,7 +192,7 @@ def extract_gdoc_export(raw: bytes) -> tuple[str | None, str]:
     """
     try:
         text = raw.decode("utf-8", errors="replace").strip()
-    except Exception as exc:  # noqa: BLE001  -- decode("replace") doesn't raise; defensive
+    except Exception as exc:
         logger.warning("Google Doc decode failed: %s", exc)
         return None, "failed-parse"
     return (text or None), "gdoc-export"
@@ -196,7 +202,7 @@ def extract_gsheet_export(raw: bytes) -> tuple[str | None, str]:
     """Decode a Google Sheet exported as text/csv."""
     try:
         text = raw.decode("utf-8", errors="replace").strip()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Google Sheet decode failed: %s", exc)
         return None, "failed-parse"
     return (text or None), "gsheet-export"

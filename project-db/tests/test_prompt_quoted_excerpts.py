@@ -18,11 +18,10 @@ guards in the prompt-philosophy boundary (HANDOFF section 6) stay
 intact -- this is a SHARPENING of the existing conservative posture,
 not a loosening.
 """
+
 from __future__ import annotations
 
 from datetime import date
-
-import pytest
 
 from project_db.ai.context import ProjectContext
 from project_db.ai.proposals import (
@@ -40,10 +39,14 @@ def _ctx() -> ProjectContext:
         tasks=[],
         documents=[],
         document_texts=[
-            {"name": "SOW.pdf", "folder_path": "p/",
-             "mime_type": "application/pdf",
-             "text": "Scope: install kitchen.", "truncated": False,
-             "document_id": "abc"}
+            {
+                "name": "SOW.pdf",
+                "folder_path": "p/",
+                "mime_type": "application/pdf",
+                "text": "Scope: install kitchen.",
+                "truncated": False,
+                "document_id": "abc",
+            }
         ],
         invoices=[],
         daily_logs=[],
@@ -71,7 +74,7 @@ class TestVersions:
 
 class TestScopePromptDemandsQuotedExcerpt:
     def test_contract_evidence_rule(self):
-        sys_p, user_p = _build_scope_prompt(_ctx())
+        _sys_p, user_p = _build_scope_prompt(_ctx())
         # The EVIDENCE-CITATION block must be present
         assert "EVIDENCE-CITATION REQUIREMENT" in user_p
         # Must demand a QUOTED EXCERPT for contract evidence
@@ -90,7 +93,7 @@ class TestScopePromptDemandsQuotedExcerpt:
 
 class TestTimelinePromptDemandsSpecificEvidence:
     def test_evidence_block_present(self):
-        sys_p, user_p = _build_timeline_prompt(
+        _sys_p, user_p = _build_timeline_prompt(
             _ctx(),
             dateless=[{"title": "T", "is_subitem": False}],
             dated=[],

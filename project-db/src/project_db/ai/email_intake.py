@@ -25,10 +25,10 @@ Gmail labels applied server-side:
   - ALTA/Quarantine  -- system/noreply sender; not processed.
   - ALTA/Failed      -- extraction or DB error.
 """
+
 from __future__ import annotations
 
 import base64
-import email as _stdlib_email
 import json
 import logging
 import os
@@ -42,8 +42,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from project_db.ai.field_note_extraction import (
-    FieldNoteBatch,
     _IMAGE_EXTS,
+    FieldNoteBatch,
     ingest_field_note,
 )
 from project_db.db.models import EmailIngest, NoteChannel, Project, Worker
@@ -185,8 +185,10 @@ class GmailPoller(BaseGmailPoller):
                 "Point it at your OAuth client_secret JSON and run `project_db gmail-auth`."
             )
 
-        resolved_token = token_path or os.environ.get("GMAIL_TOKEN_PATH") or os.path.join(
-            os.path.dirname(os.path.abspath(key_path)), "gmail_token.json"
+        resolved_token = (
+            token_path
+            or os.environ.get("GMAIL_TOKEN_PATH")
+            or os.path.join(os.path.dirname(os.path.abspath(key_path)), "gmail_token.json")
         )
         creds = GmailPoller._load_or_refresh(key_path, resolved_token)
         return build("gmail", "v1", credentials=creds, cache_discovery=False)
@@ -229,8 +231,11 @@ class GmailPoller(BaseGmailPoller):
             if name in existing:
                 self._label_cache[name] = existing[name]
             else:
-                body = {"name": name, "labelListVisibility": "labelShow",
-                        "messageListVisibility": "show"}
+                body = {
+                    "name": name,
+                    "labelListVisibility": "labelShow",
+                    "messageListVisibility": "show",
+                }
                 created = self._svc.users().labels().create(userId="me", body=body).execute()
                 self._label_cache[name] = created["id"]
                 logger.info("[GMAIL] Created label: %s", name)
@@ -247,9 +252,7 @@ class GmailPoller(BaseGmailPoller):
             body["addLabelIds"] = [lid]
         else:
             body["removeLabelIds"] = [lid]
-        self._svc.users().messages().modify(
-            userId="me", id=message_id, body=body
-        ).execute()
+        self._svc.users().messages().modify(userId="me", id=message_id, body=body).execute()
 
     # ------------------------------------------------------------------
     # Listing + fetch
@@ -283,9 +286,7 @@ class GmailPoller(BaseGmailPoller):
         return results
 
     def get_message(self, message_id: str) -> dict[str, Any]:
-        return self._svc.users().messages().get(
-            userId="me", id=message_id, format="full"
-        ).execute()
+        return self._svc.users().messages().get(userId="me", id=message_id, format="full").execute()
 
 
 # ---------------------------------------------------------------------------
@@ -302,15 +303,14 @@ class MockGmailPoller(BaseGmailPoller):
     """
 
     def __init__(self, messages: list[dict[str, Any]] | None = None) -> None:
-        self.messages: dict[str, dict[str, Any]] = {
-            m["id"]: m for m in (messages or [])
-        }
+        self.messages: dict[str, dict[str, Any]] = {m["id"]: m for m in (messages or [])}
         self.applied_labels: list[tuple[str, str, bool]] = []
         self.labels_ensured: bool = False
 
     def list_unprocessed(self) -> list[dict[str, Any]]:
-        return [{"id": mid, "threadId": m.get("threadId", "t1")}
-                for mid, m in self.messages.items()]
+        return [
+            {"id": mid, "threadId": m.get("threadId", "t1")} for mid, m in self.messages.items()
+        ]
 
     def get_message(self, message_id: str) -> dict[str, Any]:
         return self.messages[message_id]
@@ -395,7 +395,7 @@ def _is_system_sender(email: str) -> bool:
     return bool(_SYSTEM_SENDER_RE.match(email.strip()))
 
 
-def _auto_create_worker_stub(session: Session, sender_email: str) -> "Worker":
+def _auto_create_worker_stub(session: Session, sender_email: str) -> Worker:
     """Create an unverified Worker stub for a first-time human sender.
 
     The PM reviews recurring senders in the Worker roster and fills in
@@ -403,7 +403,7 @@ def _auto_create_worker_stub(session: Session, sender_email: str) -> "Worker":
     on verification -- all output still goes through Proposals (A1).
     """
     w = Worker(
-        display_name=sender_email,   # placeholder; PM can rename later
+        display_name=sender_email,  # placeholder; PM can rename later
         email=sender_email.lower().strip(),
         verified=False,
         active=True,
@@ -418,7 +418,7 @@ def _resolve_project_id(
     session: Session,
     *,
     to_address: str,
-    worker: "Worker | None",
+    worker: Worker | None,
 ) -> str | None:
     """Determine project_id: plus-tag first, then worker default, then env fallback.
 
@@ -520,7 +520,7 @@ def poll_mailbox(
                 attachment_dir=attach_base,
                 embedding_provider=embedding_provider,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("[GMAIL] Unexpected error processing %s", gmail_id)
             batch.failed += 1
             batch.errors.append(f"{gmail_id}: {exc}")
@@ -545,11 +545,7 @@ def _process_one(
 ) -> None:
     """Process a single Gmail message.  All side-effects happen here."""
     # ----- Dedup check -----
-    existing = (
-        session.query(EmailIngest)
-        .filter_by(gmail_message_id=gmail_id)
-        .one_or_none()
-    )
+    existing = session.query(EmailIngest).filter_by(gmail_message_id=gmail_id).one_or_none()
     if existing:
         batch.duplicate += 1
         # Apply ALTA/Processed so it stops appearing in list_unprocessed.
@@ -567,7 +563,9 @@ def _process_one(
     sender_raw = headers.get("from", "")
     # Extract just the email from "Display Name <email@example.com>".
     sender_email_match = re.search(r"<([^>]+)>", sender_raw)
-    sender_email = (sender_email_match.group(1) if sender_email_match else sender_raw).lower().strip()
+    sender_email = (
+        (sender_email_match.group(1) if sender_email_match else sender_raw).lower().strip()
+    )
 
     to_raw = headers.get("to", "")
     rfc_msg_id = headers.get("message-id")
@@ -618,8 +616,7 @@ def _process_one(
     if attachment_paths:
         ingest.attachment_refs_json = json.dumps(attachment_paths)
     image_paths = [
-        p for p in attachment_paths
-        if os.path.splitext(p)[1].lower() in _IMAGE_EXTS
+        p for p in attachment_paths if os.path.splitext(p)[1].lower() in _IMAGE_EXTS
     ] or None
 
     # Commit the ingest row with known sender BEFORE extraction so crash is idempotent.
@@ -683,11 +680,7 @@ def _process_one(
 def _mark_ingest_failed(session: Session, gmail_id: str, reason: str) -> None:
     """Best-effort: create or update an EmailIngest row as failed."""
     try:
-        row = (
-            session.query(EmailIngest)
-            .filter_by(gmail_message_id=gmail_id)
-            .one_or_none()
-        )
+        row = session.query(EmailIngest).filter_by(gmail_message_id=gmail_id).one_or_none()
         if row:
             row.status = "failed"
             row.failure_reason = reason

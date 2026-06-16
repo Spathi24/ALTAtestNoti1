@@ -19,6 +19,7 @@ Write Operations:
   - create_item() — create new item
   - delete_item() — delete item
 """
+
 from __future__ import annotations
 
 import json
@@ -41,8 +42,7 @@ class MondayClient:
         self.token = token or os.environ.get("MONDAY_API_TOKEN")
         if not self.token:
             raise RuntimeError(
-                "MONDAY_API_TOKEN not set. "
-                "Get one at Monday > avatar > Admin > API."
+                "MONDAY_API_TOKEN not set. Get one at Monday > avatar > Admin > API."
             )
         self._http = httpx.Client(
             base_url=API_URL,
@@ -72,7 +72,7 @@ class MondayClient:
         track_complexity: bool = False,
     ) -> dict[str, Any]:
         """Execute a GraphQL operation. Returns data dict. Raises on errors.
-        
+
         If track_complexity=True, embeds complexity tracking and logs result.
         """
         if track_complexity:
@@ -83,7 +83,7 @@ class MondayClient:
               result: {gql.strip()}
             }}
             """
-        
+
         resp = self._http.post(
             "",
             json={"query": gql, "variables": variables or {}},
@@ -92,9 +92,9 @@ class MondayClient:
         payload = resp.json()
         if "errors" in payload:
             raise RuntimeError(f"Monday API error: {payload['errors']}")
-        
+
         data = payload["data"]
-        
+
         # Extract and log complexity if present
         if track_complexity and "complexity" in data:
             complexity = data.pop("complexity")
@@ -105,7 +105,7 @@ class MondayClient:
                 f"API Complexity — cost={query_cost}, before={self.complexity_before}, "
                 f"after={self.complexity_after}"
             )
-        
+
         return data
 
     # ------------------------------------------------------------------
@@ -401,7 +401,7 @@ class MondayClient:
         value: Any,
     ) -> dict[str, Any]:
         """Update a single column value on an item.
-        
+
         Args:
             board_id: The board ID
             item_id: The item ID to update
@@ -411,7 +411,7 @@ class MondayClient:
                   - Date: "2026-05-12"
                   - Person: {"id": 123}
                   - Number: 42
-        
+
         Returns:
             Item dict with id and updated column_values
         """
@@ -444,16 +444,16 @@ class MondayClient:
         column_values: dict[str, Any],
     ) -> dict[str, Any]:
         """Batch update multiple columns on a single item (preferred over single updates).
-        
+
         ~150x cheaper than calling change_column_value() multiple times because
         it's counted as one API call instead of N calls.
-        
+
         Args:
             board_id: The board ID
             item_id: The item ID to update
             column_values: Dict of {column_id: value} to update
                           e.g., {"status": {"index": 1}, "date123": "2026-05-12"}
-        
+
         Returns:
             Item dict with id and updated column_values
         """
@@ -476,7 +476,9 @@ class MondayClient:
             "values": json.dumps(column_values),
         }
         result = self.query(gql, variables)
-        logger.info("Updated item %s on board %s: %d columns", item_id, board_id, len(column_values))
+        logger.info(
+            "Updated item %s on board %s: %d columns", item_id, board_id, len(column_values)
+        )
         return result.get("change_multiple_column_values", {})
 
     def create_item(
@@ -487,13 +489,13 @@ class MondayClient:
         group_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a new item on a board.
-        
+
         Args:
             board_id: The board ID
             item_name: The name/title of the new item
             column_values: Optional initial column values {column_id: value}
             group_id: Optional group/lane to add item to
-        
+
         Returns:
             Created item dict with id, name, and column_values
         """
@@ -519,7 +521,7 @@ class MondayClient:
         }
         if column_values:
             variables["column_values"] = json.dumps(column_values)
-        
+
         result = self.query(gql, variables)
         item = result.get("create_item", {})
         logger.info("Created item '%s' on board %s: id=%s", item_name, board_id, item.get("id"))
@@ -568,17 +570,19 @@ class MondayClient:
         sub = result.get("create_subitem", {})
         logger.info(
             "Created subitem '%s' under parent %s: id=%s",
-            item_name, parent_item_id, sub.get("id"),
+            item_name,
+            parent_item_id,
+            sub.get("id"),
         )
         return sub
 
     def delete_item(self, board_id: int, item_id: int) -> bool:
         """Delete an item from a board.
-        
+
         Args:
             board_id: The board ID
             item_id: The item ID to delete
-        
+
         Returns:
             True if successful
         """
@@ -675,6 +679,8 @@ class MondayClient:
             current_page += 1
         logger.debug(
             "list_activity_logs board=%s from=%s -> %d events",
-            board_id, from_ts, len(out),
+            board_id,
+            from_ts,
+            len(out),
         )
         return out

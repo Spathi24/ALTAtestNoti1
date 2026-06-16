@@ -16,12 +16,14 @@ left explicit/heavy). The embed step here runs on EVERY refresh, so the moment
 ``DocumentText`` changes by any means, the next refresh re-embeds exactly the
 changed documents.
 """
+
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -54,8 +56,7 @@ class RefreshReport:
 
     def one_line(self) -> str:
         good = sum(1 for s in self.steps if s.ok)
-        return (f"{good}/{len(self.steps)} step(s) ok"
-                f" in {self.duration_seconds}s")
+        return f"{good}/{len(self.steps)} step(s) ok in {self.duration_seconds}s"
 
 
 def run_refresh(
@@ -80,8 +81,9 @@ def run_refresh(
 
     org = session.query(Organization).first()
     if org is None:
-        report.steps.append(RefreshStep(
-            "preflight", False, error="no organization (run init-db first)"))
+        report.steps.append(
+            RefreshStep("preflight", False, error="no organization (run init-db first)")
+        )
         report.finished_at = datetime.now(timezone.utc).isoformat()
         return report
 
@@ -90,7 +92,7 @@ def run_refresh(
         name = f"sync:{source.value}"
         try:
             connector_cls = get_connector_class(source)
-        except Exception as exc:  # noqa: BLE001 -- not registered / not impl
+        except Exception as exc:
             report.steps.append(RefreshStep(name, False, error=f"unavailable: {exc}"))
             continue
         try:
@@ -103,7 +105,7 @@ def run_refresh(
             session.commit()
             report.steps.append(RefreshStep(name, True, summary=sync_report.summary()))
             emit(f"[refresh] {name}: {sync_report.summary()}")
-        except Exception as exc:  # noqa: BLE001 -- missing creds / API error
+        except Exception as exc:
             session.rollback()
             report.steps.append(RefreshStep(name, False, error=str(exc)))
             emit(f"[refresh] {name} FAILED: {exc}")
@@ -113,11 +115,16 @@ def run_refresh(
             provider = embedding_provider
             if provider is None:
                 from project_db.ai.embeddings import get_optional_embedding_provider
+
                 provider = get_optional_embedding_provider()
             if provider is None:
-                report.steps.append(RefreshStep(
-                    "embed", False,
-                    error="no embedding provider (set OPENAI_API_KEY to enable RAG)"))
+                report.steps.append(
+                    RefreshStep(
+                        "embed",
+                        False,
+                        error="no embedding provider (set OPENAI_API_KEY to enable RAG)",
+                    )
+                )
             else:
                 from project_db.ai.rag import embed_documents_for
 
@@ -130,7 +137,7 @@ def run_refresh(
                 )
                 report.steps.append(RefreshStep("embed", True, summary=summary))
                 emit(f"[refresh] embed: {summary}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             session.rollback()
             report.steps.append(RefreshStep("embed", False, error=str(exc)))
             emit(f"[refresh] embed FAILED: {exc}")
@@ -140,10 +147,13 @@ def run_refresh(
             from project_db.ai.email_intake import GmailPoller, poll_mailbox
             from project_db.ai.embeddings import get_optional_embedding_provider
             from project_db.ai.field_note_extraction import OpenAIFieldNoteExtractor
+
             extractor = OpenAIFieldNoteExtractor()
             poller = GmailPoller()
             mail_batch = poll_mailbox(
-                session, extractor, poller,
+                session,
+                extractor,
+                poller,
                 embedding_provider=get_optional_embedding_provider(),
             )
             summary = (
@@ -154,7 +164,7 @@ def run_refresh(
             )
             report.steps.append(RefreshStep("poll-mail", mail_batch.ok, summary=summary))
             emit(f"[refresh] poll-mail: {summary}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             session.rollback()
             report.steps.append(RefreshStep("poll-mail", False, error=str(exc)))
             emit(f"[refresh] poll-mail FAILED: {exc}")

@@ -8,6 +8,7 @@ Anthropic as the main client, but use OpenAI en lieu of a straight error."
 Wraps at the ``complete`` / ``complete_json`` level so each backend's own retry
 / truncation logic runs fully on the primary before we move to the fallback.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,7 +33,8 @@ class FallbackProvider(LLMProvider):
         except LLMProviderError as exc:
             logger.warning(
                 "primary provider %s failed (%s); falling back to %s",
-                getattr(self.primary, "name", "?"), exc,
+                getattr(self.primary, "name", "?"),
+                exc,
                 getattr(self.fallback, "name", "?"),
             )
             return self.fallback.complete(**kwargs)
@@ -43,7 +45,8 @@ class FallbackProvider(LLMProvider):
         except LLMProviderError as exc:
             logger.warning(
                 "primary provider %s failed for JSON (%s); falling back to %s",
-                getattr(self.primary, "name", "?"), exc,
+                getattr(self.primary, "name", "?"),
+                exc,
                 getattr(self.fallback, "name", "?"),
             )
             return self.fallback.complete_json(**kwargs)

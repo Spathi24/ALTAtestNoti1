@@ -3,6 +3,7 @@
 Deterministic, offline -- builds ContractObligation rows directly (no LLM) and
 asserts the portfolio aggregation. Mirrors test_obligations.py's _oblig helper.
 """
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -15,8 +16,11 @@ TODAY = date(2026, 6, 9)
 
 
 def _oblig(session, project, **kw):
-    defaults = dict(project_id=project.canonical_id, kind="payment_milestone",
-                    direction="owed_to_us")
+    defaults = {
+        "project_id": project.canonical_id,
+        "kind": "payment_milestone",
+        "direction": "owed_to_us",
+    }
     defaults.update(kw)
     o = ContractObligation(**defaults)
     session.add(o)
@@ -27,14 +31,36 @@ def _oblig(session, project, **kw):
 class TestValueCaught:
     def test_aggregates_overdue_buckets(self, session, project_factory):
         p = project_factory(name="Proj A")
-        _oblig(session, p, direction="owed_to_us", amount=Decimal("10000"),
-               due_date=TODAY - timedelta(days=5))                  # receivable overdue
-        _oblig(session, p, direction="owed_by_us", kind="penalty",
-               amount=Decimal("2000"), due_date=TODAY - timedelta(days=2))  # we owe overdue
-        _oblig(session, p, direction="owed_to_us", kind="deposit",
-               amount=Decimal("500"), due_date=TODAY + timedelta(days=10))  # due soon
-        _oblig(session, p, direction="owed_to_us", amount=Decimal("9999"),
-               due_date=TODAY + timedelta(days=90))                 # upcoming -> excluded
+        _oblig(
+            session,
+            p,
+            direction="owed_to_us",
+            amount=Decimal("10000"),
+            due_date=TODAY - timedelta(days=5),
+        )  # receivable overdue
+        _oblig(
+            session,
+            p,
+            direction="owed_by_us",
+            kind="penalty",
+            amount=Decimal("2000"),
+            due_date=TODAY - timedelta(days=2),
+        )  # we owe overdue
+        _oblig(
+            session,
+            p,
+            direction="owed_to_us",
+            kind="deposit",
+            amount=Decimal("500"),
+            due_date=TODAY + timedelta(days=10),
+        )  # due soon
+        _oblig(
+            session,
+            p,
+            direction="owed_to_us",
+            amount=Decimal("9999"),
+            due_date=TODAY + timedelta(days=90),
+        )  # upcoming -> excluded
         session.commit()
 
         rep = report_value_caught(session, today=TODAY)
@@ -49,10 +75,20 @@ class TestValueCaught:
     def test_sums_across_projects_and_ranks(self, session, project_factory):
         big = project_factory(name="Big")
         small = project_factory(name="Small")
-        _oblig(session, big, direction="owed_to_us", amount=Decimal("50000"),
-               due_date=TODAY - timedelta(days=1))
-        _oblig(session, small, direction="owed_to_us", amount=Decimal("1000"),
-               due_date=TODAY - timedelta(days=1))
+        _oblig(
+            session,
+            big,
+            direction="owed_to_us",
+            amount=Decimal("50000"),
+            due_date=TODAY - timedelta(days=1),
+        )
+        _oblig(
+            session,
+            small,
+            direction="owed_to_us",
+            amount=Decimal("1000"),
+            due_date=TODAY - timedelta(days=1),
+        )
         session.commit()
 
         rep = report_value_caught(session, today=TODAY)
@@ -65,8 +101,14 @@ class TestValueCaught:
         """A dateless/past obligation with no dollar value adds nothing to the
         dollar scoreboard and does not show as a $0 project."""
         p = project_factory(name="Permit Proj")
-        _oblig(session, p, direction="owed_by_us", kind="permit_deadline",
-               amount=None, due_date=TODAY - timedelta(days=3))
+        _oblig(
+            session,
+            p,
+            direction="owed_by_us",
+            kind="permit_deadline",
+            amount=None,
+            due_date=TODAY - timedelta(days=3),
+        )
         session.commit()
 
         rep = report_value_caught(session, today=TODAY)
@@ -81,8 +123,14 @@ class TestValueCaught:
         """A triggered settlement with no date (conditional) is real money but
         not yet 'past due to collect' / overdue -- excluded from the tally."""
         p = project_factory(name="Buyout")
-        _oblig(session, p, direction="owed_by_us", kind="settlement",
-               amount=Decimal("8000"), trigger="on key return")
+        _oblig(
+            session,
+            p,
+            direction="owed_by_us",
+            kind="settlement",
+            amount=Decimal("8000"),
+            trigger="on key return",
+        )
         session.commit()
 
         rep = report_value_caught(session, today=TODAY)

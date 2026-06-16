@@ -1,4 +1,5 @@
 """Anthropic primary + OpenAI backup (owner 2026-06-04)."""
+
 from __future__ import annotations
 
 from project_db.ai.providers import (
@@ -69,7 +70,7 @@ class TestFallbackBehavior:
         fp = FallbackProvider(primary, fallback)
         out = fp.complete(messages=[LLMMessage(role="user", content="hi")])
         assert out.content == "from primary"
-        assert fallback.calls == []                      # fallback never touched
+        assert fallback.calls == []  # fallback never touched
 
     def test_complete_falls_back_on_primary_error(self):
         fallback = MockLLMProvider(responses=["from fallback"])

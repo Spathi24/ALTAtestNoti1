@@ -10,6 +10,7 @@ Heavy parser libs (pymupdf, python-docx, openpyxl) are guarded with
 pytest.importorskip so the suite still runs cleanly without the
 [content] optional dependency group installed.
 """
+
 from __future__ import annotations
 
 import io
@@ -26,7 +27,6 @@ from project_db.connectors.gdrive.content_pipeline import (
 from project_db.db.models import Document, DocumentText, Project
 from project_db.db.models.work import ProjectStatus
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -42,14 +42,19 @@ def _make_doc(
 ) -> Document:
     c = client_factory(name="C")
     p = Project(
-        name="P", code="P", status=ProjectStatus.ACTIVE,
+        name="P",
+        code="P",
+        status=ProjectStatus.ACTIVE,
         client_id=c.canonical_id,
     )
     session.add(p)
     session.commit()
     doc = Document(
-        name="x", url="about:blank",
-        mime_type=mime, storage_ref=storage_ref, size_bytes=size,
+        name="x",
+        url="about:blank",
+        mime_type=mime,
+        storage_ref=storage_ref,
+        size_bytes=size,
         project_id=p.canonical_id,
     )
     session.add(doc)
@@ -64,7 +69,7 @@ def _make_doc(
 
 class TestExtractGdocExport:
     def test_decodes_utf8(self):
-        text, method = extractors.extract_gdoc_export("Hello world".encode("utf-8"))
+        text, method = extractors.extract_gdoc_export(b"Hello world")
         assert text == "Hello world"
         assert method == "gdoc-export"
 
@@ -196,8 +201,10 @@ class TestPipelinePolicy:
 
     def test_oversize_pdf_skipped_without_download(self, session, org, client_factory):
         doc = _make_doc(
-            session, client_factory,
-            mime="application/pdf", size=MAX_BYTES + 1,
+            session,
+            client_factory,
+            mime="application/pdf",
+            size=MAX_BYTES + 1,
         )
         client = MagicMock()
         row = extract_and_store(session=session, client=client, document=doc)
@@ -208,7 +215,8 @@ class TestPipelinePolicy:
 
     def test_google_doc_uses_export_endpoint(self, session, org, client_factory):
         doc = _make_doc(
-            session, client_factory,
+            session,
+            client_factory,
             mime="application/vnd.google-apps.document",
             size=None,
             storage_ref="gdoc_xyz",
@@ -228,6 +236,7 @@ class TestPipelinePolicy:
     def test_pdf_uses_download_endpoint(self, session, org, client_factory):
         pytest.importorskip("fitz")
         import fitz
+
         d = fitz.open()
         d.new_page().insert_text((72, 72), "Pipeline PDF test")
         buf = io.BytesIO()
@@ -235,8 +244,10 @@ class TestPipelinePolicy:
         d.close()
 
         doc = _make_doc(
-            session, client_factory,
-            mime="application/pdf", size=len(buf.getvalue()),
+            session,
+            client_factory,
+            mime="application/pdf",
+            size=len(buf.getvalue()),
             storage_ref="pdf_42",
         )
         client = MagicMock()
@@ -252,8 +263,11 @@ class TestPipelinePolicy:
 
     def test_download_failure_recorded_not_raised(self, session, org, client_factory):
         doc = _make_doc(
-            session, client_factory,
-            mime="application/pdf", size=1024, storage_ref="boom",
+            session,
+            client_factory,
+            mime="application/pdf",
+            size=1024,
+            storage_ref="boom",
         )
         client = MagicMock()
         client.download_file.side_effect = RuntimeError("network down")
@@ -265,8 +279,11 @@ class TestPipelinePolicy:
     def test_trashed_document_skipped_without_download(self, session, org, client_factory):
         """A trashed Document gets a skipped-trashed marker, no API call."""
         doc = _make_doc(
-            session, client_factory,
-            mime="application/pdf", size=1024, storage_ref="trash_me",
+            session,
+            client_factory,
+            mime="application/pdf",
+            size=1024,
+            storage_ref="trash_me",
         )
         doc.is_trashed = True
         session.commit()
@@ -280,8 +297,11 @@ class TestPipelinePolicy:
 
     def test_no_storage_ref_fails_clean(self, session, org, client_factory):
         doc = _make_doc(
-            session, client_factory,
-            mime="application/pdf", size=1024, storage_ref=None,
+            session,
+            client_factory,
+            mime="application/pdf",
+            size=1024,
+            storage_ref=None,
         )
         client = MagicMock()
         row = extract_and_store(session=session, client=client, document=doc)
@@ -290,12 +310,14 @@ class TestPipelinePolicy:
 
     def test_missing_only_is_noop_when_row_exists(self, session, org, client_factory):
         doc = _make_doc(session, client_factory, mime="application/pdf", size=1024)
-        session.add(DocumentText(
-            document_id=doc.canonical_id,
-            extracted_text="OLD",
-            extraction_method="pdf-pymupdf",
-            token_count=1,
-        ))
+        session.add(
+            DocumentText(
+                document_id=doc.canonical_id,
+                extracted_text="OLD",
+                extraction_method="pdf-pymupdf",
+                token_count=1,
+            )
+        )
         session.commit()
 
         client = MagicMock()
@@ -307,16 +329,20 @@ class TestPipelinePolicy:
 
     def test_overwrite_replaces_existing_row(self, session, org, client_factory):
         doc = _make_doc(
-            session, client_factory,
+            session,
+            client_factory,
             mime="application/vnd.google-apps.document",
-            size=None, storage_ref="gdoc_1",
+            size=None,
+            storage_ref="gdoc_1",
         )
-        session.add(DocumentText(
-            document_id=doc.canonical_id,
-            extracted_text="STALE",
-            extraction_method="gdoc-export",
-            token_count=1,
-        ))
+        session.add(
+            DocumentText(
+                document_id=doc.canonical_id,
+                extracted_text="STALE",
+                extraction_method="gdoc-export",
+                token_count=1,
+            )
+        )
         session.commit()
 
         client = MagicMock()
@@ -341,8 +367,10 @@ class TestConnectorExtractFlag:
 
         svc = MagicMock()
         folder = {
-            "id": "f1", "name": "923 Rockland",
-            "mimeType": "application/vnd.google-apps.folder", "parents": ["root"],
+            "id": "f1",
+            "name": "923 Rockland",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["root"],
         }
         # The file is a Google Doc -> export endpoint will be used.
         file = {
@@ -405,6 +433,7 @@ class TestConnectorExtractFlag:
         connector, _ = self._build_connector(session, org, extract_content=True)
         connector.sync()
         from project_db.db.models import Document
+
         assert session.query(Document).filter_by(storage_ref="file42").count() == 1
         assert session.query(DocumentText).count() == 1
 
@@ -424,8 +453,10 @@ class TestSyncReconciliation:
 
         svc = MagicMock()
         folder = {
-            "id": "fold1", "name": "Project Alpha",
-            "mimeType": "application/vnd.google-apps.folder", "parents": ["root"],
+            "id": "fold1",
+            "name": "Project Alpha",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["root"],
         }
         list_mock = MagicMock()
         list_mock.execute.side_effect = [
@@ -437,7 +468,8 @@ class TestSyncReconciliation:
             "startPageToken": "tok"
         }
         return GDriveConnector(
-            session=session, organization_id=org.canonical_id,
+            session=session,
+            organization_id=org.canonical_id,
             config={"_client": GDriveClient(service=svc), "root_folder": "root"},
         )
 
@@ -446,12 +478,16 @@ class TestSyncReconciliation:
         # Seed a Document that's already in the DB from an "earlier sync"
         # under fold1.
         old_doc = Document(
-            name="VanishedContract.pdf", url="https://drive/old",
-            mime_type="application/pdf", storage_ref="vanished_id",
-            parent_folder_id="fold1", folder_path="Project Alpha",
+            name="VanishedContract.pdf",
+            url="https://drive/old",
+            mime_type="application/pdf",
+            storage_ref="vanished_id",
+            parent_folder_id="fold1",
+            folder_path="Project Alpha",
             is_trashed=False,
         )
-        session.add(old_doc); session.commit()
+        session.add(old_doc)
+        session.commit()
 
         # Now sync: Drive returns NO files in fold1 this time.
         connector = self._connector_with_one_folder_one_file(session, org, file_payload=None)
@@ -464,12 +500,16 @@ class TestSyncReconciliation:
     def test_vanished_file_in_unvisited_folder_is_left_alone(self, session, org):
         """File whose parent_folder_id we never visited must NOT be marked trashed."""
         ghost = Document(
-            name="GhostFile.pdf", url="https://drive/ghost",
-            mime_type="application/pdf", storage_ref="ghost_id",
-            parent_folder_id="not_visited_folder", folder_path="Elsewhere",
+            name="GhostFile.pdf",
+            url="https://drive/ghost",
+            mime_type="application/pdf",
+            storage_ref="ghost_id",
+            parent_folder_id="not_visited_folder",
+            folder_path="Elsewhere",
             is_trashed=False,
         )
-        session.add(ghost); session.commit()
+        session.add(ghost)
+        session.commit()
 
         connector = self._connector_with_one_folder_one_file(session, org, file_payload=None)
         connector.sync()
@@ -480,12 +520,16 @@ class TestSyncReconciliation:
     def test_legacy_doc_with_null_parent_is_left_alone(self, session, org):
         """A row with parent_folder_id=None (legacy / delta-only) must not be touched."""
         legacy = Document(
-            name="LegacyDoc.pdf", url="https://drive/legacy",
-            mime_type="application/pdf", storage_ref="legacy_id",
-            parent_folder_id=None, folder_path=None,
+            name="LegacyDoc.pdf",
+            url="https://drive/legacy",
+            mime_type="application/pdf",
+            storage_ref="legacy_id",
+            parent_folder_id=None,
+            folder_path=None,
             is_trashed=False,
         )
-        session.add(legacy); session.commit()
+        session.add(legacy)
+        session.commit()
 
         connector = self._connector_with_one_folder_one_file(session, org, file_payload=None)
         connector.sync()
@@ -496,20 +540,27 @@ class TestSyncReconciliation:
     def test_file_still_present_is_not_marked_trashed(self, session, org):
         """File present in DB AND in the new sync listing stays untrashed."""
         existing = Document(
-            name="StillThere.pdf", url="https://drive/x",
-            mime_type="application/pdf", storage_ref="still_here",
-            parent_folder_id="fold1", folder_path="Project Alpha",
+            name="StillThere.pdf",
+            url="https://drive/x",
+            mime_type="application/pdf",
+            storage_ref="still_here",
+            parent_folder_id="fold1",
+            folder_path="Project Alpha",
             is_trashed=False,
         )
-        session.add(existing); session.commit()
+        session.add(existing)
+        session.commit()
 
         connector = self._connector_with_one_folder_one_file(
-            session, org,
+            session,
+            org,
             file_payload={
-                "id": "still_here", "name": "StillThere.pdf",
+                "id": "still_here",
+                "name": "StillThere.pdf",
                 "mimeType": "application/pdf",
                 "parents": ["fold1"],
-                "size": "1024", "createdTime": "2026-01-01T00:00:00Z",
+                "size": "1024",
+                "createdTime": "2026-01-01T00:00:00Z",
                 "modifiedTime": "2026-05-15T00:00:00Z",
             },
         )
@@ -525,17 +576,23 @@ class TestSyncReconciliation:
 
         # Pre-seed a doc that WOULD be marked trashed in a clean run.
         doomed = Document(
-            name="WouldBeTrashed.pdf", url="https://drive/x",
-            mime_type="application/pdf", storage_ref="doomed_id",
-            parent_folder_id="fold_err", folder_path="Errored Folder",
+            name="WouldBeTrashed.pdf",
+            url="https://drive/x",
+            mime_type="application/pdf",
+            storage_ref="doomed_id",
+            parent_folder_id="fold_err",
+            folder_path="Errored Folder",
             is_trashed=False,
         )
-        session.add(doomed); session.commit()
+        session.add(doomed)
+        session.commit()
 
         svc = MagicMock()
         folder = {
-            "id": "fold_err", "name": "Errored Folder",
-            "mimeType": "application/vnd.google-apps.folder", "parents": ["root"],
+            "id": "fold_err",
+            "name": "Errored Folder",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["root"],
         }
         list_mock = MagicMock()
         # Root list OK, second call (the subfolder listing) blows up.
@@ -549,7 +606,8 @@ class TestSyncReconciliation:
         }
 
         connector = GDriveConnector(
-            session=session, organization_id=org.canonical_id,
+            session=session,
+            organization_id=org.canonical_id,
             config={"_client": GDriveClient(service=svc), "root_folder": "root"},
         )
         report = connector.sync()
@@ -564,10 +622,16 @@ class TestExtractContentCLI:
     def test_parser_accepts_extract_content_with_flags(self):
         from project_db.cli import build_parser
 
-        ns = build_parser().parse_args([
-            "extract-content", "--project", str(uuid.uuid4()),
-            "--overwrite", "--limit", "10",
-        ])
+        ns = build_parser().parse_args(
+            [
+                "extract-content",
+                "--project",
+                str(uuid.uuid4()),
+                "--overwrite",
+                "--limit",
+                "10",
+            ]
+        )
         assert ns.cmd == "extract-content"
         assert ns.overwrite is True
         assert ns.limit == 10

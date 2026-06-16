@@ -10,6 +10,7 @@ These fixtures match the actual canonical schema. Key things to know:
 - ExternalId uses the column name `source` (a SourceSystem enum), not
   `source_system`, and has no organization_id column.
 """
+
 from __future__ import annotations
 
 import os
@@ -35,7 +36,8 @@ os.environ["ANTHROPIC_API_KEY"] = "test_anthropic_key"
 # get_default_provider stays plain Anthropic (no FallbackProvider) regardless of
 # test order.  Tests that want the Anthropic->OpenAI fallback set the key via
 # monkeypatch.
-import project_db.config as _config  # noqa: E402,F401
+import project_db.config as _config  # noqa: F401
+
 os.environ.pop("OPENAI_API_KEY", None)
 
 from project_db.db.base import Base
@@ -54,7 +56,6 @@ from project_db.db.models import (
 from project_db.db.models.crm import LeadStage
 from project_db.db.models.finance import InvoiceStatus
 from project_db.db.models.work import ProjectStatus, TaskStatus
-
 
 # =====================================================================
 # DB SETUP
@@ -111,6 +112,7 @@ def client_factory(org: Organization, session: Session):
         session.add(client)
         session.commit()
         return client
+
     return _create
 
 
@@ -130,12 +132,14 @@ def user_factory(org: Organization, session: Session):
         session.add(user)
         session.commit()
         return user
+
     return _create
 
 
 @pytest.fixture
 def project_factory(org: Organization, session: Session, client_factory):
     """Project requires a client_id; factory creates a default client if none given."""
+
     def _create(
         name: str = "Test Project",
         code: str = "PRJ001",
@@ -157,6 +161,7 @@ def project_factory(org: Organization, session: Session, client_factory):
         session.add(project)
         session.commit()
         return project
+
     return _create
 
 
@@ -177,12 +182,14 @@ def lead_factory(org: Organization, session: Session):
         session.add(lead)
         session.commit()
         return lead
+
     return _create
 
 
 @pytest.fixture
 def deal_factory(org: Organization, session: Session, client_factory):
     """Deal requires client_id; factory creates a default client if none given."""
+
     def _create(
         name: str = "Test Deal",
         value: Decimal | None = None,
@@ -202,12 +209,14 @@ def deal_factory(org: Organization, session: Session, client_factory):
         session.add(deal)
         session.commit()
         return deal
+
     return _create
 
 
 @pytest.fixture
 def invoice_factory(org: Organization, session: Session, client_factory, project_factory):
     """Invoice requires both project_id and client_id."""
+
     def _create(
         number: str = "INV-001",
         amount: Decimal | None = None,
@@ -233,12 +242,14 @@ def invoice_factory(org: Organization, session: Session, client_factory, project
         session.add(invoice)
         session.commit()
         return invoice
+
     return _create
 
 
 @pytest.fixture
 def task_factory(org: Organization, session: Session, project_factory):
     """Task requires project_id."""
+
     def _create(
         title: str = "Test Task",
         status: TaskStatus = TaskStatus.TODO,
@@ -256,6 +267,7 @@ def task_factory(org: Organization, session: Session, project_factory):
         session.add(task)
         session.commit()
         return task
+
     return _create
 
 
@@ -283,6 +295,7 @@ def external_id_builder(session: Session):
         session.add(ext_id)
         session.commit()
         return ext_id
+
     return _create
 
 
@@ -330,8 +343,18 @@ def populated_db(
 def mock_monday_client():
     client = MagicMock()
     client.list_boards.return_value = [
-        {"id": "123456", "name": "CRM Board", "workspace": {"id": "ws1", "name": "WS 1"}, "state": "active"},
-        {"id": "789012", "name": "Projects Board", "workspace": {"id": "ws1", "name": "WS 1"}, "state": "active"},
+        {
+            "id": "123456",
+            "name": "CRM Board",
+            "workspace": {"id": "ws1", "name": "WS 1"},
+            "state": "active",
+        },
+        {
+            "id": "789012",
+            "name": "Projects Board",
+            "workspace": {"id": "ws1", "name": "WS 1"},
+            "state": "active",
+        },
     ]
     client.list_board_columns.return_value = [
         {"id": "name", "title": "Name", "type": "text"},
@@ -374,8 +397,16 @@ def mock_monday_client():
 def mock_quickbooks_client():
     client = MagicMock()
     client.list_customers.return_value = [
-        {"id": "cust1", "DisplayName": "Acme Corp", "PrimaryEmailAddr": {"Address": "acme@example.com"}},
-        {"id": "cust2", "DisplayName": "Beta Inc", "PrimaryEmailAddr": {"Address": "beta@example.com"}},
+        {
+            "id": "cust1",
+            "DisplayName": "Acme Corp",
+            "PrimaryEmailAddr": {"Address": "acme@example.com"},
+        },
+        {
+            "id": "cust2",
+            "DisplayName": "Beta Inc",
+            "PrimaryEmailAddr": {"Address": "beta@example.com"},
+        },
     ]
     client.list_invoices.return_value = [
         {
@@ -388,7 +419,12 @@ def mock_quickbooks_client():
         },
     ]
     client.list_estimates.return_value = [
-        {"id": "est1", "DocNumber": "EST-001", "TotalAmt": 25000.00, "CustomerRef": {"value": "cust1"}},
+        {
+            "id": "est1",
+            "DocNumber": "EST-001",
+            "TotalAmt": 25000.00,
+            "CustomerRef": {"value": "cust1"},
+        },
     ]
     client.query.return_value = [
         {"Id": "cust1", "DisplayName": "Acme Corp"},

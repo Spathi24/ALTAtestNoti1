@@ -3,6 +3,7 @@
 Deterministic, offline -- builds FinancialRecord / ContractObligation rows
 directly (no LLM) and asserts the rendered sentence.
 """
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -13,8 +14,9 @@ from project_db.db.models import ContractObligation, Document, FinancialRecord
 
 
 def _doc(session, project, name="Quote.pdf"):
-    d = Document(name=name, url=f"x://{name}", mime_type="application/pdf",
-                 project_id=project.canonical_id)
+    d = Document(
+        name=name, url=f"x://{name}", mime_type="application/pdf", project_id=project.canonical_id
+    )
     session.add(d)
     session.flush()
     return d
@@ -43,14 +45,28 @@ class TestMoneyLine:
         p = project_factory(name="1455 Reno")
         da = _doc(session, p, "Client Invoice.pdf")
         db_ = _doc(session, p, "Supplier Invoice.pdf")
-        session.add_all([
-            FinancialRecord(project_id=p.canonical_id, document_id=da.canonical_id,
-                            direction="client_in", record_kind="total",
-                            doc_role="invoice", amount=Decimal("80000"), is_rollup=False),
-            FinancialRecord(project_id=p.canonical_id, document_id=db_.canonical_id,
-                            direction="contractor_out", record_kind="total",
-                            doc_role="invoice", amount=Decimal("52000"), is_rollup=False),
-        ])
+        session.add_all(
+            [
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=da.canonical_id,
+                    direction="client_in",
+                    record_kind="total",
+                    doc_role="invoice",
+                    amount=Decimal("80000"),
+                    is_rollup=False,
+                ),
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=db_.canonical_id,
+                    direction="contractor_out",
+                    record_kind="total",
+                    doc_role="invoice",
+                    amount=Decimal("52000"),
+                    is_rollup=False,
+                ),
+            ]
+        )
         session.commit()
         out = report_project_money_line(session, str(p.canonical_id))
         assert out["has_records"] is True
@@ -66,31 +82,57 @@ class TestMoneyLine:
         p = project_factory(name="Quotes Only")
         da = _doc(session, p, "Soumission.pdf")
         db_ = _doc(session, p, "Supplier Invoice.pdf")
-        session.add_all([
-            FinancialRecord(project_id=p.canonical_id, document_id=da.canonical_id,
-                            direction="client_in", record_kind="total",
-                            doc_role="quote", amount=Decimal("90000"), is_rollup=False),
-            FinancialRecord(project_id=p.canonical_id, document_id=db_.canonical_id,
-                            direction="contractor_out", record_kind="total",
-                            doc_role="invoice", amount=Decimal("40000"), is_rollup=False),
-        ])
+        session.add_all(
+            [
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=da.canonical_id,
+                    direction="client_in",
+                    record_kind="total",
+                    doc_role="quote",
+                    amount=Decimal("90000"),
+                    is_rollup=False,
+                ),
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=db_.canonical_id,
+                    direction="contractor_out",
+                    record_kind="total",
+                    doc_role="invoice",
+                    amount=Decimal("40000"),
+                    is_rollup=False,
+                ),
+            ]
+        )
         session.commit()
         out = report_project_money_line(session, str(p.canonical_id))
         assert "not yet confirmed" in out["line"]
         assert "quoted on file" in out["line"]
-        assert "margin ~" not in out["line"]      # no confident-but-wrong margin
+        assert "margin ~" not in out["line"]  # no confident-but-wrong margin
 
     def test_low_confidence_says_so(self, session, project_factory):
         p = project_factory(name="6554 Dev")
         d = _doc(session, p)
-        session.add_all([
-            FinancialRecord(project_id=p.canonical_id, document_id=d.canonical_id,
-                            direction="unknown", record_kind="total",
-                            amount=Decimal("1000000"), is_rollup=False),
-            FinancialRecord(project_id=p.canonical_id, document_id=d.canonical_id,
-                            direction="contractor_out", record_kind="total",
-                            amount=Decimal("100"), is_rollup=False),
-        ])
+        session.add_all(
+            [
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=d.canonical_id,
+                    direction="unknown",
+                    record_kind="total",
+                    amount=Decimal("1000000"),
+                    is_rollup=False,
+                ),
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=d.canonical_id,
+                    direction="contractor_out",
+                    record_kind="total",
+                    amount=Decimal("100"),
+                    is_rollup=False,
+                ),
+            ]
+        )
         session.commit()
         out = report_project_money_line(session, str(p.canonical_id))
         assert out["low_confidence"] is True
@@ -101,14 +143,25 @@ class TestMoneyLine:
     def test_overdue_obligation_tail(self, session, project_factory):
         p = project_factory(name="With Oblig")
         d = _doc(session, p)
-        session.add(FinancialRecord(
-            project_id=p.canonical_id, document_id=d.canonical_id,
-            direction="client_in", record_kind="total",
-            amount=Decimal("10000"), is_rollup=False))
-        session.add(ContractObligation(
-            project_id=p.canonical_id, kind="payment_milestone",
-            direction="owed_to_us", amount=Decimal("3000"),
-            due_date=date.today() - timedelta(days=5)))
+        session.add(
+            FinancialRecord(
+                project_id=p.canonical_id,
+                document_id=d.canonical_id,
+                direction="client_in",
+                record_kind="total",
+                amount=Decimal("10000"),
+                is_rollup=False,
+            )
+        )
+        session.add(
+            ContractObligation(
+                project_id=p.canonical_id,
+                kind="payment_milestone",
+                direction="owed_to_us",
+                amount=Decimal("3000"),
+                due_date=date.today() - timedelta(days=5),
+            )
+        )
         session.commit()
         out = report_project_money_line(session, str(p.canonical_id))
         assert "overdue" in out["line"]

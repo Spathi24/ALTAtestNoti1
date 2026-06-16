@@ -14,6 +14,7 @@ Env vars:
   QB_REALM_ID — QBO company/realm ID
   QB_ACCESS_TOKEN — Current access token (or refresh from token store)
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,7 +40,7 @@ class QuickBooksClient:
         access_token: str | None = None,
     ):
         """Initialize QB client with OAuth credentials.
-        
+
         Args:
             client_id: OAuth client ID (or env QB_CLIENT_ID)
             client_secret: OAuth client secret (or env QB_CLIENT_SECRET)
@@ -72,16 +73,16 @@ class QuickBooksClient:
 
     def query(self, ql: str) -> list[dict[str, Any]]:
         """Execute a QB Query Language (QQL) query.
-        
+
         QB uses a SQL-like query language (not GraphQL).
-        
+
         Examples:
             "SELECT * FROM Invoice WHERE TxnDate > '2026-01-01'"
             "SELECT Id, DocNumber, TotalAmt FROM Invoice MAXRESULTS 100"
-        
+
         Args:
             ql: The QB Query Language query string
-        
+
         Returns:
             List of matching records (dicts)
         """
@@ -107,27 +108,23 @@ class QuickBooksClient:
         start_position: int = 1,
     ) -> list[dict[str, Any]]:
         """Fetch invoices from QB.
-        
+
         Args:
             max_results: Max records to return per call (1-1000)
             start_position: Pagination offset (1-indexed)
-        
+
         Returns:
             List of invoice dicts
         """
-        ql = (
-            f"SELECT * FROM Invoice "
-            f"MAXRESULTS {max_results} "
-            f"STARTPOSITION {start_position}"
-        )
+        ql = f"SELECT * FROM Invoice MAXRESULTS {max_results} STARTPOSITION {start_position}"
         return self.query(ql)
 
     def list_invoices_updated_since(self, since_date: str) -> list[dict[str, Any]]:
         """Fetch invoices updated since a date (delta sync).
-        
+
         Args:
             since_date: ISO-8601 date string (e.g., "2026-05-01")
-        
+
         Returns:
             List of invoice dicts
         """
@@ -150,11 +147,7 @@ class QuickBooksClient:
         start_position: int = 1,
     ) -> list[dict[str, Any]]:
         """Fetch customers from QB."""
-        ql = (
-            f"SELECT * FROM Customer "
-            f"MAXRESULTS {max_results} "
-            f"STARTPOSITION {start_position}"
-        )
+        ql = f"SELECT * FROM Customer MAXRESULTS {max_results} STARTPOSITION {start_position}"
         return self.query(ql)
 
     def get_customer(self, customer_id: str) -> dict[str, Any]:
@@ -173,11 +166,7 @@ class QuickBooksClient:
         start_position: int = 1,
     ) -> list[dict[str, Any]]:
         """Fetch estimates from QB."""
-        ql = (
-            f"SELECT * FROM Estimate "
-            f"MAXRESULTS {max_results} "
-            f"STARTPOSITION {start_position}"
-        )
+        ql = f"SELECT * FROM Estimate MAXRESULTS {max_results} STARTPOSITION {start_position}"
         return self.query(ql)
 
     # ------------------------------------------------------------------
@@ -190,11 +179,7 @@ class QuickBooksClient:
         start_position: int = 1,
     ) -> list[dict[str, Any]]:
         """Fetch journal entries from QB."""
-        ql = (
-            f"SELECT * FROM JournalEntry "
-            f"MAXRESULTS {max_results} "
-            f"STARTPOSITION {start_position}"
-        )
+        ql = f"SELECT * FROM JournalEntry MAXRESULTS {max_results} STARTPOSITION {start_position}"
         return self.query(ql)
 
     # ------------------------------------------------------------------

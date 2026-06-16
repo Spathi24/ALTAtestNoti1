@@ -30,6 +30,7 @@ Design decisions worth knowing:
     (entity_type, entity_id, field_name) so the reviewer only ever
     sees the latest suggestion.
 """
+
 from __future__ import annotations
 
 import json
@@ -68,9 +69,10 @@ SCOPE_PROMPT_VERSION = "scope-v4-quoted"
 @dataclass
 class ProposalBatch:
     """Outcome of one generation run -- everything the CLI needs to report."""
+
     project_id: str
     project_name: str
-    kind: str                          # "timeline" | "scope" | "anomaly"
+    kind: str  # "timeline" | "scope" | "anomaly"
     prompt_version: str
     proposals: list[Proposal] = field(default_factory=list)
     superseded_count: int = 0
@@ -78,7 +80,7 @@ class ProposalBatch:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     skipped_reason: str | None = None  # set when the run was a no-op
-    rag_chunks_used: int = 0           # relevance-retrieved excerpts injected
+    rag_chunks_used: int = 0  # relevance-retrieved excerpts injected
 
     """``errors``   -- items REJECTED (never became a Proposal): bad index,
                        unparseable dates, end-before-start, etc.
@@ -136,10 +138,14 @@ def _retrieve_proposal_chunks(
         from project_db.ai.rag import retrieve_chunks
 
         return retrieve_chunks(
-            session, embedding_provider, query,
-            project_id=project_id, top_k=top_k, min_similarity=min_similarity,
+            session,
+            embedding_provider,
+            query,
+            project_id=project_id,
+            top_k=top_k,
+            min_similarity=min_similarity,
         )
-    except Exception:  # noqa: BLE001 -- retrieval must never break propose
+    except Exception:
         return []
 
 
@@ -190,7 +196,8 @@ def generate_timeline_proposals(
     already-dated tasks).
     """
     ctx = assemble_project_context(
-        session, project_id,
+        session,
+        project_id,
         token_budget=token_budget,
         max_documents_with_text=max_documents_with_text,
     )
@@ -206,13 +213,11 @@ def generate_timeline_proposals(
     # the ANCHOR -- the project's known schedule, fed to the model so a
     # proposal stays bounded by the project's real window.
     dateless = [
-        t for t in ctx.tasks
+        t
+        for t in ctx.tasks
         if not t.get("start_date") and not t.get("end_date") and not t.get("due_date")
     ]
-    dated = [
-        t for t in ctx.tasks
-        if t.get("start_date") or t.get("end_date") or t.get("due_date")
-    ]
+    dated = [t for t in ctx.tasks if t.get("start_date") or t.get("end_date") or t.get("due_date")]
     if not dateless:
         batch.skipped_reason = "no tasks are missing dates"
         return batch
@@ -231,12 +236,15 @@ def generate_timeline_proposals(
     # truncation hid it.  Project-scoped; conservative posture unchanged.
     rag_query = (
         "construction schedule: start dates, end dates, durations, and "
-        "milestones for these tasks -- "
-        + "; ".join(t.get("title", "") for t in dateless[:25])
+        "milestones for these tasks -- " + "; ".join(t.get("title", "") for t in dateless[:25])
     )
     rag_chunks = _retrieve_proposal_chunks(
-        session, embedding_provider, project_id, rag_query,
-        top_k=rag_top_k, min_similarity=rag_min_similarity,
+        session,
+        embedding_provider,
+        project_id,
+        rag_query,
+        top_k=rag_top_k,
+        min_similarity=rag_min_similarity,
     )
     batch.rag_chunks_used = len(rag_chunks)
 
@@ -342,10 +350,7 @@ def _build_timeline_prompt(
 
     # Known schedule -- the anchor.  Every proposed date is checked, by the
     # model and then again by the server, against this window.
-    lines.append(
-        f"\n=== KNOWN SCHEDULE -- tasks that already have dates "
-        f"({len(dated)}) ==="
-    )
+    lines.append(f"\n=== KNOWN SCHEDULE -- tasks that already have dates ({len(dated)}) ===")
     if dated:
         for t in dated:
             start = t.get("start_date") or "?"
@@ -436,7 +441,7 @@ def _build_timeline_prompt(
         '      "proposed_end": "YYYY-MM-DD",\n'
         '      "confidence": <float 0.0-1.0>,\n'
         '      "reasoning": "<one paragraph: quoted excerpt (if doc) '
-        '+ named neighbour tasks with dates (if sequence).  Specific '
+        "+ named neighbour tasks with dates (if sequence).  Specific "
         'evidence only -- see requirement above.>",\n'
         '      "source_document": "<exact document name, or empty string if '
         'the evidence is the schedule sequence rather than a document>"\n'
@@ -486,9 +491,7 @@ def _persist_timeline_items(
             )
             continue
         if end < start:
-            batch.errors.append(
-                f"task_index={idx}: end {end} precedes start {start}"
-            )
+            batch.errors.append(f"task_index={idx}: end {end} precedes start {start}")
             continue
         if end < today:
             batch.errors.append(
@@ -572,12 +575,14 @@ def _persist_timeline_items(
             entity_type="Task",
             entity_id=entity_uuid,
             field_name="timeline",
-            proposed_value=json.dumps({
-                "start_date": start.isoformat(),
-                "end_date": end.isoformat(),
-                "task_title": task.get("title"),
-                "reasoning": reasoning,
-            }),
+            proposed_value=json.dumps(
+                {
+                    "start_date": start.isoformat(),
+                    "end_date": end.isoformat(),
+                    "task_title": task.get("title"),
+                    "reasoning": reasoning,
+                }
+            ),
             confidence=confidence,
             source_doc_ids=json.dumps(source_doc_ids) if source_doc_ids else None,
             prompt_version=batch.prompt_version,
@@ -628,7 +633,8 @@ def generate_scope_proposals(
     owns the transaction.
     """
     ctx = assemble_project_context(
-        session, project_id,
+        session,
+        project_id,
         token_budget=token_budget,
         max_documents_with_text=max_documents_with_text,
     )
@@ -641,8 +647,7 @@ def generate_scope_proposals(
     )
     if not ctx.document_texts:
         batch.skipped_reason = (
-            "no contract/scope documents with extracted text "
-            "(run extract-content first)"
+            "no contract/scope documents with extracted text (run extract-content first)"
         )
         return batch
 
@@ -653,8 +658,12 @@ def generate_scope_proposals(
         "items the contractor must perform"
     )
     rag_chunks = _retrieve_proposal_chunks(
-        session, embedding_provider, project_id, rag_query,
-        top_k=rag_top_k, min_similarity=rag_min_similarity,
+        session,
+        embedding_provider,
+        project_id,
+        rag_query,
+        top_k=rag_top_k,
+        min_similarity=rag_min_similarity,
     )
     batch.rag_chunks_used = len(rag_chunks)
 
@@ -721,8 +730,13 @@ def _build_scope_prompt(
     # unit (e.g. "923 3rd Floor Unit"), and the SAME task title repeats once per
     # unit.  Showing the unit lets the model say WHICH unit a gap belongs to so
     # we can nest under the right same-named parent.
-    groups = sorted({(t.get("group_title") or "").strip()
-                     for t in ctx.tasks if (t.get("group_title") or "").strip()})
+    groups = sorted(
+        {
+            (t.get("group_title") or "").strip()
+            for t in ctx.tasks
+            if (t.get("group_title") or "").strip()
+        }
+    )
     lines.append(f"\n=== CURRENT MONDAY TASKS ({len(ctx.tasks)}) ===")
     if ctx.tasks:
         for t in ctx.tasks:
@@ -789,12 +803,12 @@ def _build_scope_prompt(
         'See requirement above.>",\n'
         '      "source_document": "<exact document name>",\n'
         '      "unit": "<the unit/group this gap belongs to, copied EXACTLY '
-        'from a task unit shown above; empty string if the project has no '
+        "from a task unit shown above; empty string if the project has no "
         'units or you are unsure>"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
-        'If the task list already covers the documented scope, '
+        "If the task list already covers the documented scope, "
         'return {"scope_gaps": []}.'
     )
     return system, user
@@ -822,9 +836,7 @@ def _persist_scope_items(
     doc_id_by_name = {d["name"]: d["document_id"] for d in ctx.document_texts}
     # All titles (incl. subitems) -- used only to detect that *something* with
     # this name already exists.
-    existing_titles = {
-        (t.get("title") or "").strip().lower() for t in ctx.tasks
-    }
+    existing_titles = {(t.get("title") or "").strip().lower() for t in ctx.tasks}
     # lower-title -> list of TOP-LEVEL tasks with that title.  Only a top-level
     # task can host a subitem (Monday forbids sub-subitems), and a title may map
     # to >1 top-level task (a multi-address project has one "Structural
@@ -910,7 +922,8 @@ def _persist_scope_items(
                 # but ONLY pin a parent when that yields exactly one match.
                 # Never guess: no/ambiguous unit -> safe top-level fallback.
                 unit_matches = [
-                    m for m in top_matches
+                    m
+                    for m in top_matches
                     if unit_hint
                     and (m.get("group_title") or "").strip().lower() == unit_hint.lower()
                 ]
@@ -964,14 +977,16 @@ def _persist_scope_items(
             entity_type="Project",
             entity_id=project_uuid,
             field_name="scope_gap",
-            proposed_value=json.dumps({
-                "scope_item": scope_item,
-                "suggested_task_title": child_title,
-                "parent_task_title": parent_task_title,
-                "parent_task_id": parent_task_id,
-                "reasoning": reasoning,
-                "source": source_label,
-            }),
+            proposed_value=json.dumps(
+                {
+                    "scope_item": scope_item,
+                    "suggested_task_title": child_title,
+                    "parent_task_title": parent_task_title,
+                    "parent_task_id": parent_task_id,
+                    "reasoning": reasoning,
+                    "source": source_label,
+                }
+            ),
             confidence=confidence,
             source_doc_ids=json.dumps(source_doc_ids) if source_doc_ids else None,
             prompt_version=batch.prompt_version,
@@ -1010,9 +1025,7 @@ def _safe_title(dateless: list[dict[str, Any]], idx: int) -> str:
     return "?"
 
 
-def _match_source_document(
-    name: Any, doc_id_by_name: dict[str, str]
-) -> str | None:
+def _match_source_document(name: Any, doc_id_by_name: dict[str, str]) -> str | None:
     """Resolve an LLM-cited source-document name to a canonical id, or None.
 
     ``None`` means the cited name matches NO document we supplied -- the
@@ -1033,10 +1046,7 @@ def _match_source_document(
     if cited.lower() in lowered:
         return lowered[cited.lower()]
     cl = cited.lower()
-    hits = {
-        v for k, v in doc_id_by_name.items()
-        if cl in k.lower() or k.lower() in cl
-    }
+    hits = {v for k, v in doc_id_by_name.items() if cl in k.lower() or k.lower() in cl}
     if len(hits) == 1:
         return next(iter(hits))
     return None
@@ -1082,27 +1092,17 @@ def _enrich_target(session: Session, proposal: Proposal) -> dict[str, Any]:
     }
     if proposal.entity_type == "Task":
         from project_db.db.models import Project, Task
-        task = (
-            session.query(Task)
-            .filter_by(canonical_id=proposal.entity_id)
-            .one_or_none()
-        )
+
+        task = session.query(Task).filter_by(canonical_id=proposal.entity_id).one_or_none()
         if task is not None:
             info["entity_label"] = task.title
-            project = (
-                session.query(Project)
-                .filter_by(canonical_id=task.project_id)
-                .one_or_none()
-            )
+            project = session.query(Project).filter_by(canonical_id=task.project_id).one_or_none()
             if project is not None:
                 info["project_name"] = project.name
     elif proposal.entity_type == "Project":
         from project_db.db.models import Project
-        project = (
-            session.query(Project)
-            .filter_by(canonical_id=proposal.entity_id)
-            .one_or_none()
-        )
+
+        project = session.query(Project).filter_by(canonical_id=proposal.entity_id).one_or_none()
         if project is not None:
             info["entity_label"] = project.name
             info["project_name"] = project.name
@@ -1137,18 +1137,20 @@ def list_proposals(
             value = json.loads(p.proposed_value)
         except (json.JSONDecodeError, TypeError):
             value = p.proposed_value
-        out.append({
-            "proposal_id": str(p.canonical_id),
-            "status": p.status.value if hasattr(p.status, "value") else str(p.status),
-            "field_name": p.field_name,
-            "entity_type": target["entity_type"],
-            "entity_label": target["entity_label"],
-            "project_name": target["project_name"],
-            "confidence": p.confidence,
-            "proposed_value": value,
-            "prompt_version": p.prompt_version,
-            "created_at": p.created_at.isoformat() if p.created_at else None,
-        })
+        out.append(
+            {
+                "proposal_id": str(p.canonical_id),
+                "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                "field_name": p.field_name,
+                "entity_type": target["entity_type"],
+                "entity_label": target["entity_label"],
+                "project_name": target["project_name"],
+                "confidence": p.confidence,
+                "proposed_value": value,
+                "prompt_version": p.prompt_version,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+        )
     return out
 
 
@@ -1190,8 +1192,7 @@ def reject_proposal(
         return {
             "ok": False,
             "error": (
-                f"proposal is {current}, not PENDING -- only PENDING "
-                f"proposals can be rejected"
+                f"proposal is {current}, not PENDING -- only PENDING proposals can be rejected"
             ),
         }
 
@@ -1237,8 +1238,7 @@ def bulk_dismiss_stale(
     cutoff = datetime.utcnow() - timedelta(days=days_old)
     # entity_id is UUID(as_uuid=True); use UUID objects in all filters.
     task_uuids = [
-        row[0]
-        for row in session.query(_Task.canonical_id).filter(_Task.project_id == pid).all()
+        row[0] for row in session.query(_Task.canonical_id).filter(_Task.project_id == pid).all()
     ]
 
     stale: list[Proposal] = []
@@ -1329,8 +1329,7 @@ def accept_proposal(
         return {
             "ok": False,
             "error": (
-                f"proposal is {current}, not PENDING -- only PENDING "
-                f"proposals can be accepted"
+                f"proposal is {current}, not PENDING -- only PENDING proposals can be accepted"
             ),
         }
 
@@ -1352,28 +1351,49 @@ def accept_proposal(
     # --- dispatch to field-specific handler (each loads its own entity) ---
     if p.field_name in ("timeline", "task_status"):
         if p.entity_type != "Task":
-            return {"ok": False, "error": f"{p.field_name!r} requires entity_type=Task, got {p.entity_type!r}"}
+            return {
+                "ok": False,
+                "error": f"{p.field_name!r} requires entity_type=Task, got {p.entity_type!r}",
+            }
         task = session.query(Task).filter_by(canonical_id=p.entity_id).one_or_none()
         if task is None:
             return {"ok": False, "error": f"target Task {p.entity_id} not found"}
         if p.field_name == "timeline":
             return _accept_timeline(
-                session, p, task, value, writeback=writeback, dry_run=dry_run,
+                session,
+                p,
+                task,
+                value,
+                writeback=writeback,
+                dry_run=dry_run,
                 decided_by=decided_by,
             )
         return _accept_task_status(
-            session, p, task, value, writeback=writeback, dry_run=dry_run,
+            session,
+            p,
+            task,
+            value,
+            writeback=writeback,
+            dry_run=dry_run,
             decided_by=decided_by,
         )
 
     if p.field_name in ("scope_gap", "new_task", "scope_change"):
         if p.entity_type != "Project":
-            return {"ok": False, "error": f"{p.field_name!r} requires entity_type=Project, got {p.entity_type!r}"}
+            return {
+                "ok": False,
+                "error": f"{p.field_name!r} requires entity_type=Project, got {p.entity_type!r}",
+            }
         project = session.query(Project).filter_by(canonical_id=p.entity_id).one_or_none()
         if project is None:
             return {"ok": False, "error": f"target Project {p.entity_id} not found"}
         return _accept_create_task(
-            session, p, project, value, writeback=writeback, dry_run=dry_run,
+            session,
+            p,
+            project,
+            value,
+            writeback=writeback,
+            dry_run=dry_run,
             decided_by=decided_by,
         )
 
@@ -1411,9 +1431,11 @@ def _accept_timeline(
     field_updates = {"timeline": {"from": start.isoformat(), "to": end.isoformat()}}
     if dry_run:
         return {
-            "ok": True, "dry_run": True,
+            "ok": True,
+            "dry_run": True,
             "proposal_id": str(p.canonical_id),
-            "task_title": task.title, "field": "timeline",
+            "task_title": task.title,
+            "field": "timeline",
             "would_write": field_updates,
             "note": "Nothing written. Re-run without --dry-run to apply.",
         }
@@ -1421,7 +1443,7 @@ def _accept_timeline(
         return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
     try:
         wrote = writeback.sync_back(task, field_updates)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"ok": False, "error": f"write-back raised ({exc}) -- proposal left PENDING"}
     if not wrote:
         return {
@@ -1439,10 +1461,13 @@ def _accept_timeline(
     task.end_date = end
     session.flush()
     return {
-        "ok": True, "dry_run": False,
+        "ok": True,
+        "dry_run": False,
         "proposal_id": str(p.canonical_id),
-        "previous_status": "PENDING", "new_status": "ACCEPTED",
-        "task_title": task.title, "wrote_to_monday": field_updates,
+        "previous_status": "PENDING",
+        "new_status": "ACCEPTED",
+        "task_title": task.title,
+        "wrote_to_monday": field_updates,
         "decided_by": decided_by,
     }
 
@@ -1482,9 +1507,11 @@ def _accept_task_status(
 
     if dry_run:
         return {
-            "ok": True, "dry_run": True,
+            "ok": True,
+            "dry_run": True,
             "proposal_id": str(p.canonical_id),
-            "task_title": task.title, "field": "task_status",
+            "task_title": task.title,
+            "field": "task_status",
             "would_write": field_updates,
             "note": "Nothing written. Re-run without --dry-run to apply.",
         }
@@ -1492,7 +1519,7 @@ def _accept_task_status(
         return {"ok": False, "error": "no writeback connector supplied for a non-dry-run accept"}
     try:
         wrote = writeback.sync_back(task, field_updates)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"ok": False, "error": f"write-back raised ({exc}) -- proposal left PENDING"}
     if not wrote:
         return {
@@ -1510,10 +1537,13 @@ def _accept_task_status(
     task.monday_status_label = monday_label
     session.flush()
     return {
-        "ok": True, "dry_run": False,
+        "ok": True,
+        "dry_run": False,
         "proposal_id": str(p.canonical_id),
-        "previous_status": "PENDING", "new_status": "ACCEPTED",
-        "task_title": task.title, "wrote_to_monday": field_updates,
+        "previous_status": "PENDING",
+        "new_status": "ACCEPTED",
+        "task_title": task.title,
+        "wrote_to_monday": field_updates,
         "decided_by": decided_by,
     }
 
@@ -1535,14 +1565,14 @@ def _accept_create_task(
     LOAD-BEARING: Monday write first, canonical mirror second, proposal flip
     last.
     """
-    from project_db.db.models.work import Task, TaskStatus
     from project_db.db.models import ExternalId
+    from project_db.db.models.work import Task, TaskStatus
 
     title = (
-        (value.get("title") or "").strip()            # field-note new_task / scope_change
+        (value.get("title") or "").strip()  # field-note new_task / scope_change
         or (value.get("new_task_title") or "").strip()  # legacy alias
         or (value.get("suggested_task_title") or "").strip()  # document scope_gap
-        or (value.get("scope_item") or "").strip()    # document scope_gap fallback
+        or (value.get("scope_item") or "").strip()  # document scope_gap fallback
         or "New task"
     )
 
@@ -1564,10 +1594,7 @@ def _accept_create_task(
         if parent_task is None:
             return {
                 "ok": False,
-                "error": (
-                    f"parent task {parent_id_raw} no longer exists -- "
-                    f"cannot create subitem"
-                ),
+                "error": (f"parent task {parent_id_raw} no longer exists -- cannot create subitem"),
             }
         # Safeguard: a subitem must be created under a parent of the SAME
         # project.  A pinned id is normally same-project, but never cross
@@ -1623,7 +1650,8 @@ def _accept_create_task(
 
     if dry_run:
         return {
-            "ok": True, "dry_run": True,
+            "ok": True,
+            "dry_run": True,
             "proposal_id": str(p.canonical_id),
             "task_title": project.name,
             "field": p.field_name,
@@ -1641,7 +1669,7 @@ def _accept_create_task(
     # Create the Monday item/subitem (raises RuntimeError on API failure).
     try:
         item = writeback.create_task(project, title, parent_task=parent_task)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"ok": False, "error": f"Monday create failed: {exc}"}
 
     if not item or not item.get("id"):
@@ -1686,7 +1714,8 @@ def _accept_create_task(
         external_key=str(monday_item_id),
         external_url=(
             f"https://view.monday.com/boards/{board_id_str}/pulses/{monday_item_id}"
-            if board_id_str else None
+            if board_id_str
+            else None
         ),
         last_synced_at=datetime.utcnow(),
     )
@@ -1703,9 +1732,11 @@ def _accept_create_task(
         else {"create_item": title, "monday_id": monday_item_id}
     )
     return {
-        "ok": True, "dry_run": False,
+        "ok": True,
+        "dry_run": False,
         "proposal_id": str(p.canonical_id),
-        "previous_status": "PENDING", "new_status": "ACCEPTED",
+        "previous_status": "PENDING",
+        "new_status": "ACCEPTED",
         "task_title": project.name,
         "wrote_to_monday": wrote,
         "decided_by": decided_by,
@@ -1764,7 +1795,7 @@ def set_task_timeline(
         return {
             "ok": False,
             "error": "at least one of start_date / end_date is required "
-                     "(clearing the timeline isn't supported yet).",
+            "(clearing the timeline isn't supported yet).",
         }
     if start_date and start is None:
         return {"ok": False, "error": f"unparseable start_date: {start_date!r}"}
@@ -1788,7 +1819,7 @@ def set_task_timeline(
 
     try:
         wrote = writeback.sync_back(task, field_updates)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {
             "ok": False,
             "error": f"write-back raised ({exc}) -- task left unchanged",
@@ -1825,9 +1856,7 @@ def set_task_timeline(
     }
 
 
-def get_proposal_detail(
-    session: Session, proposal_id: Any
-) -> dict[str, Any] | None:
+def get_proposal_detail(session: Session, proposal_id: Any) -> dict[str, Any] | None:
     """Full detail for one proposal, or None if not found.
 
     Includes the resolved target, the parsed proposed_value, source
@@ -1861,16 +1890,17 @@ def get_proposal_detail(
                 pass
         if valid_doc_uuids:
             from project_db.db.models import Document
+
             for d in (
-                session.query(Document)
-                .filter(Document.canonical_id.in_(valid_doc_uuids))
-                .all()
+                session.query(Document).filter(Document.canonical_id.in_(valid_doc_uuids)).all()
             ):
-                source_docs.append({
-                    "document_id": str(d.canonical_id),
-                    "name": d.name,
-                    "folder_path": d.folder_path,
-                })
+                source_docs.append(
+                    {
+                        "document_id": str(d.canonical_id),
+                        "name": d.name,
+                        "folder_path": d.folder_path,
+                    }
+                )
 
     return {
         "proposal_id": str(p.canonical_id),

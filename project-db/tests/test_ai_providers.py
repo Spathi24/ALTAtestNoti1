@@ -12,9 +12,9 @@ Three providers, one contract.  These tests verify:
 Real-network tests are intentionally absent -- those live in a future
 integration suite.  Everything here runs offline.
 """
+
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,7 +29,6 @@ from project_db.ai.providers import (
     get_default_provider,
     get_fast_provider,
 )
-from project_db.ai.providers.base import LLMProvider
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +89,7 @@ class TestCompleteJson:
         assert p.complete_json(messages=[LLMMessage(role="user", content="x")]) == {"ok": True}
 
     def test_strips_unlabeled_fences(self):
-        p = MockLLMProvider(responses=['```\n[1, 2, 3]\n```'])
+        p = MockLLMProvider(responses=["```\n[1, 2, 3]\n```"])
         assert p.complete_json(messages=[LLMMessage(role="user", content="x")]) == [1, 2, 3]
 
     def test_retries_on_bad_json_and_succeeds(self):
@@ -164,10 +163,12 @@ class TestAnthropicProvider:
         client.messages.create.return_value = _fake_anthropic_response("ok")
         p = AnthropicProvider(client=client)
 
-        p.complete(messages=[
-            LLMMessage(role="system", content="from turn"),
-            LLMMessage(role="user", content="hi"),
-        ])
+        p.complete(
+            messages=[
+                LLMMessage(role="system", content="from turn"),
+                LLMMessage(role="user", content="hi"),
+            ]
+        )
         call_kwargs = client.messages.create.call_args.kwargs
         assert call_kwargs["system"] == "from turn"
         # The system turn should not survive as a message.
@@ -179,8 +180,10 @@ class TestAnthropicProvider:
         p = AnthropicProvider(client=client)
 
         p.complete(
-            messages=[LLMMessage(role="system", content="from turn"),
-                      LLMMessage(role="user", content="hi")],
+            messages=[
+                LLMMessage(role="system", content="from turn"),
+                LLMMessage(role="user", content="hi"),
+            ],
             system="from arg",
         )
         assert client.messages.create.call_args.kwargs["system"] == "from arg"
@@ -213,18 +216,22 @@ def _fake_oai_response(content: str):
         "object": "chat.completion",
         "created": 0,
         "model": "qwen2.5-32b",
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
-        }],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
         "usage": {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11},
     }
 
 
 class TestOpenAICompatibleProvider:
     def test_builds_correct_request_payload(self):
-        p = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", default_model="qwen2.5-32b")
+        p = OpenAICompatibleProvider(
+            base_url="http://localhost:8000/v1", default_model="qwen2.5-32b"
+        )
 
         mock_response = MagicMock()
         mock_response.json.return_value = _fake_oai_response("hello")
@@ -259,6 +266,7 @@ class TestOpenAICompatibleProvider:
 
     def test_http_error_wrapped(self):
         import httpx
+
         p = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", default_model="m")
         with patch("httpx.post", side_effect=httpx.ConnectError("server down")):
             with pytest.raises(LLMProviderError) as exc:
@@ -284,7 +292,8 @@ class TestOpenAICompatibleProvider:
     def test_explicit_timeout_wins_over_env(self, monkeypatch):
         monkeypatch.setenv("OPENAI_TIMEOUT", "42")
         p = OpenAICompatibleProvider(
-            base_url="http://localhost:8000/v1", default_model="m",
+            base_url="http://localhost:8000/v1",
+            default_model="m",
             timeout_seconds=99.0,
         )
         assert p._timeout == 99.0

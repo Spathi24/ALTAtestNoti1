@@ -7,15 +7,15 @@ just glue request -> service -> template.
 Rule of thumb: if you find yourself writing ``{% if proposals|length > 0 %}``
 followed by a calculation in a template, the calculation belongs here.
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
-from uuid import UUID
 
 from project_db.ai.proposals import get_proposal_detail, list_proposals
 from project_db.ai.views import report_project_financials
@@ -23,7 +23,6 @@ from project_db.db.models import (
     Client,
     Deal,
     Document,
-    ExternalId,
     Lead,
     Project,
     Proposal,
@@ -80,30 +79,47 @@ def submit_field_note(
     )
 
     if not note_text or not note_text.strip():
-        return {"ok": False, "summary": "Empty note -- nothing to process.", "proposals": [], "errors": []}
+        return {
+            "ok": False,
+            "summary": "Empty note -- nothing to process.",
+            "proposals": [],
+            "errors": [],
+        }
 
     try:
         extractor = OpenAIFieldNoteExtractor()
     except FieldNoteExtractorError as exc:
-        return {"ok": False, "summary": f"Extractor unavailable: {exc}", "proposals": [], "errors": [str(exc)]}
+        return {
+            "ok": False,
+            "summary": f"Extractor unavailable: {exc}",
+            "proposals": [],
+            "errors": [str(exc)],
+        }
 
     # Same RAG evidence base the generate-proposals path uses (optional --
     # None if no embedding provider is configured).
     try:
         from project_db.ai.embeddings import get_optional_embedding_provider
+
         embed_provider = get_optional_embedding_provider()
-    except Exception:  # noqa: BLE001
+    except Exception:
         embed_provider = None
 
     batch = ingest_field_note(
-        session, extractor, project_id, note_text.strip(),
+        session,
+        extractor,
+        project_id,
+        note_text.strip(),
         channel=NoteChannel.WEB,
         embedding_provider=embed_provider,
     )
 
     proposals_out = [
-        {"field_name": p.field_name, "entity_type": p.entity_type,
-         "proposal_id": str(p.canonical_id)}
+        {
+            "field_name": p.field_name,
+            "entity_type": p.entity_type,
+            "proposal_id": str(p.canonical_id),
+        }
         for p in batch.proposals
     ]
     return {
@@ -175,21 +191,29 @@ def money_glossary() -> dict[str, Any]:
         ],
         # The money-type buckets inside the reconciled picture, in plain words.
         "money_types": [
-            {"key": "contract_revenue",
-             "blurb": "Money the client pays you -- what you invoice or quote them."},
-            {"key": "supplier_cost",
-             "blurb": "Money you pay suppliers and subcontractors (materials, labour)."},
-            {"key": "buyout_cost",
-             "blurb": "What you pay to buy out / relocate a tenant (agency projects)."},
-            {"key": "lease_rental",
-             "blurb": "Rent or lease payments."},
-            {"key": "deposit",
-             "blurb": "An upfront deposit."},
-            {"key": "tax",
-             "blurb": "Sales tax (GST/QST/TPS/TVQ), kept separate so it isn't double-counted."},
-            {"key": "other",
-             "blurb": "Money that couldn't be confidently sorted. A lot here means the "
-                      "picture is low-confidence -- treat the margin with caution."},
+            {
+                "key": "contract_revenue",
+                "blurb": "Money the client pays you -- what you invoice or quote them.",
+            },
+            {
+                "key": "supplier_cost",
+                "blurb": "Money you pay suppliers and subcontractors (materials, labour).",
+            },
+            {
+                "key": "buyout_cost",
+                "blurb": "What you pay to buy out / relocate a tenant (agency projects).",
+            },
+            {"key": "lease_rental", "blurb": "Rent or lease payments."},
+            {"key": "deposit", "blurb": "An upfront deposit."},
+            {
+                "key": "tax",
+                "blurb": "Sales tax (GST/QST/TPS/TVQ), kept separate so it isn't double-counted.",
+            },
+            {
+                "key": "other",
+                "blurb": "Money that couldn't be confidently sorted. A lot here means the "
+                "picture is low-confidence -- treat the margin with caution.",
+            },
         ],
     }
 
@@ -212,7 +236,10 @@ def search_documents(
 
     query = (query or "").strip()
     out: dict[str, Any] = {
-        "query": query, "results": [], "error": None, "project": None,
+        "query": query,
+        "results": [],
+        "error": None,
+        "project": None,
         "coverage": embedding_coverage(session),
     }
     out["embedded"] = out["coverage"]["chunks"] > 0
@@ -220,8 +247,7 @@ def search_documents(
     if not query:
         return out
     if not out["embedded"]:
-        out["error"] = ("No documents are embedded yet. Run "
-                        "`project_db embed-documents` first.")
+        out["error"] = "No documents are embedded yet. Run `project_db embed-documents` first."
         return out
 
     from project_db.ai.embeddings import get_optional_embedding_provider
@@ -244,9 +270,13 @@ def search_documents(
 
     try:
         out["results"] = retrieve_chunks(
-            session, provider, query, project_id=project_id, top_k=top_k,
+            session,
+            provider,
+            query,
+            project_id=project_id,
+            top_k=top_k,
         )
-    except Exception as exc:  # noqa: BLE001 -- surface, don't 500
+    except Exception as exc:
         out["error"] = f"Search failed: {exc}"
     return out
 
@@ -312,9 +342,7 @@ def dashboard_summary(session: Session) -> dict[str, Any]:
         .group_by(Proposal.status)
         .all()
     )
-    proposals = {
-        s.value: int(proposal_status_counts.get(s, 0)) for s in ProposalStatus
-    }
+    proposals = {s.value: int(proposal_status_counts.get(s, 0)) for s in ProposalStatus}
     proposals["total"] = sum(proposals.values())
 
     deals_total = session.query(func.count(Deal.canonical_id)).scalar() or 0
@@ -330,9 +358,7 @@ def dashboard_summary(session: Session) -> dict[str, Any]:
     }
 
 
-def recent_pending_proposals(
-    session: Session, *, limit: int = 10
-) -> list[dict[str, Any]]:
+def recent_pending_proposals(session: Session, *, limit: int = 10) -> list[dict[str, Any]]:
     """Top N newest PENDING proposals for the dashboard strip.
 
     Delegates to ``ai.proposals.list_proposals`` so the UI sees exactly what
@@ -396,16 +422,18 @@ def project_list_rows(session: Session) -> list[dict[str, Any]]:
             .scalar()
             or 0
         )
-        out.append({
-            "canonical_id": str(p.canonical_id),
-            "name": p.name,
-            "status": p.status.value if hasattr(p.status, "value") else str(p.status),
-            "client": clients.get(p.client_id),
-            "task_count": int(tasks_by_project.get(p.canonical_id, 0)),
-            "tasks_dateless": int(dateless_by_project.get(p.canonical_id, 0)),
-            "doc_count": int(docs_by_project.get(p.canonical_id, 0)),
-            "pending_proposals": int(pending),
-        })
+        out.append(
+            {
+                "canonical_id": str(p.canonical_id),
+                "name": p.name,
+                "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                "client": clients.get(p.client_id),
+                "task_count": int(tasks_by_project.get(p.canonical_id, 0)),
+                "tasks_dateless": int(dateless_by_project.get(p.canonical_id, 0)),
+                "doc_count": int(docs_by_project.get(p.canonical_id, 0)),
+                "pending_proposals": int(pending),
+            }
+        )
     return out
 
 
@@ -458,16 +486,11 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
     # that report caps tasks at 50 + omits monday_status_label; this list
     # is uncapped and dateless-first-sorted for the UI's edit-in-place flow.
     from project_db.db.models.work import Task as _Task  # local: avoid shadowing
-    all_tasks_q = (
-        session.query(_Task)
-        .filter(_Task.project_id == pid)
-        .order_by(_Task.title)
-        .all()
-    )
+
+    all_tasks_q = session.query(_Task).filter(_Task.project_id == pid).order_by(_Task.title).all()
+
     def _row(t: _Task) -> dict[str, Any]:
-        is_dateless = (
-            t.start_date is None and t.end_date is None and t.due_date is None
-        )
+        is_dateless = t.start_date is None and t.end_date is None and t.due_date is None
         return {
             "canonical_id": str(t.canonical_id),
             "title": t.title,
@@ -479,6 +502,7 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
             "is_subitem": bool(t.is_subitem),
             "is_dateless": is_dateless,
         }
+
     # Dateless first (so they don't get lost), then by title.  The user
     # explicitly asked for visibility of which tasks are dateless and
     # what dates the dated ones have.
@@ -490,8 +514,7 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
     # Proposals scoped to this project's tasks.  Same data shape as
     # /proposals -- list_proposals returns enrichment via _enrich_target.
     task_ids = {
-        row[0] for row in
-        session.query(Task.canonical_id).filter(Task.project_id == pid).all()
+        row[0] for row in session.query(Task.canonical_id).filter(Task.project_id == pid).all()
     }
     proposals_for_project: list[dict[str, Any]] = []
     for p in list_proposals(session, limit=500):
@@ -504,9 +527,7 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
         if p.get("project_name") == project.name:
             proposals_for_project.append(p)
 
-    by_status: dict[str, list[dict[str, Any]]] = {
-        s.value: [] for s in ProposalStatus
-    }
+    by_status: dict[str, list[dict[str, Any]]] = {s.value: [] for s in ProposalStatus}
     for p in proposals_for_project:
         by_status.setdefault(p["status"], []).append(p)
 
@@ -530,13 +551,13 @@ def project_detail(session: Session, project_id: str) -> dict[str, Any] | None:
         for d in docs["documents"]:
             text_len = text_rows.get(UUID(d["canonical_id"]))
             d["extraction_status"] = (
-                "text" if (text_len or 0) > 0 else
-                ("empty" if text_len == 0 else "none")
+                "text" if (text_len or 0) > 0 else ("empty" if text_len == 0 else "none")
             )
             d["text_chars"] = int(text_len or 0)
 
     return {
-        "project": overview.get("project") or {
+        "project": overview.get("project")
+        or {
             "canonical_id": str(pid),
             "name": project.name,
         },
@@ -573,11 +594,7 @@ def document_detail(session: Session, document_id: str) -> dict[str, Any] | None
     if doc is None:
         return None
 
-    text_row = (
-        session.query(DocumentText)
-        .filter(DocumentText.document_id == did)
-        .one_or_none()
-    )
+    text_row = session.query(DocumentText).filter(DocumentText.document_id == did).one_or_none()
 
     project = None
     if doc.project_id:
@@ -588,12 +605,7 @@ def document_detail(session: Session, document_id: str) -> dict[str, Any] | None
     # Proposals that cite this document in source_doc_ids.  Stored as a
     # JSON string on Proposal; cheap to scan because there are not many.
     citing: list[dict[str, Any]] = []
-    for prop in (
-        session.query(Proposal)
-        .order_by(Proposal.created_at.desc())
-        .limit(500)
-        .all()
-    ):
+    for prop in session.query(Proposal).order_by(Proposal.created_at.desc()).limit(500).all():
         if not prop.source_doc_ids:
             continue
         try:
@@ -603,13 +615,17 @@ def document_detail(session: Session, document_id: str) -> dict[str, Any] | None
         if not isinstance(ids, list):
             continue
         if str(did) in [str(x) for x in ids]:
-            citing.append({
-                "proposal_id": str(prop.canonical_id),
-                "field_name": prop.field_name,
-                "status": prop.status.value if hasattr(prop.status, "value") else str(prop.status),
-                "created_at": prop.created_at.isoformat() if prop.created_at else None,
-                "confidence": prop.confidence,
-            })
+            citing.append(
+                {
+                    "proposal_id": str(prop.canonical_id),
+                    "field_name": prop.field_name,
+                    "status": prop.status.value
+                    if hasattr(prop.status, "value")
+                    else str(prop.status),
+                    "created_at": prop.created_at.isoformat() if prop.created_at else None,
+                    "confidence": prop.confidence,
+                }
+            )
 
     return {
         "document": {
@@ -620,7 +636,8 @@ def document_detail(session: Session, document_id: str) -> dict[str, Any] | None
             "folder_path": doc.folder_path,
             "size_bytes": doc.size_bytes,
             "modified_at_source": doc.modified_at_source.isoformat()
-                if doc.modified_at_source else None,
+            if doc.modified_at_source
+            else None,
             "owner_email": doc.owner_email,
             "is_trashed": bool(doc.is_trashed),
             "category": doc.category,
@@ -632,10 +649,13 @@ def document_detail(session: Session, document_id: str) -> dict[str, Any] | None
             "method": getattr(text_row, "extraction_method", None) if text_row else None,
             "token_count": getattr(text_row, "token_count", None) if text_row else None,
             "extracted_at": text_row.extracted_at.isoformat()
-                if text_row and text_row.extracted_at else None,
+            if text_row and text_row.extracted_at
+            else None,
             "char_count": len(text_row.extracted_text or "") if text_row else 0,
             "body": (text_row.extracted_text or "") if text_row else "",
-        } if text_row else None,
+        }
+        if text_row
+        else None,
         "citing_proposals": citing,
     }
 
@@ -665,8 +685,7 @@ def proposal_queue(
             status_enum = ProposalStatus(status.upper())
         except ValueError:
             return {
-                "error": f"Unknown status {status!r}. "
-                         f"Valid: {[s.value for s in ProposalStatus]}",
+                "error": f"Unknown status {status!r}. Valid: {[s.value for s in ProposalStatus]}",
                 "rows": [],
                 "filters": {"status": status, "kind": kind},
             }
@@ -709,7 +728,8 @@ def proposal_detail(session: Session, proposal_id: str) -> dict[str, Any] | None
     if proposal is None:
         return None
 
-    from project_db.ai.proposals import _ACCEPTABLE_FIELDS  # noqa: PLC2701
+    from project_db.ai.proposals import _ACCEPTABLE_FIELDS
+
     detail["can_accept"] = proposal.field_name in _ACCEPTABLE_FIELDS
 
     chain_rows = (
@@ -748,6 +768,7 @@ def doctor_report(session: Session) -> dict[str, Any]:
     for everywhere.
     """
     from project_db.ai.views import report_doctor
+
     return report_doctor(session)
 
 
@@ -770,15 +791,14 @@ def db_table_index(session: Session) -> list[dict[str, Any]]:
         table = Base.metadata.tables[name]
         try:
             count = session.execute(table.count()).scalar() or 0
-        except Exception:  # noqa: BLE001
+        except Exception:
             # SQLAlchemy 2.x: table.count() may not exist; fall back
             # to a raw COUNT(*).
             from sqlalchemy import func, select
+
             try:
-                count = session.execute(
-                    select(func.count()).select_from(table)
-                ).scalar() or 0
-            except Exception:  # noqa: BLE001
+                count = session.execute(select(func.count()).select_from(table)).scalar() or 0
+            except Exception:
                 count = -1
         rows.append({"name": name, "row_count": int(count)})
     return rows
@@ -807,6 +827,7 @@ def db_table_rows(
     columns = [c.name for c in table.columns]
 
     from sqlalchemy import select
+
     result = session.execute(select(table).limit(limit)).fetchall()
 
     rows: list[dict[str, Any]] = []
@@ -824,9 +845,8 @@ def db_table_rows(
 
     # True (possibly larger) total -- so the page can say "showing 100 of 750".
     from sqlalchemy import func
-    total = (
-        session.execute(select(func.count()).select_from(table)).scalar() or 0
-    )
+
+    total = session.execute(select(func.count()).select_from(table)).scalar() or 0
 
     return {
         "table": table_name,

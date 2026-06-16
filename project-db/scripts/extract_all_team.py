@@ -14,6 +14,7 @@ Usage:
     py -3.13 scripts/extract_all_team.py --financials    # only financials
     py -3.13 scripts/extract_all_team.py --obligations   # only obligations
 """
+
 from __future__ import annotations
 
 import sys
@@ -22,24 +23,27 @@ import sys
 def main(argv: list[str]) -> int:
     try:
         from project_db.cli import force_utf8_output
+
         force_utf8_output()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     do_fin = "--obligations" not in argv
     do_obl = "--financials" not in argv
 
-    from project_db.db import get_engine, session_scope
-    from project_db.db.base import Base
-    from project_db.db.models import Project
     from project_db.ai.doc_extraction import (
-        OpenAIStructuredExtractor, StructuredExtractorError,
+        OpenAIStructuredExtractor,
+        StructuredExtractorError,
         extract_financials_structured_for_project,
     )
     from project_db.ai.obligation_extraction import (
-        ObligationExtractorError, OpenAIObligationExtractor,
+        ObligationExtractorError,
+        OpenAIObligationExtractor,
         extract_obligations_structured_for_project,
     )
+    from project_db.db import get_engine, session_scope
+    from project_db.db.base import Base
+    from project_db.db.models import Project
 
     engine = get_engine()
     Base.metadata.create_all(engine)
@@ -52,14 +56,14 @@ def main(argv: list[str]) -> int:
         return 2
 
     with session_scope() as s:
-        projects = [(p.canonical_id, p.name) for p in
-                    s.query(Project).order_by(Project.name).all()]
+        projects = [(p.canonical_id, p.name) for p in s.query(Project).order_by(Project.name).all()]
 
-    print(f"=== Portfolio extraction over {len(projects)} projects "
-          f"(financials={do_fin} obligations={do_obl}) ===\n")
+    print(
+        f"=== Portfolio extraction over {len(projects)} projects "
+        f"(financials={do_fin} obligations={do_obl}) ===\n"
+    )
 
-    tot = {"fin_records": 0, "obligations": 0, "fin_fail": 0, "obl_fail": 0,
-           "projects_done": 0}
+    tot = {"fin_records": 0, "obligations": 0, "fin_fail": 0, "obl_fail": 0, "projects_done": 0}
     for i, (pid, name) in enumerate(projects, 1):
         line = f"[{i:>2}/{len(projects)}] {name[:42]:<42} "
         # Each project in its own transaction so one failure can't roll back
@@ -73,7 +77,7 @@ def main(argv: list[str]) -> int:
                 line += f"fin={n:>3}"
                 if b.skipped_reason and not b.records:
                     line += f"({b.skipped_reason[:24]})"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 tot["fin_fail"] += 1
                 line += f"fin=ERR({str(exc)[:40]})"
         if do_obl:
@@ -83,7 +87,7 @@ def main(argv: list[str]) -> int:
                 n = len(b.obligations)
                 tot["obligations"] += n
                 line += f"  obl={n:>3}"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 tot["obl_fail"] += 1
                 line += f"  obl=ERR({str(exc)[:40]})"
         tot["projects_done"] += 1

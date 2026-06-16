@@ -8,6 +8,7 @@ Coverage:
   - vendored static assets are served from /static (no CDN dependency)
   - footer shows version + git SHA + uptime + db path
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -18,23 +19,24 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
-from project_db.db.models import (  # noqa: E402
+from project_db.db.base import Base
+from project_db.db.models import (
     Client,
     Document,
     Organization,
     Project,
     Task,
 )
-from project_db.db.models.work import ProjectStatus, TaskStatus  # noqa: E402
+from project_db.db.models.work import ProjectStatus, TaskStatus
 
 
 @pytest.fixture
 def db_engine():
     engine = create_engine(
-        "sqlite:///:memory:", future=True,
+        "sqlite:///:memory:",
+        future=True,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -46,6 +48,7 @@ def db_engine():
 @pytest.fixture
 def patched_session_factory(db_engine, monkeypatch):
     from project_db.db import session as session_mod
+
     factory = sessionmaker(bind=db_engine, expire_on_commit=False)
     monkeypatch.setattr(session_mod, "_SessionLocal", factory)
     yield factory
@@ -54,6 +57,7 @@ def patched_session_factory(db_engine, monkeypatch):
 @pytest.fixture
 def client(patched_session_factory):
     from project_db.web.app import create_app
+
     return TestClient(create_app())
 
 
@@ -65,7 +69,9 @@ def seeded(session, org: Organization):
     session.add(c)
     session.flush()
     project = Project(
-        name="P", client_id=c.canonical_id, status=ProjectStatus.ACTIVE,
+        name="P",
+        client_id=c.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
@@ -106,13 +112,13 @@ class TestDbIndex:
         assert 'data-testid="db-row"' in body
 
     def test_each_row_has_a_count(self, client, seeded):
-        from project_db.web.ui_views import db_table_index
-        from project_db.db.base import Base
-        from sqlalchemy.orm import Session as _S
 
         # The service function returns one row per registered table.
         # Pull a fresh session (the client fixture pinned the factory).
         from project_db.db import session_scope
+        from project_db.db.base import Base
+        from project_db.web.ui_views import db_table_index
+
         with session_scope() as s:
             rows = db_table_index(s)
 
@@ -151,16 +157,19 @@ class TestDbForbiddenSurfaces:
     endpoint must NOT exist -- otherwise this becomes a second product
     surface (per M5 plan review #4)."""
 
-    @pytest.mark.parametrize("path", [
-        "/db/exec",
-        "/db/query",
-        "/db/sql",
-        "/db/project/edit",
-        "/db/project/delete",
-        "/db/project/00000000-0000-0000-0000-000000000000/edit",
-        "/db/project/00000000-0000-0000-0000-000000000000/delete",
-        "/db/export",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/db/exec",
+            "/db/query",
+            "/db/sql",
+            "/db/project/edit",
+            "/db/project/delete",
+            "/db/project/00000000-0000-0000-0000-000000000000/edit",
+            "/db/project/00000000-0000-0000-0000-000000000000/delete",
+            "/db/export",
+        ],
+    )
     def test_forbidden(self, client, path):
         assert client.get(path).status_code in (404, 405)
         assert client.post(path).status_code in (404, 405)
@@ -200,13 +209,12 @@ class TestFooter:
         resp = client.get("/")
         body = resp.text
         for tid in ("app-version", "git-sha", "uptime", "db-path"):
-            assert f'data-testid="{tid}"' in body, (
-                f"footer must carry data-testid={tid!r}"
-            )
+            assert f'data-testid="{tid}"' in body, f"footer must carry data-testid={tid!r}"
 
     def test_uptime_helper_ticks(self):
         """Sanity: uptime_str returns a non-empty string in human-readable form."""
         from project_db.web.deps import uptime_str
+
         s = uptime_str()
         assert isinstance(s, str)
         assert s
@@ -215,6 +223,7 @@ class TestFooter:
 
     def test_app_version_helper(self):
         from project_db.web.deps import app_version
+
         v = app_version()
         assert isinstance(v, str)
         assert v  # "0.1.0", or "dev" outside an installed package

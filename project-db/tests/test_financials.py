@@ -15,19 +15,19 @@ deterministic.  Coverage:
   * pure helpers: _parse_amount, _coerce_item_list, _norm
   * CLI parser routes extract-financials -> cmd_extract_financials
 """
+
 from __future__ import annotations
 
 import json
 from datetime import date
 from decimal import Decimal
+from decimal import Decimal as _D
 
 import pytest
 
-from decimal import Decimal as _D
-
 from project_db.ai.financials import (
-    _Candidate,
     _amount_in_text,
+    _Candidate,
     _chunk_candidates,
     _coerce_item_list,
     _complete_with_backoff,
@@ -51,25 +51,33 @@ from project_db.db.models import (
 )
 from project_db.db.models.work import ProjectStatus
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _add_doc(session, project, *, name, text, mime="application/pdf",
-             folder="Active/Proj/Invoices"):
+def _add_doc(
+    session, project, *, name, text, mime="application/pdf", folder="Active/Proj/Invoices"
+):
     """Create a Document + its DocumentText, return the Document."""
     doc = Document(
-        name=name, url=f"https://drive/{name}", mime_type=mime,
-        storage_ref=name, folder_path=folder, project_id=project.canonical_id,
+        name=name,
+        url=f"https://drive/{name}",
+        mime_type=mime,
+        storage_ref=name,
+        folder_path=folder,
+        project_id=project.canonical_id,
     )
     session.add(doc)
     session.commit()
-    session.add(DocumentText(
-        document_id=doc.canonical_id, extracted_text=text,
-        extraction_method="pdf-pymupdf", token_count=len(text) // 4,
-    ))
+    session.add(
+        DocumentText(
+            document_id=doc.canonical_id,
+            extracted_text=text,
+            extraction_method="pdf-pymupdf",
+            token_count=len(text) // 4,
+        )
+    )
     session.commit()
     return doc
 
@@ -83,19 +91,23 @@ def financial_fixture(session, client_factory):
     """
     c = client_factory(name="Acme")
     p = Project(
-        name="5768 St-Laurent", code="SL5768", status=ProjectStatus.ACTIVE,
+        name="5768 St-Laurent",
+        code="SL5768",
+        status=ProjectStatus.ACTIVE,
         client_id=c.canonical_id,
     )
     session.add(p)
     session.commit()
 
     doc_a = _add_doc(
-        session, p,
+        session,
+        p,
         name="Quote Estimate Invoice.pdf",
         text="Quote to client. Total: $250.00 for kitchen renovation. Thanks.",
     )
     doc_b = _add_doc(
-        session, p,
+        session,
+        p,
         name="Materials.pdf",
         text="Supplier bill. Labour: $100.00 for framing crew.",
     )
@@ -161,8 +173,7 @@ class TestAmountInText:
 
     def test_rounding_tolerance(self):
         # Model rounds 549241.8481 -> 549241.85; still the same money.
-        assert _amount_in_text(_D("549241.85"),
-                               _norm("Total after tax 549241.8481")) is True
+        assert _amount_in_text(_D("549241.85"), _norm("Total after tax 549241.8481")) is True
 
     def test_french_decimal_comma(self):
         # Quebec invoices write "923,44 $"; the model outputs 923.44.
@@ -187,8 +198,7 @@ class TestAmountInText:
 
     def test_negative_amount_matches_magnitude(self):
         assert _amount_in_text(_D("-250"), _norm("Credit on install -250.00 $")) is True
-        assert _amount_in_text(_D("-2001.42"),
-                               _norm("Deposit on hand 1 -2,001.42")) is True
+        assert _amount_in_text(_D("-2001.42"), _norm("Deposit on hand 1 -2,001.42")) is True
 
     def test_k_notation_expansion(self):
         # Tenant trackers write "8k" / "10.5k"; the model expands to 8000 etc.
@@ -216,8 +226,11 @@ class TestAmountInText:
 class TestSelection:
     def test_orders_by_keyword_score(self, financial_fixture, session):
         cands = _select_financial_documents(
-            session, financial_fixture["project"].canonical_id,
-            max_documents=12, per_doc_char_cap=8000, total_char_budget=48000,
+            session,
+            financial_fixture["project"].canonical_id,
+            max_documents=12,
+            per_doc_char_cap=8000,
+            total_char_budget=48000,
         )
         assert len(cands) == 2
         # docA has more financial keywords -> ranked first.
@@ -225,30 +238,34 @@ class TestSelection:
 
     def test_mime_gate_excludes_images(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
         session.add(p)
         session.commit()
         # A financial-keyword name but an image mime -> excluded.
-        _add_doc(session, p, name="Invoice photo.heic", text="$500",
-                 mime="image/heif")
+        _add_doc(session, p, name="Invoice photo.heic", text="$500", mime="image/heif")
         cands = _select_financial_documents(
-            session, p.canonical_id,
-            max_documents=12, per_doc_char_cap=8000, total_char_budget=48000,
+            session,
+            p.canonical_id,
+            max_documents=12,
+            per_doc_char_cap=8000,
+            total_char_budget=48000,
         )
         assert cands == []
 
     def test_keyword_gate_excludes_non_financial(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
         session.add(p)
         session.commit()
-        _add_doc(session, p, name="Site photo notes.pdf", text="no money here",
-                 folder="Active/P/Photos")
+        _add_doc(
+            session, p, name="Site photo notes.pdf", text="no money here", folder="Active/P/Photos"
+        )
         cands = _select_financial_documents(
-            session, p.canonical_id,
-            max_documents=12, per_doc_char_cap=8000, total_char_budget=48000,
+            session,
+            p.canonical_id,
+            max_documents=12,
+            per_doc_char_cap=8000,
+            total_char_budget=48000,
         )
         assert cands == []
 
@@ -260,20 +277,38 @@ class TestSelection:
 
 class TestExtraction:
     def test_happy_path(self, financial_fixture, session):
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "doc_role": "quote",
-             "record_kind": "total", "counterparty": "Acme",
-             "description": "kitchen renovation", "amount": 250,
-             "currency": "CAD", "doc_date": "2026-03-25",
-             "quoted_excerpt": "Total: $250.00 for kitchen renovation",
-             "confidence": 0.9},
-            {"doc_index": 1, "direction": "contractor_out", "doc_role": "invoice",
-             "record_kind": "line_item", "counterparty": "Framing Co",
-             "description": "framing crew", "amount": 100,
-             "quoted_excerpt": "Labour: $100.00", "confidence": 0.8},
-        ])
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "client_in",
+                    "doc_role": "quote",
+                    "record_kind": "total",
+                    "counterparty": "Acme",
+                    "description": "kitchen renovation",
+                    "amount": 250,
+                    "currency": "CAD",
+                    "doc_date": "2026-03-25",
+                    "quoted_excerpt": "Total: $250.00 for kitchen renovation",
+                    "confidence": 0.9,
+                },
+                {
+                    "doc_index": 1,
+                    "direction": "contractor_out",
+                    "doc_role": "invoice",
+                    "record_kind": "line_item",
+                    "counterparty": "Framing Co",
+                    "description": "framing crew",
+                    "amount": 100,
+                    "quoted_excerpt": "Labour: $100.00",
+                    "confidence": 0.8,
+                },
+            ]
+        )
         batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 2
         assert batch.documents_considered == 2
@@ -295,71 +330,107 @@ class TestExtraction:
     def test_amount_not_in_source_warns_but_keeps(self, financial_fixture, session):
         # 999 does not appear in docA's text -> flagged as possible
         # hallucination / computed value, but still created.
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-             "amount": 999, "quoted_excerpt": "Total: $999.00",
-             "confidence": 0.5},
-        ])
-        batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "client_in",
+                    "record_kind": "total",
+                    "amount": 999,
+                    "quoted_excerpt": "Total: $999.00",
+                    "confidence": 0.5,
+                },
+            ]
         )
-        assert batch.created_count == 1          # still created
+        batch = extract_financials_for_project(
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
+        )
+        assert batch.created_count == 1  # still created
         assert any("does not appear in the document" in w for w in batch.warnings)
         row = session.query(FinancialRecord).one()
         assert row.amount_verified is False
-        rep = report_project_financials(
-            session, str(financial_fixture["project"].canonical_id)
-        )
+        rep = report_project_financials(session, str(financial_fixture["project"].canonical_id))
         assert rep["unverified_count"] == 1
 
     def test_reflowed_excerpt_amount_present_no_warning(self, financial_fixture, session):
         # A non-verbatim excerpt is fine as long as the AMOUNT is in the doc
         # (docA text contains "$250.00").  This is the false-positive the old
         # verbatim-excerpt check produced; the amount-presence guard clears it.
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-             "amount": 250,
-             "quoted_excerpt": "kitchen renovation ... grand total 250",
-             "confidence": 0.9},
-        ])
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "client_in",
+                    "record_kind": "total",
+                    "amount": 250,
+                    "quoted_excerpt": "kitchen renovation ... grand total 250",
+                    "confidence": 0.9,
+                },
+            ]
+        )
         batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 1
         assert not batch.warnings
 
     def test_missing_excerpt_warns(self, financial_fixture, session):
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-             "amount": 250},
-        ])
+        provider = _mock(
+            [
+                {"doc_index": 0, "direction": "client_in", "record_kind": "total", "amount": 250},
+            ]
+        )
         batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 1
         assert any("no quoted_excerpt" in w for w in batch.warnings)
 
     def test_bad_items_recorded_not_raised(self, financial_fixture, session):
-        provider = _mock([
-            {"doc_index": 99, "direction": "client_in", "amount": 1},   # bad index
-            {"doc_index": 0, "direction": "client_in", "amount": "n/a"},  # bad amount
-            "not even an object",
-            {"doc_index": 1, "direction": "contractor_out", "record_kind": "line_item",
-             "amount": 100, "quoted_excerpt": "Labour: $100.00"},        # good
-        ])
+        provider = _mock(
+            [
+                {"doc_index": 99, "direction": "client_in", "amount": 1},  # bad index
+                {"doc_index": 0, "direction": "client_in", "amount": "n/a"},  # bad amount
+                "not even an object",
+                {
+                    "doc_index": 1,
+                    "direction": "contractor_out",
+                    "record_kind": "line_item",
+                    "amount": 100,
+                    "quoted_excerpt": "Labour: $100.00",
+                },  # good
+            ]
+        )
         batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 1
         assert len(batch.errors) == 3
 
     def test_unknown_direction_coerced_and_warned(self, financial_fixture, session):
-        provider = _mock([
-            {"doc_index": 0, "direction": "sideways", "record_kind": "total",
-             "amount": 250, "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "sideways",
+                    "record_kind": "total",
+                    "amount": 250,
+                    "quoted_excerpt": "Total: $250.00 for kitchen renovation",
+                },
+            ]
+        )
         batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 1
         row = session.query(FinancialRecord).one()
@@ -367,23 +438,29 @@ class TestExtraction:
         assert any("unknown value 'sideways'" in w for w in batch.warnings)
 
     def test_fresh_snapshot_idempotency(self, financial_fixture, session):
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-             "amount": 250, "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "client_in",
+                    "record_kind": "total",
+                    "amount": 250,
+                    "quoted_excerpt": "Total: $250.00 for kitchen renovation",
+                },
+            ]
+        )
         pid = financial_fixture["project"].canonical_id
         b1 = extract_financials_for_project(session, provider, pid)
         assert b1.superseded_count == 0
         assert session.query(FinancialRecord).count() == 1
 
         b2 = extract_financials_for_project(session, provider, pid)
-        assert b2.superseded_count == 1          # prior row deleted
+        assert b2.superseded_count == 1  # prior row deleted
         assert session.query(FinancialRecord).count() == 1  # not accumulated
 
     def test_skip_when_no_financial_docs(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="Empty", code="E", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(name="Empty", code="E", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
         session.add(p)
         session.commit()
         batch = extract_financials_for_project(session, _mock([]), p.canonical_id)
@@ -397,8 +474,7 @@ class TestExtraction:
 
 
 def _fake_cands(sizes: list[int]) -> list[_Candidate]:
-    return [_Candidate(document=None, text="x" * n, full_text="", truncated=False)
-            for n in sizes]
+    return [_Candidate(document=None, text="x" * n, full_text="", truncated=False) for n in sizes]
 
 
 class TestBackoffRetry:
@@ -448,53 +524,59 @@ class TestChunking:
         assert [len(c) for c in chunks] == [3, 3, 1]
 
     def test_splits_by_char_budget(self):
-        chunks = _chunk_candidates(_fake_cands([5000, 5000, 5000, 5000]),
-                                   char_budget=12_000, max_docs=10)
+        chunks = _chunk_candidates(
+            _fake_cands([5000, 5000, 5000, 5000]), char_budget=12_000, max_docs=10
+        )
         assert [len(c) for c in chunks] == [2, 2]
 
     def test_oversized_doc_gets_its_own_batch_not_dropped(self):
-        chunks = _chunk_candidates(_fake_cands([20_000, 100]),
-                                   char_budget=12_000, max_docs=10)
-        assert [len(c) for c in chunks] == [1, 1]   # big doc kept, alone
+        chunks = _chunk_candidates(_fake_cands([20_000, 100]), char_budget=12_000, max_docs=10)
+        assert [len(c) for c in chunks] == [1, 1]  # big doc kept, alone
 
 
 class TestBatchingCoverage:
     def test_all_docs_processed_across_multiple_calls(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="Big", code="B", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(name="Big", code="B", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
         session.add(p)
         session.commit()
         for i in range(7):
-            _add_doc(session, p, name=f"Invoice {i}.pdf",
-                     text=f"Invoice {i}. Total: ${i+1}00.00 due.")
-        provider = _mock([])   # empty records, but every batch is a call
+            _add_doc(
+                session, p, name=f"Invoice {i}.pdf", text=f"Invoice {i}. Total: ${i + 1}00.00 due."
+            )
+        provider = _mock([])  # empty records, but every batch is a call
         batch = extract_financials_for_project(
-            session, provider, p.canonical_id, batch_max_docs=3,
+            session,
+            provider,
+            p.canonical_id,
+            batch_max_docs=3,
         )
         # 7 docs / 3 per batch -> 3 LLM calls; all 7 considered.
         assert batch.documents_considered == 7
         assert len(provider.calls) == 3
 
     def test_batch_failure_keeps_prior_and_writes_nothing(
-        self, session, client_factory, monkeypatch,
+        self,
+        session,
+        client_factory,
+        monkeypatch,
     ):
         """All-or-nothing: a batch failure must NOT destroy prior records or
         leave a partial snapshot.  (Data-safety lesson, 2026-05-29.)"""
         monkeypatch.setattr("time.sleep", lambda *a, **k: None)  # no real backoff wait
         c = client_factory(name="C")
-        p = Project(name="Mix", code="M", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(name="Mix", code="M", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
         session.add(p)
         session.commit()
         for i in range(4):
-            _add_doc(session, p, name=f"Quote {i}.pdf",
-                     text=f"Quote {i}. Total: ${i+1}50.00.")
+            _add_doc(session, p, name=f"Quote {i}.pdf", text=f"Quote {i}. Total: ${i + 1}50.00.")
 
         # Seed a prior good record that must survive a failed re-run.
         prior = FinancialRecord(
-            project_id=p.canonical_id, direction="contractor_out",
-            amount=Decimal("999.00"), amount_verified=True,
+            project_id=p.canonical_id,
+            direction="contractor_out",
+            amount=Decimal("999.00"),
+            amount_verified=True,
         )
         session.add(prior)
         session.commit()
@@ -506,7 +588,10 @@ class TestBatchingCoverage:
 
         provider = MockLLMProvider(on_call=on_call)
         batch = extract_financials_for_project(
-            session, provider, p.canonical_id, batch_max_docs=2,
+            session,
+            provider,
+            p.canonical_id,
+            batch_max_docs=2,
         )
         # Run is a no-op: error recorded, nothing written, prior kept.
         assert any("LLM call failed for batch" in e for e in batch.errors)
@@ -514,8 +599,7 @@ class TestBatchingCoverage:
         assert batch.created_count == 0
         assert batch.superseded_count == 0
         # The seeded prior record still exists.
-        survivors = session.query(FinancialRecord).filter_by(
-            project_id=p.canonical_id).all()
+        survivors = session.query(FinancialRecord).filter_by(project_id=p.canonical_id).all()
         assert len(survivors) == 1
         assert survivors[0].amount == Decimal("999.00")
 
@@ -530,59 +614,102 @@ class TestRollupClassification:
     Conservative: only clear tracker names match; everything else is primary."""
 
     def test_name_is_rollup_matches_trackers(self):
-        for name in ("Costs.xlsx", "JOB COSTING.xlsx", "Payment Tracker.xlsx",
-                     "5768 Tenants listing.xlsx", "Lurentien Invoice Breakdown.xlsx",
-                     "Alta - Etat de compte.pdf", "Alta - État de compte.pdf",
-                     "Contractors + Material.xlsx"):
+        for name in (
+            "Costs.xlsx",
+            "JOB COSTING.xlsx",
+            "Payment Tracker.xlsx",
+            "5768 Tenants listing.xlsx",
+            "Lurentien Invoice Breakdown.xlsx",
+            "Alta - Etat de compte.pdf",
+            "Alta - État de compte.pdf",
+            "Contractors + Material.xlsx",
+        ):
             assert _name_is_rollup(name) is True, name
 
     def test_name_is_rollup_leaves_transactions_primary(self):
-        for name in ("Geller House Quote.xlsx", "Quoting File.xlsx",
-                     "Richard Penthouse Quote.pdf", "Invoice 148127.pdf",
-                     "32102.pdf", "Sales_Invoice_6862.pdf", None):
+        for name in (
+            "Geller House Quote.xlsx",
+            "Quoting File.xlsx",
+            "Richard Penthouse Quote.pdf",
+            "Invoice 148127.pdf",
+            "32102.pdf",
+            "Sales_Invoice_6862.pdf",
+            None,
+        ):
             assert _name_is_rollup(name) is False, name
 
     def test_itemized_quote_named_doc_is_primary(self, financial_fixture, session):
         # docA is "Quote Estimate Invoice.pdf" -- a transaction name -> PRIMARY,
         # regardless of what the model might have guessed (this is the 5768
         # Quoting-File regression the deterministic rule prevents).
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "record_kind": "total",
-             "amount": 250,
-             "quoted_excerpt": "Total: $250.00 for kitchen renovation"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "client_in",
+                    "record_kind": "total",
+                    "amount": 250,
+                    "quoted_excerpt": "Total: $250.00 for kitchen renovation",
+                },
+            ]
+        )
         extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         rec = session.query(FinancialRecord).filter_by(amount=Decimal("250.00")).one()
         assert rec.is_rollup is False
 
     def test_tracker_named_doc_is_rollup(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(name="P", code="P", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
         session.add(p)
         session.commit()
-        _add_doc(session, p, name="Cost Tracker.xlsx",
-                 text="Internal cost tracker. Total tracked: $5,000.00")
-        provider = _mock([
-            {"doc_index": 0, "direction": "contractor_out", "record_kind": "total",
-             "amount": 5000, "quoted_excerpt": "Total tracked: $5,000.00"},
-        ])
+        _add_doc(
+            session,
+            p,
+            name="Cost Tracker.xlsx",
+            text="Internal cost tracker. Total tracked: $5,000.00",
+        )
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "contractor_out",
+                    "record_kind": "total",
+                    "amount": 5000,
+                    "quoted_excerpt": "Total tracked: $5,000.00",
+                },
+            ]
+        )
         extract_financials_for_project(session, provider, p.canonical_id)
         rec = session.query(FinancialRecord).one()
         assert rec.is_rollup is True
 
     def test_zero_amount_records_skipped(self, financial_fixture, session):
-        provider = _mock([
-            {"doc_index": 0, "direction": "client_in", "record_kind": "other",
-             "amount": 0, "quoted_excerpt": "2 ans de garantie 0.00"},   # skipped
-            {"doc_index": 1, "direction": "contractor_out",
-             "record_kind": "line_item", "amount": 100,
-             "quoted_excerpt": "Labour: $100.00"},                       # kept
-        ])
+        provider = _mock(
+            [
+                {
+                    "doc_index": 0,
+                    "direction": "client_in",
+                    "record_kind": "other",
+                    "amount": 0,
+                    "quoted_excerpt": "2 ans de garantie 0.00",
+                },  # skipped
+                {
+                    "doc_index": 1,
+                    "direction": "contractor_out",
+                    "record_kind": "line_item",
+                    "amount": 100,
+                    "quoted_excerpt": "Labour: $100.00",
+                },  # kept
+            ]
+        )
         batch = extract_financials_for_project(
-            session, provider, financial_fixture["project"].canonical_id,
+            session,
+            provider,
+            financial_fixture["project"].canonical_id,
         )
         assert batch.created_count == 1
         assert session.query(FinancialRecord).count() == 1
@@ -595,35 +722,57 @@ class TestMoneyType:
         assert classify_money_type("contractor_out", "deposit", "Inv.pdf", None) == "deposit"
 
     def test_buyout_signals(self):
-        assert classify_money_type("contractor_out", "total",
-                                   "Francais quittance.docx", None) == "buyout_cost"
-        assert classify_money_type("unknown", "total",
-                                   "TERMINATION FRENCH.docx", None) == "buyout_cost"
+        assert (
+            classify_money_type("contractor_out", "total", "Francais quittance.docx", None)
+            == "buyout_cost"
+        )
+        assert (
+            classify_money_type("unknown", "total", "TERMINATION FRENCH.docx", None)
+            == "buyout_cost"
+        )
         # tenant-named doc in a Tenant folder
-        assert classify_money_type("contractor_out", "other",
-                                   "Majd.docx", "Active/5768/Tenant") == "buyout_cost"
+        assert (
+            classify_money_type("contractor_out", "other", "Majd.docx", "Active/5768/Tenant")
+            == "buyout_cost"
+        )
 
     def test_lease(self):
-        assert classify_money_type("client_in", "total",
-                                   "5768-24, Lease 2022.pdf", None) == "lease_rental"
+        assert (
+            classify_money_type("client_in", "total", "5768-24, Lease 2022.pdf", None)
+            == "lease_rental"
+        )
 
     def test_direction_fallback(self):
-        assert classify_money_type("client_in", "total", "Geller Quote.xlsx", None) \
+        assert (
+            classify_money_type("client_in", "total", "Geller Quote.xlsx", None)
             == "contract_revenue"
-        assert classify_money_type("contractor_out", "line_item", "32102.pdf", None) \
-            == "supplier_cost"
+        )
+        assert (
+            classify_money_type("contractor_out", "line_item", "32102.pdf", None) == "supplier_cost"
+        )
         assert classify_money_type("unknown", "other", "Mystery.pdf", None) == "other"
 
     def test_report_buckets_and_construction_margin(self, financial_fixture, session):
         p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
         # doc_a: client revenue 250; doc_b: supplier cost 100.
-        r = FinancialRecord(project_id=p.canonical_id, document_id=doc_a.canonical_id,
-                            direction="client_in", record_kind="total",
-                            amount=Decimal("250"), is_rollup=False)
-        r2 = FinancialRecord(project_id=p.canonical_id, document_id=doc_b.canonical_id,
-                             direction="contractor_out", record_kind="line_item",
-                             amount=Decimal("100"), is_rollup=False)
-        session.add_all([r, r2]); session.commit()
+        r = FinancialRecord(
+            project_id=p.canonical_id,
+            document_id=doc_a.canonical_id,
+            direction="client_in",
+            record_kind="total",
+            amount=Decimal("250"),
+            is_rollup=False,
+        )
+        r2 = FinancialRecord(
+            project_id=p.canonical_id,
+            document_id=doc_b.canonical_id,
+            direction="contractor_out",
+            record_kind="line_item",
+            amount=Decimal("100"),
+            is_rollup=False,
+        )
+        session.add_all([r, r2])
+        session.commit()
         rep = report_project_financials(session, str(p.canonical_id))
         bmt = rep["by_money_type"]
         assert bmt["contract_revenue"] == pytest.approx(250.0)
@@ -637,14 +786,26 @@ class TestMoneyType:
         # An unmodeled project (e.g. a development deal): most money is
         # direction=unknown -> 'other' bucket -> flagged low-confidence.
         p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
-        session.add_all([
-            FinancialRecord(project_id=p.canonical_id, document_id=doc_a.canonical_id,
-                            direction="unknown", record_kind="total",
-                            amount=Decimal("1000000"), is_rollup=False),
-            FinancialRecord(project_id=p.canonical_id, document_id=doc_b.canonical_id,
-                            direction="contractor_out", record_kind="total",
-                            amount=Decimal("100"), is_rollup=False),
-        ])
+        session.add_all(
+            [
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=doc_a.canonical_id,
+                    direction="unknown",
+                    record_kind="total",
+                    amount=Decimal("1000000"),
+                    is_rollup=False,
+                ),
+                FinancialRecord(
+                    project_id=p.canonical_id,
+                    document_id=doc_b.canonical_id,
+                    direction="contractor_out",
+                    record_kind="total",
+                    amount=Decimal("100"),
+                    is_rollup=False,
+                ),
+            ]
+        )
         session.commit()
         rep = report_project_financials(session, str(p.canonical_id))
         ms = rep["money_summary"]
@@ -657,13 +818,14 @@ class TestConfirmed:
     def test_default_confirmed_logic(self):
         assert default_confirmed({"invoice"}) is True
         assert default_confirmed({"receipt"}) is True
-        assert default_confirmed({"quote", "invoice"}) is True   # any invoice -> in
+        assert default_confirmed({"quote", "invoice"}) is True  # any invoice -> in
         assert default_confirmed({"quote"}) is False
         assert default_confirmed({"estimate"}) is False
         assert default_confirmed(set()) is False
 
     def test_set_status_upsert(self, financial_fixture, session):
         from project_db.db.models import DocumentFinancialStatus
+
         doc = financial_fixture["doc_a"]
         r = set_document_financial_status(session, doc.canonical_id, True, decided_by="me")
         assert r["ok"] is True
@@ -674,8 +836,9 @@ class TestConfirmed:
         assert session.query(DocumentFinancialStatus).one().confirmed is False
 
     def _rec(self, session, project, doc, **kw):
-        r = FinancialRecord(project_id=project.canonical_id,
-                            document_id=doc.canonical_id, is_rollup=False, **kw)
+        r = FinancialRecord(
+            project_id=project.canonical_id, document_id=doc.canonical_id, is_rollup=False, **kw
+        )
         session.add(r)
         session.commit()
         return r
@@ -683,10 +846,24 @@ class TestConfirmed:
     def test_confirmed_totals_use_smart_default(self, financial_fixture, session):
         p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
         # doc_a = a QUOTE (default unconfirmed); doc_b = an INVOICE (default confirmed)
-        self._rec(session, p, doc_a, direction="client_in", doc_role="quote",
-                  record_kind="total", amount=Decimal("500"))
-        self._rec(session, p, doc_b, direction="contractor_out", doc_role="invoice",
-                  record_kind="total", amount=Decimal("200"))
+        self._rec(
+            session,
+            p,
+            doc_a,
+            direction="client_in",
+            doc_role="quote",
+            record_kind="total",
+            amount=Decimal("500"),
+        )
+        self._rec(
+            session,
+            p,
+            doc_b,
+            direction="contractor_out",
+            doc_role="invoice",
+            record_kind="total",
+            amount=Decimal("200"),
+        )
 
         rep = report_project_financials(session, str(p.canonical_id))
         # all-in counts both
@@ -700,11 +877,19 @@ class TestConfirmed:
 
     def test_explicit_confirmation_overrides_default(self, financial_fixture, session):
         p, doc_a = financial_fixture["project"], financial_fixture["doc_a"]
-        self._rec(session, p, doc_a, direction="client_in", doc_role="quote",
-                  record_kind="total", amount=Decimal("500"))
+        self._rec(
+            session,
+            p,
+            doc_a,
+            direction="client_in",
+            doc_role="quote",
+            record_kind="total",
+            amount=Decimal("500"),
+        )
         # default: quote excluded -> 0
-        assert report_project_financials(session, str(p.canonical_id))[
-            "confirmed_totals"]["client_in"] == pytest.approx(0.0)
+        assert report_project_financials(session, str(p.canonical_id))["confirmed_totals"][
+            "client_in"
+        ] == pytest.approx(0.0)
         # explicitly confirm the quote -> now counted
         set_document_financial_status(session, doc_a.canonical_id, True)
         session.commit()
@@ -713,16 +898,22 @@ class TestConfirmed:
         # and it survives a re-extraction wipe of FinancialRecord (status is in
         # its own table) -- simulate by deleting records then re-adding
         session.query(FinancialRecord).delete()
-        self._rec(session, p, doc_a, direction="client_in", doc_role="quote",
-                  record_kind="total", amount=Decimal("500"))
+        self._rec(
+            session,
+            p,
+            doc_a,
+            direction="client_in",
+            doc_role="quote",
+            record_kind="total",
+            amount=Decimal("500"),
+        )
         rep2 = report_project_financials(session, str(p.canonical_id))
         assert rep2["confirmed_totals"]["client_in"] == pytest.approx(500.0)
 
 
 class TestReport:
     def _record(self, session, project, doc, **kw):
-        r = FinancialRecord(project_id=project.canonical_id,
-                            document_id=doc.canonical_id, **kw)
+        r = FinancialRecord(project_id=project.canonical_id, document_id=doc.canonical_id, **kw)
         session.add(r)
         session.commit()
         return r
@@ -730,30 +921,45 @@ class TestReport:
     def test_two_sided_totals_and_margin(self, financial_fixture, session):
         p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
         # docA: a line item AND a grand total -> representative is the total (250).
-        self._record(session, p, doc_a, direction="client_in",
-                     record_kind="line_item", amount=Decimal("100"))
-        self._record(session, p, doc_a, direction="client_in",
-                     record_kind="total", amount=Decimal("250"))
+        self._record(
+            session, p, doc_a, direction="client_in", record_kind="line_item", amount=Decimal("100")
+        )
+        self._record(
+            session, p, doc_a, direction="client_in", record_kind="total", amount=Decimal("250")
+        )
         # docB: two contractor line items -> 40 + 60 = 100.
-        self._record(session, p, doc_b, direction="contractor_out",
-                     record_kind="line_item", amount=Decimal("40"))
-        self._record(session, p, doc_b, direction="contractor_out",
-                     record_kind="line_item", amount=Decimal("60"))
+        self._record(
+            session,
+            p,
+            doc_b,
+            direction="contractor_out",
+            record_kind="line_item",
+            amount=Decimal("40"),
+        )
+        self._record(
+            session,
+            p,
+            doc_b,
+            direction="contractor_out",
+            record_kind="line_item",
+            amount=Decimal("60"),
+        )
 
         rep = report_project_financials(session, str(p.canonical_id))
         t = rep["totals"]
-        assert t["client_in"] == pytest.approx(250.0)     # total, not 100+250
+        assert t["client_in"] == pytest.approx(250.0)  # total, not 100+250
         assert t["contractor_out"] == pytest.approx(100.0)
         assert t["margin"] == pytest.approx(150.0)
         assert rep["record_count"] == 4
         assert len(rep["per_document"]) == 2
 
     def test_empty_project_returns_zeros_with_note(self, financial_fixture, session):
-        rep = report_project_financials(
-            session, str(financial_fixture["project"].canonical_id)
-        )
+        rep = report_project_financials(session, str(financial_fixture["project"].canonical_id))
         assert rep["totals"] == {
-            "client_in": 0.0, "contractor_out": 0.0, "unknown": 0.0, "margin": 0.0,
+            "client_in": 0.0,
+            "contractor_out": 0.0,
+            "unknown": 0.0,
+            "margin": 0.0,
         }
         assert "extract-financials" in rep["note"]
 
@@ -762,16 +968,32 @@ class TestReport:
         assert "error" in rep
 
     def test_rollup_excluded_from_totals_shown_as_crosscheck(
-        self, financial_fixture, session,
+        self,
+        financial_fixture,
+        session,
     ):
         p, doc_a, doc_b = (financial_fixture[k] for k in ("project", "doc_a", "doc_b"))
         # doc_a: a PRIMARY supplier invoice, contractor_out 100.
-        self._record(session, p, doc_a, direction="contractor_out",
-                     record_kind="total", amount=Decimal("100"), is_rollup=False)
+        self._record(
+            session,
+            p,
+            doc_a,
+            direction="contractor_out",
+            record_kind="total",
+            amount=Decimal("100"),
+            is_rollup=False,
+        )
         # doc_b: an internal ROLL-UP cost sheet restating it (999) -- must NOT
         # be summed into the total, only cross-checked.
-        self._record(session, p, doc_b, direction="contractor_out",
-                     record_kind="total", amount=Decimal("999"), is_rollup=True)
+        self._record(
+            session,
+            p,
+            doc_b,
+            direction="contractor_out",
+            record_kind="total",
+            amount=Decimal("999"),
+            is_rollup=True,
+        )
 
         rep = report_project_financials(session, str(p.canonical_id))
         assert rep["totals"]["contractor_out"] == pytest.approx(100.0)  # not 1099

@@ -11,13 +11,14 @@ hit, we may want to match it against existing canonical entities. Examples:
 Each matcher is a stateless object the resolver can call. Replace `NoMatcher`
 with something smarter once you've seen real data shape.
 """
+
 from __future__ import annotations
 
 import re
 import unicodedata
 from abc import ABC, abstractmethod
 from difflib import SequenceMatcher
-from typing import Any, Type, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy.orm import Session
 
@@ -36,7 +37,7 @@ def normalize_name(name: str) -> str:
     """
     name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
     name = name.lower()
-    name = re.sub(r"[^\w\s]", " ", name)      # punctuation -> space
+    name = re.sub(r"[^\w\s]", " ", name)  # punctuation -> space
     name = re.sub(r"\s+", " ", name).strip()  # collapse whitespace
     return name
 
@@ -73,7 +74,7 @@ class EntityMatcher(ABC):
         self,
         *,
         session: Session,
-        entity_class: Type[T],
+        entity_class: type[T],
         candidate_attrs: dict[str, Any],
     ) -> T | None: ...
 
@@ -99,7 +100,7 @@ class ExactFieldMatcher(EntityMatcher):
         self,
         *,
         session: Session,
-        entity_class: Type[T],
+        entity_class: type[T],
         candidate_attrs: dict[str, Any],
     ) -> T | None:
         filters = {}
@@ -139,7 +140,7 @@ class FuzzyFieldMatcher(EntityMatcher):
         self,
         *,
         session: Session,
-        entity_class: Type[T],
+        entity_class: type[T],
         candidate_attrs: dict[str, Any],
     ) -> T | None:
         for f in self.fields:
@@ -199,7 +200,7 @@ class ProjectMatcher(EntityMatcher):
         self,
         *,
         session: Session,
-        entity_class: Type[T],
+        entity_class: type[T],
         candidate_attrs: dict[str, Any],
     ) -> T | None:
         cand_name = candidate_attrs.get("name")
@@ -212,7 +213,8 @@ class ProjectMatcher(EntityMatcher):
         cand_civics = extract_civic_numbers(cand_name)
         if cand_civics:
             hits = [
-                p for p in existing
+                p
+                for p in existing
                 if extract_civic_numbers(getattr(p, "name", "") or "") & cand_civics
             ]
             if len(hits) == 1:
@@ -223,8 +225,7 @@ class ProjectMatcher(EntityMatcher):
         cand_norm = normalize_name(cand_name)
         if cand_norm:
             name_hits = [
-                p for p in existing
-                if normalize_name(getattr(p, "name", "") or "") == cand_norm
+                p for p in existing if normalize_name(getattr(p, "name", "") or "") == cand_norm
             ]
             if len(name_hits) == 1:
                 return name_hits[0]

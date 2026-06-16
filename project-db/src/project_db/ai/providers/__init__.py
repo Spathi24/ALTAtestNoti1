@@ -21,6 +21,7 @@ summarization-grade model (Haiku on Anthropic) -- used by the `ask` LLM
 fallback, where the job is reading + summarizing canonical data, not the
 analytical reasoning reserved for proposal generation.
 """
+
 from __future__ import annotations
 
 import os
@@ -37,14 +38,14 @@ from project_db.ai.providers.mock import MockLLMProvider
 from project_db.ai.providers.openai_compatible import OpenAICompatibleProvider
 
 __all__ = [
-    "LLMProvider",
-    "LLMMessage",
-    "LLMResponse",
-    "LLMProviderError",
-    "MockLLMProvider",
     "AnthropicProvider",
-    "OpenAICompatibleProvider",
     "FallbackProvider",
+    "LLMMessage",
+    "LLMProvider",
+    "LLMProviderError",
+    "LLMResponse",
+    "MockLLMProvider",
+    "OpenAICompatibleProvider",
     "get_default_provider",
     "get_fast_provider",
 ]
@@ -78,9 +79,7 @@ def _build_provider(name: str, *, fast: bool) -> LLMProvider:
     if name == "anthropic":
         if fast:
             return AnthropicProvider(
-                default_model=os.environ.get(
-                    "ANTHROPIC_MODEL_FAST", _DEFAULT_FAST_MODEL
-                )
+                default_model=os.environ.get("ANTHROPIC_MODEL_FAST", _DEFAULT_FAST_MODEL)
             )
         return AnthropicProvider()
     if name == "openai-compatible":
@@ -90,8 +89,7 @@ def _build_provider(name: str, *, fast: bool) -> LLMProvider:
             model = os.environ.get("OPENAI_MODEL_FAST") or model
         if not base_url or not model:
             raise LLMProviderError(
-                "openai-compatible provider requires OPENAI_BASE_URL and "
-                "OPENAI_MODEL env vars."
+                "openai-compatible provider requires OPENAI_BASE_URL and OPENAI_MODEL env vars."
             )
         return OpenAICompatibleProvider(base_url=base_url, default_model=model)
     raise LLMProviderError(f"Unknown LLM_PROVIDER={name!r}")

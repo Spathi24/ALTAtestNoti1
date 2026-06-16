@@ -3,10 +3,10 @@
 The project does not have Alembic yet. These helpers keep an existing local
 SQLite file usable when the SQLAlchemy models gain nullable columns.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import inspect, text
-
 
 SQLITE_TASK_COLUMNS: dict[str, str] = {
     "monday_status_label": "VARCHAR",
@@ -173,12 +173,9 @@ CREATE TABLE document_chunk (
 """
 
 SQLITE_DOCUMENT_CHUNK_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS ix_document_chunk_document_id "
-    "ON document_chunk (document_id)",
-    "CREATE INDEX IF NOT EXISTS ix_document_chunk_project_id "
-    "ON document_chunk (project_id)",
-    "CREATE INDEX IF NOT EXISTS ix_document_chunk_content_hash "
-    "ON document_chunk (content_hash)",
+    "CREATE INDEX IF NOT EXISTS ix_document_chunk_document_id ON document_chunk (document_id)",
+    "CREATE INDEX IF NOT EXISTS ix_document_chunk_project_id ON document_chunk (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_document_chunk_content_hash ON document_chunk (content_hash)",
 )
 
 SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL = """
@@ -296,24 +293,24 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(conn, tables, "document_text", SQLITE_DOCUMENT_TEXT_DDL)
         _create_table_if_missing(conn, tables, "proposal", SQLITE_PROPOSAL_DDL)
         _create_table_if_missing(conn, tables, "roadmap_task", SQLITE_ROADMAP_TASK_DDL)
-        _create_table_if_missing(
-            conn, tables, "financial_record", SQLITE_FINANCIAL_RECORD_DDL
-        )
+        _create_table_if_missing(conn, tables, "financial_record", SQLITE_FINANCIAL_RECORD_DDL)
         if "financial_record" in tables:
             _add_missing_columns(
-                conn, inspector, "financial_record",
+                conn,
+                inspector,
+                "financial_record",
                 SQLITE_FINANCIAL_RECORD_COLUMNS,
             )
         _create_table_if_missing(
-            conn, tables, "document_financial_status",
+            conn,
+            tables,
+            "document_financial_status",
             SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL,
         )
         _create_table_if_missing(
             conn, tables, "contract_obligation", SQLITE_CONTRACT_OBLIGATION_DDL
         )
-        _create_table_if_missing(
-            conn, tables, "document_chunk", SQLITE_DOCUMENT_CHUNK_DDL
-        )
+        _create_table_if_missing(conn, tables, "document_chunk", SQLITE_DOCUMENT_CHUNK_DDL)
         for _idx_ddl in SQLITE_DOCUMENT_CHUNK_INDEXES:
             conn.execute(text(_idx_ddl))
         # worker must exist before email_ingest (email_ingest has no FK to worker,
@@ -332,6 +329,8 @@ def ensure_sqlite_schema(engine) -> None:
         # the actor column landed).
         if "roadmap_task" in tables:
             _add_missing_columns(
-                conn, inspector, "roadmap_task",
+                conn,
+                inspector,
+                "roadmap_task",
                 SQLITE_ROADMAP_TASK_COLUMNS,
             )

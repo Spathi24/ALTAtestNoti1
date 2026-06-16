@@ -6,6 +6,7 @@ Tests cover:
   - 404 for unknown / malformed IDs
   - Phase-D forbidden surface: accept/reject endpoints must NOT exist yet
 """
+
 from __future__ import annotations
 
 import json
@@ -17,10 +18,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
-from project_db.db.models import (  # noqa: E402
+from project_db.db.base import Base
+from project_db.db.models import (
     Client,
     Document,
     ExternalId,
@@ -30,9 +31,9 @@ from project_db.db.models import (  # noqa: E402
     SourceSystem,
     Task,
 )
-from project_db.db.models.docs import DocumentText  # noqa: E402
-from project_db.db.models.proposals import ProposalStatus  # noqa: E402
-from project_db.db.models.work import ProjectStatus, TaskStatus  # noqa: E402
+from project_db.db.models.docs import DocumentText
+from project_db.db.models.proposals import ProposalStatus
+from project_db.db.models.work import ProjectStatus, TaskStatus
 
 
 @pytest.fixture
@@ -60,6 +61,7 @@ def patched_session_factory(db_engine, monkeypatch):
 @pytest.fixture
 def client(patched_session_factory):
     from project_db.web.app import create_app
+
     return TestClient(create_app())
 
 
@@ -80,13 +82,15 @@ def world(session, org: Organization):
     session.add(project)
     session.flush()
 
-    session.add(ExternalId(
-        entity_type="Project",
-        canonical_id=project.canonical_id,
-        source=SourceSystem.GOOGLE_DRIVE,
-        external_key="folder:abc123",
-        external_url="https://drive.google.com/drive/folders/abc123",
-    ))
+    session.add(
+        ExternalId(
+            entity_type="Project",
+            canonical_id=project.canonical_id,
+            source=SourceSystem.GOOGLE_DRIVE,
+            external_key="folder:abc123",
+            external_url="https://drive.google.com/drive/folders/abc123",
+        )
+    )
 
     dated = Task(
         project_id=project.canonical_id,
@@ -122,22 +126,26 @@ def world(session, org: Organization):
     session.add_all([doc_with, doc_without])
     session.flush()
 
-    session.add(DocumentText(
-        document_id=doc_with.canonical_id,
-        extracted_text="Scope of work: install temporary structural support.",
-        extraction_method="pdf",
-        token_count=12,
-    ))
+    session.add(
+        DocumentText(
+            document_id=doc_with.canonical_id,
+            extracted_text="Scope of work: install temporary structural support.",
+            extraction_method="pdf",
+            token_count=12,
+        )
+    )
 
     proposal = Proposal(
         entity_type="Task",
         entity_id=dateless.canonical_id,
         field_name="timeline",
-        proposed_value=json.dumps({
-            "start_date": "2026-07-01",
-            "end_date": "2026-07-05",
-            "reasoning": "Inferred from Final SOW.pdf section 4.",
-        }),
+        proposed_value=json.dumps(
+            {
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-05",
+                "reasoning": "Inferred from Final SOW.pdf section 4.",
+            }
+        ),
         confidence=0.85,
         status=ProposalStatus.PENDING,
         prompt_version="timelines-v2",
@@ -223,7 +231,10 @@ class TestProjectDetail:
         assert ">accept<" not in body
         # 'reject' as a word may appear in proposal status text; only flag
         # an actual button.
-        assert "<button" not in body or "accept" not in body.split("<button", 1)[1].split("</button>", 1)[0].lower()
+        assert (
+            "<button" not in body
+            or "accept" not in body.split("<button", 1)[1].split("</button>", 1)[0].lower()
+        )
 
 
 # ===========================================================================
@@ -336,6 +347,7 @@ class TestDoctor:
 class TestServiceFunctions:
     def test_project_list_rows(self, session, world):
         from project_db.web.ui_views import project_list_rows
+
         rows = project_list_rows(session)
         assert len(rows) == 1
         row = rows[0]
@@ -347,6 +359,7 @@ class TestServiceFunctions:
 
     def test_project_detail_resolves_uuid(self, session, world):
         from project_db.web.ui_views import project_detail
+
         pid = str(world["project"].canonical_id)
         d = project_detail(session, pid)
         assert d is not None
@@ -358,11 +371,13 @@ class TestServiceFunctions:
 
     def test_project_detail_none_for_unknown(self, session, world):
         from project_db.web.ui_views import project_detail
+
         assert project_detail(session, "00000000-0000-0000-0000-000000000000") is None
         assert project_detail(session, "not-a-uuid") is None
 
     def test_document_detail_includes_extraction(self, session, world):
         from project_db.web.ui_views import document_detail
+
         did = str(world["doc_with_text"].canonical_id)
         d = document_detail(session, did)
         assert d is not None
@@ -374,6 +389,7 @@ class TestServiceFunctions:
 
     def test_document_detail_none_text_row(self, session, world):
         from project_db.web.ui_views import document_detail
+
         did = str(world["doc_without_text"].canonical_id)
         d = document_detail(session, did)
         assert d is not None
@@ -381,6 +397,7 @@ class TestServiceFunctions:
 
     def test_proposal_queue_filter(self, session, world):
         from project_db.web.ui_views import proposal_queue
+
         data = proposal_queue(session, status="PENDING")
         assert data["error"] is None
         assert data["total"] == 1
@@ -390,6 +407,7 @@ class TestServiceFunctions:
 
     def test_proposal_detail_includes_can_accept(self, session, world):
         from project_db.web.ui_views import proposal_detail
+
         pid = str(world["proposal"].canonical_id)
         d = proposal_detail(session, pid)
         assert d is not None
@@ -401,6 +419,7 @@ class TestServiceFunctions:
 
     def test_doctor_report_uses_service(self, session, world):
         from project_db.web.ui_views import doctor_report
+
         d = doctor_report(session)
         assert isinstance(d["projects"], list)
         assert d["documents"]["total"] >= 2
@@ -418,15 +437,18 @@ class TestServiceFunctions:
 class TestStillForbiddenAfterPhaseD:
     """Bulk-accept / bulk-reject and direct entity edits are NOT in v1."""
 
-    @pytest.mark.parametrize("path", [
-        "/proposals/accept-all",
-        "/proposals/reject-all",
-        "/proposals/all/accept",
-        "/proposals/all/reject",
-        # Per-proposal mutations that were never planned:
-        "/proposals/00000000-0000-0000-0000-000000000000/delete",
-        "/proposals/00000000-0000-0000-0000-000000000000/edit",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/proposals/accept-all",
+            "/proposals/reject-all",
+            "/proposals/all/accept",
+            "/proposals/all/reject",
+            # Per-proposal mutations that were never planned:
+            "/proposals/00000000-0000-0000-0000-000000000000/delete",
+            "/proposals/00000000-0000-0000-0000-000000000000/edit",
+        ],
+    )
     def test_no_bulk_or_edit_routes(self, client, path):
         # GET
         assert client.get(path).status_code in (404, 405)

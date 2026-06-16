@@ -12,6 +12,7 @@ Coverage:
   - the unique (phase, ordinal) constraint fires on duplicate inserts
   - CLI cmd_import_roadmap end-to-end against an in-memory DB
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,6 @@ from project_db.ai.roadmap import (
     parse_roadmap_xlsx,
 )
 from project_db.db.models import RoadmapPhase, RoadmapTask
-
 
 # ---------------------------------------------------------------------------
 # Fixture builder
@@ -70,7 +70,9 @@ class TestSubTasksSplitter:
     def test_multi_line_with_dash_bullets(self):
         text = "-First item\n-Second item\n-Third item"
         assert _split_sub_tasks(text) == [
-            "First item", "Second item", "Third item",
+            "First item",
+            "Second item",
+            "Third item",
         ]
 
     def test_blank_lines_skipped(self):
@@ -84,15 +86,20 @@ class TestSubTasksSplitter:
 
 class TestParseRoadmapXlsx:
     def test_happy_path(self, tmp_path):
-        path = _make_xlsx(tmp_path, [
-            ("SD", "Kick off", None, "-Prep timeline\n-Set goals"),
-            ("SD", "Site analysis", None, "-Solar\n-Zoning"),
-            ("DD", "Envelope details", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("SD", "Kick off", None, "-Prep timeline\n-Set goals"),
+                ("SD", "Site analysis", None, "-Solar\n-Zoning"),
+                ("DD", "Envelope details", None, None),
+            ],
+        )
         out = parse_roadmap_xlsx(path)
         assert len(out) == 3
         assert [r["phase"] for r in out] == [
-            RoadmapPhase.SD, RoadmapPhase.SD, RoadmapPhase.DD,
+            RoadmapPhase.SD,
+            RoadmapPhase.SD,
+            RoadmapPhase.DD,
         ]
         # Ordinals reset per phase: SD-1, SD-2, DD-1
         assert [r["ordinal"] for r in out] == [1, 2, 1]
@@ -103,14 +110,17 @@ class TestParseRoadmapXlsx:
     def test_blank_rows_skipped(self, tmp_path):
         """Editorial blank rows between phases must be dropped without
         breaking ordinal counting."""
-        path = _make_xlsx(tmp_path, [
-            ("SD", "A", None, None),
-            ("SD", "B", None, None),
-            (None, None, None, None),         # blank separator
-            ("DD", "C", None, None),
-            ("", "", None, None),             # blank separator (empty strings)
-            ("CD", "D", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("SD", "A", None, None),
+                ("SD", "B", None, None),
+                (None, None, None, None),  # blank separator
+                ("DD", "C", None, None),
+                ("", "", None, None),  # blank separator (empty strings)
+                ("CD", "D", None, None),
+            ],
+        )
         out = parse_roadmap_xlsx(path)
         assert len(out) == 4
         # Ordinals stay clean across separators
@@ -120,9 +130,12 @@ class TestParseRoadmapXlsx:
         assert out[3]["ordinal"] == 1  # CD-1
 
     def test_unknown_phase_raises(self, tmp_path):
-        path = _make_xlsx(tmp_path, [
-            ("XX", "Bogus", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("XX", "Bogus", None, None),
+            ],
+        )
         with pytest.raises(ValueError) as exc:
             parse_roadmap_xlsx(path)
         assert "XX" in str(exc.value)
@@ -139,19 +152,25 @@ class TestParseRoadmapXlsx:
 
     def test_phase_string_case_normalized(self, tmp_path):
         """Lowercase / mixed-case phase strings still work."""
-        path = _make_xlsx(tmp_path, [
-            ("sd", "A", None, None),
-            ("Dd", "B", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("sd", "A", None, None),
+                ("Dd", "B", None, None),
+            ],
+        )
         out = parse_roadmap_xlsx(path)
         assert out[0]["phase"] == RoadmapPhase.SD
         assert out[1]["phase"] == RoadmapPhase.DD
 
     def test_notes_parsed_when_present(self, tmp_path):
-        path = _make_xlsx(tmp_path, [
-            ("SD", "A", "some note", None),
-            ("SD", "B", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("SD", "A", "some note", None),
+                ("SD", "B", None, None),
+            ],
+        )
         out = parse_roadmap_xlsx(path)
         assert out[0]["notes"] == "some note"
         assert out[1]["notes"] is None
@@ -184,10 +203,13 @@ class TestImportRoadmapRows:
     def _seed(self, session, n=2):
         """Helper: build a small parsed list."""
         return [
-            {"phase": RoadmapPhase.SD, "ordinal": i + 1,
-             "task_name": f"Task SD-{i+1}",
-             "sub_tasks": ["a", "b"] if i == 0 else None,
-             "notes": None}
+            {
+                "phase": RoadmapPhase.SD,
+                "ordinal": i + 1,
+                "task_name": f"Task SD-{i + 1}",
+                "sub_tasks": ["a", "b"] if i == 0 else None,
+                "notes": None,
+            }
             for i in range(n)
         ]
 
@@ -224,8 +246,13 @@ class TestImportRoadmapRows:
 
         # Re-import with a different set
         new_parsed = [
-            {"phase": RoadmapPhase.DD, "ordinal": 1, "task_name": "X",
-             "sub_tasks": None, "notes": None},
+            {
+                "phase": RoadmapPhase.DD,
+                "ordinal": 1,
+                "task_name": "X",
+                "sub_tasks": None,
+                "notes": None,
+            },
         ]
         result = import_roadmap_rows(session, new_parsed, overwrite=True)
         assert result["ok"] is True
@@ -243,14 +270,34 @@ class TestListRoadmapTasks:
     def test_returns_sorted_by_phase_then_ordinal(self, session):
         # Insert out of order on purpose
         parsed = [
-            {"phase": RoadmapPhase.CA, "ordinal": 1, "task_name": "C1",
-             "sub_tasks": None, "notes": None},
-            {"phase": RoadmapPhase.SD, "ordinal": 2, "task_name": "S2",
-             "sub_tasks": None, "notes": None},
-            {"phase": RoadmapPhase.SD, "ordinal": 1, "task_name": "S1",
-             "sub_tasks": None, "notes": None},
-            {"phase": RoadmapPhase.DD, "ordinal": 1, "task_name": "D1",
-             "sub_tasks": None, "notes": None},
+            {
+                "phase": RoadmapPhase.CA,
+                "ordinal": 1,
+                "task_name": "C1",
+                "sub_tasks": None,
+                "notes": None,
+            },
+            {
+                "phase": RoadmapPhase.SD,
+                "ordinal": 2,
+                "task_name": "S2",
+                "sub_tasks": None,
+                "notes": None,
+            },
+            {
+                "phase": RoadmapPhase.SD,
+                "ordinal": 1,
+                "task_name": "S1",
+                "sub_tasks": None,
+                "notes": None,
+            },
+            {
+                "phase": RoadmapPhase.DD,
+                "ordinal": 1,
+                "task_name": "D1",
+                "sub_tasks": None,
+                "notes": None,
+            },
         ]
         import_roadmap_rows(session, parsed)
         session.commit()
@@ -269,15 +316,21 @@ class TestCliImportRoadmap:
     def test_end_to_end(self, tmp_path, patched_session_factory, capsys):
         from project_db.cli import cmd_import_roadmap
 
-        path = _make_xlsx(tmp_path, [
-            ("SD", "Kickoff", None, "-Set goals"),
-            ("SD", "Site analysis", None, None),
-            ("DD", "Envelope", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("SD", "Kickoff", None, "-Set goals"),
+                ("SD", "Site analysis", None, None),
+                ("DD", "Envelope", None, None),
+            ],
+        )
 
-        rc = cmd_import_roadmap(argparse.Namespace(
-            path=str(path), overwrite=False,
-        ))
+        rc = cmd_import_roadmap(
+            argparse.Namespace(
+                path=str(path),
+                overwrite=False,
+            )
+        )
         assert rc == 0
         captured = capsys.readouterr().out
         assert "Parsed 3 roadmap task(s)" in captured
@@ -285,47 +338,47 @@ class TestCliImportRoadmap:
 
         # Verify rows in DB via session_scope (same factory the CLI used).
         from project_db.db import session_scope
+
         with session_scope() as s:
             assert s.query(RoadmapTask).count() == 3
 
     def test_missing_file_returns_2(self, patched_session_factory):
         from project_db.cli import cmd_import_roadmap
 
-        rc = cmd_import_roadmap(argparse.Namespace(
-            path="does/not/exist.xlsx", overwrite=False,
-        ))
+        rc = cmd_import_roadmap(
+            argparse.Namespace(
+                path="does/not/exist.xlsx",
+                overwrite=False,
+            )
+        )
         assert rc == 2
 
-    def test_re_import_without_overwrite_returns_1(
-        self, tmp_path, patched_session_factory
-    ):
+    def test_re_import_without_overwrite_returns_1(self, tmp_path, patched_session_factory):
         from project_db.cli import cmd_import_roadmap
 
-        path = _make_xlsx(tmp_path, [
-            ("SD", "A", None, None),
-        ])
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("SD", "A", None, None),
+            ],
+        )
         # First import succeeds
-        assert cmd_import_roadmap(
-            argparse.Namespace(path=str(path), overwrite=False)
-        ) == 0
+        assert cmd_import_roadmap(argparse.Namespace(path=str(path), overwrite=False)) == 0
         # Second without --overwrite fails
         rc = cmd_import_roadmap(argparse.Namespace(path=str(path), overwrite=False))
         assert rc == 1
 
-    def test_re_import_with_overwrite_succeeds(
-        self, tmp_path, patched_session_factory
-    ):
+    def test_re_import_with_overwrite_succeeds(self, tmp_path, patched_session_factory):
         from project_db.cli import cmd_import_roadmap
 
-        path = _make_xlsx(tmp_path, [
-            ("SD", "A", None, None),
-        ])
-        assert cmd_import_roadmap(
-            argparse.Namespace(path=str(path), overwrite=False)
-        ) == 0
-        assert cmd_import_roadmap(
-            argparse.Namespace(path=str(path), overwrite=True)
-        ) == 0
+        path = _make_xlsx(
+            tmp_path,
+            [
+                ("SD", "A", None, None),
+            ],
+        )
+        assert cmd_import_roadmap(argparse.Namespace(path=str(path), overwrite=False)) == 0
+        assert cmd_import_roadmap(argparse.Namespace(path=str(path), overwrite=True)) == 0
 
 
 # ---------------------------------------------------------------------------

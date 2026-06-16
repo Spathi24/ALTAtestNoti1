@@ -18,6 +18,7 @@ The extractor is intentionally lenient: unrecognised columns are silently
 skipped, and missing/empty values stay as None so callers can decide what
 to do (fall back to default, warn, etc.).
 """
+
 from __future__ import annotations
 
 import json
@@ -45,16 +46,27 @@ _TITLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bstatus\b|\bstage\b|\bphase\b|\bpipeline\b", re.I), "status_label"),
     # dates -- more specific patterns first
     (re.compile(r"start\s*date|kick.?off|\bbegin\b", re.I), "start_date"),
-    (re.compile(r"end\s*date|due\s*date|deadline|completion\s*date|close\s*date|expected.*close", re.I), "end_date"),
+    (
+        re.compile(
+            r"end\s*date|due\s*date|deadline|completion\s*date|close\s*date|expected.*close", re.I
+        ),
+        "end_date",
+    ),
     (re.compile(r"\btimeline\b", re.I), "timeline"),
     (re.compile(r"\bduration\b", re.I), "duration_days"),
     (re.compile(r"planned\s*effort|estimated\s*effort|estimate\s*hours?", re.I), "planned_effort"),
-    (re.compile(r"effort\s*spent|actual\s*effort|time\s*spent|hours?\s*spent", re.I), "effort_spent"),
+    (
+        re.compile(r"effort\s*spent|actual\s*effort|time\s*spent|hours?\s*spent", re.I),
+        "effort_spent",
+    ),
     (re.compile(r"\bsubcontractors?\b|\bsub[-\s]?contractors?\b", re.I), "subcontractor"),
     (re.compile(r"\bsuppliers?\b", re.I), "supplier"),
     # money -- word boundaries prevent "subcontractor" matching "contract"
     (re.compile(r"\bbudget\b|\bestimate\b", re.I), "budget_amount"),
-    (re.compile(r"\bcontract\b|\bquote\b|\bprice\b|\bdeal\s+value\b|\bcontract\s+value\b", re.I), "contract_amount"),
+    (
+        re.compile(r"\bcontract\b|\bquote\b|\bprice\b|\bdeal\s+value\b|\bcontract\s+value\b", re.I),
+        "contract_amount",
+    ),
     # contact info
     (re.compile(r"\baddress\b|\blocation\b|\bproperty\b|\bsite\b", re.I), "address"),
     (re.compile(r"\bemail\b|\be-mail\b", re.I), "email"),
@@ -291,6 +303,7 @@ class ColumnExtractor:
 # Per-type value parsers
 # ---------------------------------------------------------------------------
 
+
 def _parse_value(
     col_type: str,
     text: str,
@@ -366,9 +379,7 @@ def _parse_value(
     if col_type == "people":
         if column_value.get("persons_and_teams"):
             return [
-                str(p["id"])
-                for p in column_value["persons_and_teams"]
-                if p.get("kind") == "person"
+                str(p["id"]) for p in column_value["persons_and_teams"] if p.get("kind") == "person"
             ]
         if isinstance(parsed, dict):
             persons = parsed.get("personsAndTeams") or []
@@ -423,6 +434,7 @@ def _parse_date_str(s: str) -> date | None:
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
         try:
             from datetime import datetime
+
             return datetime.strptime(s.strip(), fmt).date()
         except ValueError:
             continue
@@ -451,5 +463,3 @@ def _map_task_status(label: str) -> TaskStatus:
 def _map_lead_stage(label: str) -> LeadStage:
     key = label.strip().lower()
     return _LEAD_STAGE_MAP.get(key, LeadStage.NEW)
-
-

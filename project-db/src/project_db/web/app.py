@@ -6,6 +6,7 @@ Localhost-only.  Mounts:
   - ``/docs`` is FastAPI's auto Swagger -- a free debugging surface, not a
     user-facing API
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,7 +33,6 @@ from project_db.web.routes import proposals as proposal_routes
 from project_db.web.routes import search as search_routes
 from project_db.web.routes import tasks as task_routes
 
-
 _PKG_DIR = Path(__file__).parent
 TEMPLATES_DIR = _PKG_DIR / "templates"
 STATIC_DIR = _PKG_DIR / "static"
@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
     # thread; defaults to "never" so the footer is safe in tests / when
     # refresh is disabled).
     from project_db.web import refresh_state
+
     templates.env.globals["last_refresh"] = refresh_state.get_last
 
     # Plain-language money glossary -- rendered by the project page and the
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
             return None
         try:
             from datetime import datetime
+
             dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
             if dt.tzinfo is not None:
                 dt = dt.replace(tzinfo=None)
@@ -108,8 +110,7 @@ def create_app() -> FastAPI:
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            {"briefing": briefing, "value_caught": value,
-             "summary": summary, "pending": pending},
+            {"briefing": briefing, "value_caught": value, "summary": summary, "pending": pending},
         )
 
     page_router = APIRouter()

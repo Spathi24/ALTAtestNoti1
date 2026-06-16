@@ -4,6 +4,7 @@ The web server's startup auto-refresh runs in a daemon thread and writes its
 result here; the footer reads it so a PM can see "data refreshed N seconds
 ago". Trivial shared state -- this is a single-process, localhost-only app.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

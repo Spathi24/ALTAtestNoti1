@@ -10,11 +10,11 @@ Wraps the byte-level extractors with the policy a real sync needs:
 This is the only place that talks to both the Drive client and the
 DocumentText model.  The byte parsers in ``extractors.py`` are pure.
 """
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -53,9 +53,7 @@ def extract_and_store(
     fixed extractor).
     """
     existing = (
-        session.query(DocumentText)
-        .filter_by(document_id=document.canonical_id)
-        .one_or_none()
+        session.query(DocumentText).filter_by(document_id=document.canonical_id).one_or_none()
     )
     if existing is not None and not overwrite:
         return existing
@@ -119,7 +117,7 @@ def _decide_and_extract(
             raw = client.export_google_doc(file_id, GOOGLE_NATIVE_MIMES[mime])
         else:
             raw = client.download_file(file_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("[GDRIVE] download failed for %s (%s): %s", file_id, mime, exc)
         return None, "failed-download", None
 

@@ -8,6 +8,7 @@ POST /tasks/{id}/set-dates  -- write dates, render the updated row
 GET  /tasks/{id}/dates-form -- render the inline edit form
 GET  /tasks/{id}/row        -- render the static row (Cancel target)
 """
+
 from __future__ import annotations
 
 import uuid as _uuid
@@ -105,7 +106,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         try:
             writeback = deps.build_monday_writeback(session)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return templates.TemplateResponse(
                 request,
                 "_partials/task_dates_form.html",
@@ -117,7 +118,8 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         decided_by = "ui:" + (request.client.host if request.client else "local")
         result = set_task_timeline(
-            session, str(tid),
+            session,
+            str(tid),
             start_date=start_date or None,
             end_date=end_date or None,
             writeback=writeback,

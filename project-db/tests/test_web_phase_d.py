@@ -14,6 +14,7 @@ Coverage:
   - missing connector: idle + error, no DB change
   - 404 for unknown ids on every mutation route
 """
+
 from __future__ import annotations
 
 import json
@@ -26,19 +27,18 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
-from project_db.db.models import (  # noqa: E402
+from project_db.db.base import Base
+from project_db.db.models import (
     Client,
     Organization,
     Project,
     Proposal,
     Task,
 )
-from project_db.db.models.proposals import ProposalStatus  # noqa: E402
-from project_db.db.models.work import ProjectStatus, TaskStatus  # noqa: E402
-
+from project_db.db.models.proposals import ProposalStatus
+from project_db.db.models.work import ProjectStatus, TaskStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -61,6 +61,7 @@ def db_engine():
 @pytest.fixture
 def patched_session_factory(db_engine, monkeypatch):
     from project_db.db import session as session_mod
+
     factory = sessionmaker(bind=db_engine, expire_on_commit=False)
     monkeypatch.setattr(session_mod, "_SessionLocal", factory)
     yield factory
@@ -87,6 +88,7 @@ def patched_writeback(monkeypatch, fake_writeback):
     payload, without ever touching the real Monday API.
     """
     from project_db.web import deps
+
     monkeypatch.setattr(deps, "build_monday_writeback", lambda session: fake_writeback)
     return fake_writeback
 
@@ -94,6 +96,7 @@ def patched_writeback(monkeypatch, fake_writeback):
 @pytest.fixture
 def client(patched_session_factory):
     from project_db.web.app import create_app
+
     return TestClient(create_app())
 
 
@@ -104,7 +107,9 @@ def timeline_proposal(session, org: Organization):
     session.add(c)
     session.flush()
     project = Project(
-        name="P", client_id=c.canonical_id, status=ProjectStatus.ACTIVE,
+        name="P",
+        client_id=c.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
@@ -120,11 +125,13 @@ def timeline_proposal(session, org: Organization):
         entity_type="Task",
         entity_id=task.canonical_id,
         field_name="timeline",
-        proposed_value=json.dumps({
-            "start_date": "2026-07-01",
-            "end_date":   "2026-07-05",
-            "reasoning":  "test fixture",
-        }),
+        proposed_value=json.dumps(
+            {
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-05",
+                "reasoning": "test fixture",
+            }
+        ),
         confidence=0.85,
         status=ProposalStatus.PENDING,
         prompt_version="test-v1",
@@ -145,7 +152,9 @@ def scope_proposal(session, org: Organization):
     session.add(c)
     session.flush()
     project = Project(
-        name="P2", client_id=c.canonical_id, status=ProjectStatus.ACTIVE,
+        name="P2",
+        client_id=c.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
@@ -154,11 +163,13 @@ def scope_proposal(session, org: Organization):
         entity_type="Project",
         entity_id=project.canonical_id,
         field_name="scope_gap",
-        proposed_value=json.dumps({
-            "gap_description": "Missing kitchen demo line item",
-            "suggested_task_title": "Demo kitchen",
-            "reasoning": "test fixture",
-        }),
+        proposed_value=json.dumps(
+            {
+                "gap_description": "Missing kitchen demo line item",
+                "suggested_task_title": "Demo kitchen",
+                "reasoning": "test fixture",
+            }
+        ),
         confidence=0.7,
         status=ProposalStatus.PENDING,
         prompt_version="scope-v1",
@@ -184,26 +195,24 @@ class TestAccept:
         # Adapter called sync_back EXACTLY once with the right payload.
         assert patched_writeback.sync_back.call_count == 1
         call_args = patched_writeback.sync_back.call_args
-        task_arg, field_updates = call_args.args
-        assert field_updates == {
-            "timeline": {"from": "2026-07-01", "to": "2026-07-05"}
-        }
+        _task_arg, field_updates = call_args.args
+        assert field_updates == {"timeline": {"from": "2026-07-01", "to": "2026-07-05"}}
 
         body = resp.text
         assert "ACCEPTED" in body
         assert "Wrote to Monday" in body
 
         session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=timeline_proposal["proposal"].canonical_id
-        ).one()
+        p = (
+            session.query(Proposal)
+            .filter_by(canonical_id=timeline_proposal["proposal"].canonical_id)
+            .one()
+        )
         assert p.status == ProposalStatus.ACCEPTED
         assert p.decided_by and p.decided_by.startswith("ui:")
 
         # task dates mirrored
-        t = session.query(Task).filter_by(
-            canonical_id=timeline_proposal["task"].canonical_id
-        ).one()
+        t = session.query(Task).filter_by(canonical_id=timeline_proposal["task"].canonical_id).one()
         assert t.start_date == date(2026, 7, 1)
         assert t.end_date == date(2026, 7, 5)
 
@@ -246,13 +255,13 @@ class TestAccept:
         assert "PENDING" in body  # idle fragment
 
         session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=timeline_proposal["proposal"].canonical_id
-        ).one()
+        p = (
+            session.query(Proposal)
+            .filter_by(canonical_id=timeline_proposal["proposal"].canonical_id)
+            .one()
+        )
         assert p.status == ProposalStatus.PENDING
-        t = session.query(Task).filter_by(
-            canonical_id=timeline_proposal["task"].canonical_id
-        ).one()
+        t = session.query(Task).filter_by(canonical_id=timeline_proposal["task"].canonical_id).one()
         assert t.start_date is None
 
     def test_accept_with_raising_writeback_leaves_proposal_pending(
@@ -270,12 +279,16 @@ class TestAccept:
         assert "Action failed" in resp.text
 
         session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=timeline_proposal["proposal"].canonical_id
-        ).one()
+        p = (
+            session.query(Proposal)
+            .filter_by(canonical_id=timeline_proposal["proposal"].canonical_id)
+            .one()
+        )
         assert p.status == ProposalStatus.PENDING
 
-    def test_accept_scope_gap_creates_monday_item(self, client, session, scope_proposal, patched_writeback):
+    def test_accept_scope_gap_creates_monday_item(
+        self, client, session, scope_proposal, patched_writeback
+    ):
         """scope_gap proposals now create a new Monday item (not advisory-only).
         create_task is called once; sync_back is NOT called (different path)."""
         pid = str(scope_proposal["proposal"].canonical_id)
@@ -290,16 +303,16 @@ class TestAccept:
         assert patched_writeback.sync_back.call_count == 0
 
         session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=scope_proposal["proposal"].canonical_id
-        ).one()
+        p = (
+            session.query(Proposal)
+            .filter_by(canonical_id=scope_proposal["proposal"].canonical_id)
+            .one()
+        )
         assert p.status == ProposalStatus.ACCEPTED
 
         # A new Task should exist in the DB mirroring the Monday item.
         new_tasks = (
-            session.query(Task)
-            .filter_by(project_id=scope_proposal["project"].canonical_id)
-            .all()
+            session.query(Task).filter_by(project_id=scope_proposal["project"].canonical_id).all()
         )
         assert any(t.title == "Demo kitchen" for t in new_tasks)
 
@@ -307,15 +320,14 @@ class TestAccept:
         resp = client.post("/proposals/00000000-0000-0000-0000-000000000000/accept")
         assert resp.status_code == 404
 
-    def test_accept_when_connector_factory_raises(
-        self, client, timeline_proposal, monkeypatch
-    ):
+    def test_accept_when_connector_factory_raises(self, client, timeline_proposal, monkeypatch):
         """Missing MONDAY_API_TOKEN etc. -- factory raises, route shows
         the error inline, proposal stays PENDING."""
         from project_db.web import deps
 
         def factory(_s):
             raise RuntimeError("MONDAY_API_TOKEN not set")
+
         monkeypatch.setattr(deps, "build_monday_writeback", factory)
 
         pid = str(timeline_proposal["proposal"].canonical_id)
@@ -342,9 +354,11 @@ class TestReject:
         assert "dates conflict with permit window" in body
 
         session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=timeline_proposal["proposal"].canonical_id
-        ).one()
+        p = (
+            session.query(Proposal)
+            .filter_by(canonical_id=timeline_proposal["proposal"].canonical_id)
+            .one()
+        )
         assert p.status == ProposalStatus.REJECTED
         assert p.rejection_reason == "dates conflict with permit window"
 
@@ -356,14 +370,14 @@ class TestReject:
         assert "REJECTED" in resp.text
 
         session.expire_all()
-        p = session.query(Proposal).filter_by(
-            canonical_id=scope_proposal["proposal"].canonical_id
-        ).one()
+        p = (
+            session.query(Proposal)
+            .filter_by(canonical_id=scope_proposal["proposal"].canonical_id)
+            .one()
+        )
         assert p.status == ProposalStatus.REJECTED
 
-    def test_reject_already_rejected_returns_stale(
-        self, client, session, timeline_proposal
-    ):
+    def test_reject_already_rejected_returns_stale(self, client, session, timeline_proposal):
         proposal_id = timeline_proposal["proposal"].canonical_id
         p = session.query(Proposal).filter_by(canonical_id=proposal_id).one()
         p.status = ProposalStatus.REJECTED

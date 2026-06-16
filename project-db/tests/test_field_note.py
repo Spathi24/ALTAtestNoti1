@@ -20,6 +20,7 @@ Coverage:
   - Strategy C task rendering: status grouping, temporal + semantic scoring,
     parent annotation, done trimming
 """
+
 from __future__ import annotations
 
 import json
@@ -29,30 +30,29 @@ from datetime import date, datetime
 import pytest
 
 from project_db.ai.field_note_extraction import (
-    FieldNoteBatch,
-    MockFieldNoteExtractor,
-    NoteChannel,
-    NoteClass,
-    _IMAGE_EXTS,
     _DONE_TRIM_K,
+    _IMAGE_EXTS,
+    MockFieldNoteExtractor,
+    NoteClass,
     _load_image_b64,
     _render_task_block,
-    _task_composite,
-    _keyword_tokens,
     ingest_field_note,
 )
 from project_db.ai.proposals import _ACCEPTABLE_FIELDS, accept_proposal
 from project_db.db.models import (
     FieldNote,
-    NoteChannel as DBNoteChannel,
-    NoteClass as DBNoteClass,
     Project,
     Proposal,
     ProposalStatus,
     Task,
 )
+from project_db.db.models import (
+    NoteChannel as DBNoteChannel,
+)
+from project_db.db.models import (
+    NoteClass as DBNoteClass,
+)
 from project_db.db.models.work import ProjectStatus, TaskStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -75,7 +75,9 @@ def project(session, client_factory):
 
 @pytest.fixture
 def tasks(session, project):
-    t1 = Task(title="Install silicone sealant", status=TaskStatus.TODO, project_id=project.canonical_id)
+    t1 = Task(
+        title="Install silicone sealant", status=TaskStatus.TODO, project_id=project.canonical_id
+    )
     t2 = Task(title="Adjust glass door", status=TaskStatus.TODO, project_id=project.canonical_id)
     t3 = Task(title="Drywall finishing", status=TaskStatus.TODO, project_id=project.canonical_id)
     session.add_all([t1, t2, t3])
@@ -84,20 +86,26 @@ def tasks(session, project):
 
 
 def _mock_done(task_index: int = 0) -> MockFieldNoteExtractor:
-    return MockFieldNoteExtractor(responses=[{
-        "signals": [{
-            "classification": "task_done",
-            "quoted_excerpt": "finished the silicone",
-            "task_index": task_index,
-            "proposed_status": "Done",
-            "proposed_start_date": None,
-            "proposed_end_date": None,
-            "new_task_title": None,
-            "workers": "Marco",
-            "hours_worked": 3.0,
-            "confidence": 0.95,
-        }]
-    }])
+    return MockFieldNoteExtractor(
+        responses=[
+            {
+                "signals": [
+                    {
+                        "classification": "task_done",
+                        "quoted_excerpt": "finished the silicone",
+                        "task_index": task_index,
+                        "proposed_status": "Done",
+                        "proposed_start_date": None,
+                        "proposed_end_date": None,
+                        "new_task_title": None,
+                        "workers": "Marco",
+                        "hours_worked": 3.0,
+                        "confidence": 0.95,
+                    }
+                ]
+            }
+        ]
+    )
 
 
 def _mock_multi() -> MockFieldNoteExtractor:
@@ -108,34 +116,38 @@ def _mock_multi() -> MockFieldNoteExtractor:
     keyword overlap ("door", "glass") and lands at index 0 in the UPCOMING
     group.  Both signals reference task_index=0 (t2).
     """
-    return MockFieldNoteExtractor(responses=[{
-        "signals": [
+    return MockFieldNoteExtractor(
+        responses=[
             {
-                "classification": "task_progress",
-                "quoted_excerpt": "still working on the door",
-                "task_index": 0,
-                "proposed_status": "In Progress",
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.80,
-            },
-            {
-                "classification": "blocker",
-                "quoted_excerpt": "glass door still sticking",
-                "task_index": 0,
-                "proposed_status": "Blocked",
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.90,
-            },
+                "signals": [
+                    {
+                        "classification": "task_progress",
+                        "quoted_excerpt": "still working on the door",
+                        "task_index": 0,
+                        "proposed_status": "In Progress",
+                        "proposed_start_date": None,
+                        "proposed_end_date": None,
+                        "new_task_title": None,
+                        "workers": None,
+                        "hours_worked": None,
+                        "confidence": 0.80,
+                    },
+                    {
+                        "classification": "blocker",
+                        "quoted_excerpt": "glass door still sticking",
+                        "task_index": 0,
+                        "proposed_status": "Blocked",
+                        "proposed_start_date": None,
+                        "proposed_end_date": None,
+                        "new_task_title": None,
+                        "workers": None,
+                        "hours_worked": None,
+                        "confidence": 0.90,
+                    },
+                ]
+            }
         ]
-    }])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +201,9 @@ class TestIngestHappyPath:
     def test_task_done_creates_field_note_and_proposal(self, session, project, tasks):
         ex = _mock_done(task_index=0)
         batch = ingest_field_note(
-            session, ex, project.canonical_id,
+            session,
+            ex,
+            project.canonical_id,
             "finished the silicone in the bathroom",
         )
         session.commit()
@@ -214,21 +228,29 @@ class TestIngestHappyPath:
         assert pv["monday_label"] == "Done"
 
     def test_new_task_creates_advisory_proposal(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "new_task",
-                "quoted_excerpt": "need to replace the threshold",
-                "task_index": None,
-                "proposed_status": None,
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": "Replace door threshold",
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.85,
-            }]
-        }])
-        batch = ingest_field_note(session, ex, project.canonical_id, "need to replace the threshold")
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "new_task",
+                            "quoted_excerpt": "need to replace the threshold",
+                            "task_index": None,
+                            "proposed_status": None,
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": "Replace door threshold",
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.85,
+                        }
+                    ]
+                }
+            ]
+        )
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "need to replace the threshold"
+        )
         session.commit()
 
         assert len(batch.field_notes) == 1
@@ -240,20 +262,26 @@ class TestIngestHappyPath:
         assert pv["title"] == "Replace door threshold"
 
     def test_scope_change_creates_advisory_proposal(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "scope_change",
-                "quoted_excerpt": "owner wants an extra coat of paint",
-                "task_index": None,
-                "proposed_status": None,
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.75,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "scope_change",
+                            "quoted_excerpt": "owner wants an extra coat of paint",
+                            "task_index": None,
+                            "proposed_status": None,
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.75,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "owner wants extra paint")
         session.commit()
 
@@ -263,20 +291,26 @@ class TestIngestHappyPath:
         assert p.entity_type == "Project"
 
     def test_other_creates_field_note_but_no_proposal(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "other",
-                "quoted_excerpt": "everything looks fine today",
-                "task_index": None,
-                "proposed_status": None,
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.60,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "other",
+                            "quoted_excerpt": "everything looks fine today",
+                            "task_index": None,
+                            "proposed_status": None,
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.60,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "looks fine")
         session.commit()
 
@@ -286,7 +320,9 @@ class TestIngestHappyPath:
     def test_multi_signal_note(self, session, project, tasks):
         ex = _mock_multi()
         batch = ingest_field_note(
-            session, ex, project.canonical_id,
+            session,
+            ex,
+            project.canonical_id,
             "still working on the door, glass door still sticking",
         )
         session.commit()
@@ -301,20 +337,26 @@ class TestIngestHappyPath:
     def test_date_shift_with_dates_creates_timeline_proposal(self, session, project, tasks):
         # "drywall pushed to next week": t3 ("Drywall finishing") wins on
         # keyword overlap ("drywall") and is placed at index 0 in UPCOMING.
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "date_shift",
-                "quoted_excerpt": "drywall pushed to next week",
-                "task_index": 0,
-                "proposed_status": None,
-                "proposed_start_date": "2026-06-20",
-                "proposed_end_date": "2026-06-27",
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.80,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "date_shift",
+                            "quoted_excerpt": "drywall pushed to next week",
+                            "task_index": 0,
+                            "proposed_status": None,
+                            "proposed_start_date": "2026-06-20",
+                            "proposed_end_date": "2026-06-27",
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.80,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "drywall pushed to next week")
         session.commit()
 
@@ -345,20 +387,26 @@ class TestIngestConservative:
         assert batch.skipped_reason is not None
 
     def test_missing_quoted_excerpt_rejected(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "task_done",
-                "quoted_excerpt": "",
-                "task_index": 0,
-                "proposed_status": "Done",
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.9,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "task_done",
+                            "quoted_excerpt": "",
+                            "task_index": 0,
+                            "proposed_status": "Done",
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.9,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "finished sealant")
         session.commit()
 
@@ -366,20 +414,26 @@ class TestIngestConservative:
         assert any("A6" in e for e in batch.errors)
 
     def test_declined_match_status_signal_no_proposal(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "task_done",
-                "quoted_excerpt": "done with something",
-                "task_index": None,
-                "proposed_status": "Done",
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.5,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "task_done",
+                            "quoted_excerpt": "done with something",
+                            "task_index": None,
+                            "proposed_status": "Done",
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.5,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "done with something")
         session.commit()
 
@@ -388,20 +442,26 @@ class TestIngestConservative:
         assert any("no matched task" in e for e in batch.errors)
 
     def test_date_shift_without_dates_no_proposal(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "date_shift",
-                "quoted_excerpt": "pushed to later",
-                "task_index": 0,
-                "proposed_status": None,
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.6,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "date_shift",
+                            "quoted_excerpt": "pushed to later",
+                            "task_index": 0,
+                            "proposed_status": None,
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.6,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "pushed to later")
         session.commit()
 
@@ -417,20 +477,26 @@ class TestIngestConservative:
         assert "not found" in batch.skipped_reason
 
     def test_out_of_range_task_index_declined(self, session, project, tasks):
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "task_done",
-                "quoted_excerpt": "finished something",
-                "task_index": 999,
-                "proposed_status": "Done",
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.9,
-            }]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "task_done",
+                            "quoted_excerpt": "finished something",
+                            "task_index": 999,
+                            "proposed_status": "Done",
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.9,
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "finished something")
         session.commit()
 
@@ -452,20 +518,26 @@ class TestSupersede:
         session.commit()
 
         # Second note for the same task -- should supersede the first.
-        ex2 = MockFieldNoteExtractor(responses=[{
-            "signals": [{
-                "classification": "blocker",
-                "quoted_excerpt": "actually stuck now",
-                "task_index": 0,
-                "proposed_status": "Stuck",
-                "proposed_start_date": None,
-                "proposed_end_date": None,
-                "new_task_title": None,
-                "workers": None,
-                "hours_worked": None,
-                "confidence": 0.88,
-            }]
-        }])
+        ex2 = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "blocker",
+                            "quoted_excerpt": "actually stuck now",
+                            "task_index": 0,
+                            "proposed_status": "Stuck",
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.88,
+                        }
+                    ]
+                }
+            ]
+        )
         batch2 = ingest_field_note(session, ex2, project.canonical_id, "second note")
         session.commit()
 
@@ -500,6 +572,7 @@ class TestSupersede:
 
 class FakeWriteback:
     """Minimal sync_back fake for tests."""
+
     def __init__(self, return_value: bool = True) -> None:
         self.calls: list[tuple] = []
         self._rv = return_value
@@ -509,7 +582,9 @@ class FakeWriteback:
         return self._rv
 
 
-def _make_task_status_proposal(session, task, monday_label="Done", canonical_status="DONE") -> Proposal:
+def _make_task_status_proposal(
+    session, task, monday_label="Done", canonical_status="DONE"
+) -> Proposal:
     fn = FieldNote(
         raw_text="finished sealant",
         received_at=datetime.utcnow(),
@@ -548,7 +623,9 @@ class TestAcceptTaskStatus:
         assert result["would_write"] == {"status": {"label": "Done"}}
 
     def test_real_accept_mirrors_status(self, session, project, tasks):
-        p = _make_task_status_proposal(session, tasks[0], monday_label="Done", canonical_status="DONE")
+        p = _make_task_status_proposal(
+            session, tasks[0], monday_label="Done", canonical_status="DONE"
+        )
         wb = FakeWriteback(return_value=True)
         result = accept_proposal(session, p.canonical_id, writeback=wb, decided_by="test")
         assert result["ok"] is True
@@ -558,7 +635,9 @@ class TestAcceptTaskStatus:
         assert tasks[0].monday_status_label == "Done"
 
     def test_accept_blocked(self, session, project, tasks):
-        p = _make_task_status_proposal(session, tasks[1], monday_label="Blocked", canonical_status="BLOCKED")
+        p = _make_task_status_proposal(
+            session, tasks[1], monday_label="Blocked", canonical_status="BLOCKED"
+        )
         wb = FakeWriteback(return_value=True)
         result = accept_proposal(session, p.canonical_id, writeback=wb)
         assert result["ok"] is True
@@ -575,8 +654,10 @@ class TestAcceptTaskStatus:
 
     def test_unknown_canonical_status_rejected(self, session, project, tasks):
         fn = FieldNote(
-            raw_text="x", received_at=datetime.utcnow(),
-            channel=DBNoteChannel.CLI, project_id=tasks[0].project_id,
+            raw_text="x",
+            received_at=datetime.utcnow(),
+            channel=DBNoteChannel.CLI,
+            project_id=tasks[0].project_id,
         )
         session.add(fn)
         session.flush()
@@ -605,19 +686,27 @@ class TestReasoningField:
     """reasoning in proposed_value propagated from extractor response."""
 
     def test_reasoning_stored_in_task_status_proposal(self, session, project, tasks):
-        ext = MockFieldNoteExtractor(responses=[{"signals": [{
-            "classification": "task_done",
-            "quoted_excerpt": "silicone done",
-            "task_index": 0,
-            "proposed_status": "Done",
-            "proposed_start_date": None,
-            "proposed_end_date": None,
-            "new_task_title": None,
-            "workers": None,
-            "hours_worked": None,
-            "confidence": 0.9,
-            "reasoning": "Note says silicone done, matches task 0.",
-        }]}])
+        ext = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "task_done",
+                            "quoted_excerpt": "silicone done",
+                            "task_index": 0,
+                            "proposed_status": "Done",
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.9,
+                            "reasoning": "Note says silicone done, matches task 0.",
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ext, project.canonical_id, "silicone done")
         assert batch.proposal_count == 1
         pv = json.loads(batch.proposals[0].proposed_value)
@@ -633,19 +722,27 @@ class TestReasoningField:
         assert "reasoning" not in pv
 
     def test_reasoning_in_new_task_proposal(self, session, project, tasks):
-        ext = MockFieldNoteExtractor(responses=[{"signals": [{
-            "classification": "new_task",
-            "quoted_excerpt": "need to paint the door",
-            "task_index": None,
-            "proposed_status": None,
-            "proposed_start_date": None,
-            "proposed_end_date": None,
-            "new_task_title": "Paint the door",
-            "workers": None,
-            "hours_worked": None,
-            "confidence": 0.75,
-            "reasoning": "Painting not in existing task list; new_task is correct.",
-        }]}])
+        ext = MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "new_task",
+                            "quoted_excerpt": "need to paint the door",
+                            "task_index": None,
+                            "proposed_status": None,
+                            "proposed_start_date": None,
+                            "proposed_end_date": None,
+                            "new_task_title": "Paint the door",
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.75,
+                            "reasoning": "Painting not in existing task list; new_task is correct.",
+                        }
+                    ]
+                }
+            ]
+        )
         batch = ingest_field_note(session, ext, project.canonical_id, "need to paint the door")
         assert batch.proposal_count == 1
         pv = json.loads(batch.proposals[0].proposed_value)
@@ -657,7 +754,9 @@ class TestTaskContextLine:
 
     def test_includes_status_label_and_dates(self, session, project):
         from datetime import date as _date
+
         from project_db.ai.field_note_extraction import _task_context_line
+
         t = Task(
             title="Pour concrete",
             status=TaskStatus.TODO,
@@ -676,6 +775,7 @@ class TestTaskContextLine:
 
     def test_no_dates_omitted(self, session, project):
         from project_db.ai.field_note_extraction import _task_context_line
+
         t = Task(
             title="Paint walls",
             status=TaskStatus.TODO,
@@ -696,16 +796,23 @@ class TestFieldNoteRag:
         """When an embedding provider is supplied, retrieved contract passages
         are passed to the extractor as context_excerpts."""
         import project_db.ai.proposals as proposals_mod
+
         monkeypatch.setattr(
-            proposals_mod, "_retrieve_proposal_chunks",
+            proposals_mod,
+            "_retrieve_proposal_chunks",
             lambda *a, **k: [
-                {"text": "Contractor shall install custom shower glass in Unit 05.",
-                 "document_name": "SOW.pdf"},
+                {
+                    "text": "Contractor shall install custom shower glass in Unit 05.",
+                    "document_name": "SOW.pdf",
+                },
             ],
         )
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         batch = ingest_field_note(
-            session, ex, project.canonical_id, "the glass is installed",
+            session,
+            ex,
+            project.canonical_id,
+            "the glass is installed",
             embedding_provider=object(),  # non-None triggers RAG
         )
         assert batch.rag_chunks_used == 1
@@ -716,7 +823,10 @@ class TestFieldNoteRag:
         """No embedding provider -> byte-identical pre-RAG behaviour (no excerpts)."""
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         batch = ingest_field_note(
-            session, ex, project.canonical_id, "the glass is installed",
+            session,
+            ex,
+            project.canonical_id,
+            "the glass is installed",
         )
         assert batch.rag_chunks_used == 0
         assert ex.context_calls == [[]]
@@ -727,11 +837,15 @@ class TestFieldNoteRag:
 
         def boom(*a, **k):
             raise RuntimeError("vector store down")
+
         monkeypatch.setattr(proposals_mod, "_retrieve_proposal_chunks", boom)
 
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         batch = ingest_field_note(
-            session, ex, project.canonical_id, "the glass is installed",
+            session,
+            ex,
+            project.canonical_id,
+            "the glass is installed",
             embedding_provider=object(),
         )
         assert batch.rag_chunks_used == 0
@@ -747,7 +861,10 @@ class TestEmailTimestamp:
         email_ts = datetime(2026, 6, 13, 9, 30, 0)
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         ingest_field_note(
-            session, ex, project.canonical_id, "finished the silicone",
+            session,
+            ex,
+            project.canonical_id,
+            "finished the silicone",
             received_at=email_ts,
         )
         assert ex.timestamp_calls == [email_ts]
@@ -757,7 +874,10 @@ class TestEmailTimestamp:
         email_ts = datetime(2026, 6, 13, 9, 30, 0)
         ex = _mock_done(task_index=0)
         batch = ingest_field_note(
-            session, ex, project.canonical_id, "finished the silicone",
+            session,
+            ex,
+            project.canonical_id,
+            "finished the silicone",
             received_at=email_ts,
         )
         session.commit()
@@ -769,7 +889,10 @@ class TestEmailTimestamp:
         before = datetime.utcnow()
         ex = _mock_done(task_index=0)
         batch = ingest_field_note(
-            session, ex, project.canonical_id, "finished the silicone",
+            session,
+            ex,
+            project.canonical_id,
+            "finished the silicone",
         )
         after = datetime.utcnow()
         session.commit()
@@ -795,7 +918,8 @@ class TestNoteTimestampRendering:
 
     def test_format_includes_day_name_and_dates(self):
         from project_db.ai.field_note_extraction import _render_note_timestamp
-        ts = datetime(2026, 6, 13, 9, 30, 0)   # a Saturday
+
+        ts = datetime(2026, 6, 13, 9, 30, 0)  # a Saturday
         block = _render_note_timestamp(ts)
         assert "NOTE SENT: 2026-06-13 09:30 UTC" in block
         assert "Saturday" in block
@@ -804,6 +928,7 @@ class TestNoteTimestampRendering:
     def test_format_ends_with_blank_line(self):
         """Block ends with double newline so it's cleanly separated from task list."""
         from project_db.ai.field_note_extraction import _render_note_timestamp
+
         block = _render_note_timestamp(datetime(2026, 6, 15, 8, 0, 0))
         assert block.endswith("\n\n")
 
@@ -812,27 +937,49 @@ class TestFieldNoteSubtaskWindow:
     """A date_shift on a SUBTASK is bounded loosely by its parent's window."""
 
     def _parent_and_subtask(self, session, project):
-        parent = Task(title="Phase 1", status=TaskStatus.TODO,
-                      project_id=project.canonical_id, is_subitem=False,
-                      start_date=date(2026, 7, 1), end_date=date(2026, 7, 31))
-        session.add(parent); session.commit()
-        sub = Task(title="Sub A", status=TaskStatus.TODO,
-                   project_id=project.canonical_id, is_subitem=True,
-                   parent_task_id=parent.canonical_id)
-        session.add(sub); session.commit()
+        parent = Task(
+            title="Phase 1",
+            status=TaskStatus.TODO,
+            project_id=project.canonical_id,
+            is_subitem=False,
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+        )
+        session.add(parent)
+        session.commit()
+        sub = Task(
+            title="Sub A",
+            status=TaskStatus.TODO,
+            project_id=project.canonical_id,
+            is_subitem=True,
+            parent_task_id=parent.canonical_id,
+        )
+        session.add(sub)
+        session.commit()
         return parent, sub  # parent=index 0, subtask=index 1
 
     def _date_shift_mock(self, task_index, start, end):
-        return MockFieldNoteExtractor(responses=[{"signals": [{
-            "classification": "date_shift",
-            "quoted_excerpt": "pushed to next month",
-            "task_index": task_index,
-            "proposed_status": None,
-            "proposed_start_date": start,
-            "proposed_end_date": end,
-            "new_task_title": None, "workers": None, "hours_worked": None,
-            "confidence": 0.8, "reasoning": "note says so",
-        }]}])
+        return MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "date_shift",
+                            "quoted_excerpt": "pushed to next month",
+                            "task_index": task_index,
+                            "proposed_status": None,
+                            "proposed_start_date": start,
+                            "proposed_end_date": end,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.8,
+                            "reasoning": "note says so",
+                        }
+                    ]
+                }
+            ]
+        )
 
     def test_date_shift_outside_parent_window_warns(self, session, project):
         self._parent_and_subtask(session, project)
@@ -864,7 +1011,9 @@ class TestPhotoIngestion:
     def test_image_paths_passed_to_extractor(self, session, project, tasks):
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         ingest_field_note(
-            session, ex, project.canonical_id,
+            session,
+            ex,
+            project.canonical_id,
             "see attached photo",
             image_paths=["/fake/site_photo.jpg"],
         )
@@ -874,7 +1023,9 @@ class TestPhotoIngestion:
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         paths = ["/fake/a.jpg", "/fake/b.png", "/fake/c.jpeg"]
         ingest_field_note(
-            session, ex, project.canonical_id,
+            session,
+            ex,
+            project.canonical_id,
             "three photos",
             image_paths=paths,
         )
@@ -884,7 +1035,9 @@ class TestPhotoIngestion:
         """empty text + image_paths -> extractor is called (not short-circuited)."""
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         batch = ingest_field_note(
-            session, ex, project.canonical_id,
+            session,
+            ex,
+            project.canonical_id,
             "",  # no text body
             image_paths=["/fake/photo.jpg"],
         )
@@ -896,7 +1049,9 @@ class TestPhotoIngestion:
         """empty text with no images is still rejected (existing behaviour)."""
         ex = MockFieldNoteExtractor(responses=[{"signals": []}])
         batch = ingest_field_note(
-            session, ex, project.canonical_id,
+            session,
+            ex,
+            project.canonical_id,
             "   ",
             image_paths=None,
         )
@@ -937,6 +1092,7 @@ class TestLoadImageB64:
         img = tmp_path / "big.jpg"
         img.write_bytes(b"\xff\xd8\xff")
         import os
+
         monkeypatch.setattr(os.path, "getsize", lambda _: 11 * 1024 * 1024)
         assert _load_image_b64(str(img)) is None
 
@@ -956,10 +1112,12 @@ class TestLoadImageB64:
 class TestRenderTaskBlock:
     """Unit tests for the composite-score task block renderer."""
 
-    def _make_task(self, title, status_label, *, is_subitem=False, parent_id=None,
-                   start=None, end=None):
+    def _make_task(
+        self, title, status_label, *, is_subitem=False, parent_id=None, start=None, end=None
+    ):
         """Build a minimal Task-like object without hitting the DB."""
         from unittest.mock import MagicMock
+
         t = MagicMock()
         t.title = title
         t.monday_status_label = status_label
@@ -975,21 +1133,23 @@ class TestRenderTaskBlock:
 
     def test_active_tasks_appear_before_upcoming_and_done(self):
         from datetime import date as _d
+
         active = self._make_task("Framing", "Working on it")
         upcoming = self._make_task("Paint", "Future steps")
         done = self._make_task("Demo", "Done")
 
-        rendered, ids = _render_task_block(
+        rendered, _ids = _render_task_block(
             [done, upcoming, active], "framing work", today=_d(2026, 6, 15)
         )
         lines = rendered.splitlines()
-        active_hdr = next(i for i, l in enumerate(lines) if "ACTIVE" in l)
-        upcoming_hdr = next(i for i, l in enumerate(lines) if "UPCOMING" in l)
-        done_hdr = next(i for i, l in enumerate(lines) if "COMPLETED" in l)
+        active_hdr = next(i for i, line in enumerate(lines) if "ACTIVE" in line)
+        upcoming_hdr = next(i for i, line in enumerate(lines) if "UPCOMING" in line)
+        done_hdr = next(i for i, line in enumerate(lines) if "COMPLETED" in line)
         assert active_hdr < upcoming_hdr < done_hdr
 
     def test_indices_are_contiguous_and_match_task_ids(self):
         from datetime import date as _d
+
         tasks = [
             self._make_task("Task A", "Working on it"),
             self._make_task("Task B", "Future steps"),
@@ -999,41 +1159,47 @@ class TestRenderTaskBlock:
         assert len(ids) == 3
         # Every [N] in rendered maps to ids[N]
         import re as _re
+
         found_indices = [int(m) for m in _re.findall(r"\[(\d+)\]", rendered)]
         assert found_indices == list(range(len(ids)))
 
     def test_subitem_includes_parent_annotation(self, session, project):
         from datetime import date as _d
+
         parent = Task(
-            title="Wall finishes", status=TaskStatus.TODO,
+            title="Wall finishes",
+            status=TaskStatus.TODO,
             monday_status_label="Working on it",
-            project_id=project.canonical_id, is_subitem=False,
+            project_id=project.canonical_id,
+            is_subitem=False,
         )
         session.add(parent)
         session.flush()
         sub = Task(
-            title="Drywall repair", status=TaskStatus.TODO,
+            title="Drywall repair",
+            status=TaskStatus.TODO,
             monday_status_label="Working on it",
-            project_id=project.canonical_id, is_subitem=True,
+            project_id=project.canonical_id,
+            is_subitem=True,
             parent_task_id=parent.canonical_id,
         )
         session.add(sub)
         session.flush()
 
-        rendered, ids = _render_task_block([parent, sub], "drywall", today=_d(2026, 6, 15))
+        rendered, _ids = _render_task_block([parent, sub], "drywall", today=_d(2026, 6, 15))
         assert "parent: Wall finishes" in rendered
 
     def test_done_section_trimmed_to_done_trim_k(self):
         from datetime import date as _d
-        done_tasks = [
-            self._make_task(f"Done task {i}", "Done") for i in range(_DONE_TRIM_K + 5)
-        ]
+
+        done_tasks = [self._make_task(f"Done task {i}", "Done") for i in range(_DONE_TRIM_K + 5)]
         rendered, ids = _render_task_block(done_tasks, "something", today=_d(2026, 6, 15))
         assert len(ids) == _DONE_TRIM_K
         assert f"top {_DONE_TRIM_K} of {_DONE_TRIM_K + 5}" in rendered
 
     def test_done_not_trimmed_when_under_limit(self):
         from datetime import date as _d
+
         done_tasks = [self._make_task(f"Done {i}", "Done") for i in range(5)]
         rendered, ids = _render_task_block(done_tasks, "something", today=_d(2026, 6, 15))
         assert len(ids) == 5
@@ -1041,40 +1207,44 @@ class TestRenderTaskBlock:
 
     def test_semantic_score_raises_matching_task(self):
         from datetime import date as _d
+
         # "drywall" in note: drywall task should score higher than glass task
         drywall = self._make_task("Drywall finishing", "Future steps")
         glass = self._make_task("Adjust glass door", "Future steps")
-        rendered, ids = _render_task_block(
+        rendered, _ids = _render_task_block(
             [glass, drywall], "drywall repair needed", today=_d(2026, 6, 15)
         )
         # drywall task should be first in UPCOMING (index 0)
-        drywall_line = next(l for l in rendered.splitlines() if "Drywall" in l)
+        drywall_line = next(line for line in rendered.splitlines() if "Drywall" in line)
         assert "[0]" in drywall_line
 
     def test_temporal_proximity_boosts_within_group(self):
         from datetime import date as _d
+
         today = _d(2026, 6, 15)
-        near = self._make_task("Near task", "Future steps",
-                               start=_d(2026, 6, 20), end=_d(2026, 6, 25))
-        far = self._make_task("Far task", "Future steps",
-                              start=_d(2026, 12, 1), end=_d(2026, 12, 31))
-        undated = self._make_task("Undated task", "Future steps")
-        rendered, ids = _render_task_block(
-            [far, undated, near], "general update", today=today
+        near = self._make_task(
+            "Near task", "Future steps", start=_d(2026, 6, 20), end=_d(2026, 6, 25)
         )
+        far = self._make_task(
+            "Far task", "Future steps", start=_d(2026, 12, 1), end=_d(2026, 12, 31)
+        )
+        undated = self._make_task("Undated task", "Future steps")
+        rendered, _ids = _render_task_block([far, undated, near], "general update", today=today)
         # near task wins temporal (1.0), undated is neutral (0.5), far is low (0.15)
-        near_line = next(l for l in rendered.splitlines() if "Near task" in l)
+        near_line = next(line for line in rendered.splitlines() if "Near task" in line)
         assert "[0]" in near_line
 
     def test_undated_task_not_buried_below_far_future(self):
         """Undated (0.5 temporal) beats far-future (0.15 temporal) in the ranking."""
         from datetime import date as _d
+
         today = _d(2026, 6, 15)
-        far = self._make_task("Far future task", "Future steps",
-                              start=_d(2027, 6, 1), end=_d(2027, 6, 30))
+        far = self._make_task(
+            "Far future task", "Future steps", start=_d(2027, 6, 1), end=_d(2027, 6, 30)
+        )
         undated = self._make_task("Undated task", "Future steps")
-        rendered, ids = _render_task_block([far, undated], "general note", today=today)
-        undated_line = next(l for l in rendered.splitlines() if "Undated" in l)
+        rendered, _ids = _render_task_block([far, undated], "general note", today=today)
+        undated_line = next(line for line in rendered.splitlines() if "Undated" in line)
         assert "[0]" in undated_line
 
     def test_empty_task_list_returns_placeholder(self):
@@ -1116,15 +1286,13 @@ class TestParentTaskIndex:
 
     def test_in_range_adds_parent_task_id(self, session, project):
         """parent_task_index=0 on a single-task project resolves to that task's UUID."""
-        parent = Task(
-            title="Drywall work", status=TaskStatus.TODO, project_id=project.canonical_id
-        )
+        parent = Task(title="Drywall work", status=TaskStatus.TODO, project_id=project.canonical_id)
         session.add(parent)
         session.commit()
 
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [self._new_task_signal(parent_task_index=0)]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[{"signals": [self._new_task_signal(parent_task_index=0)]}]
+        )
         batch = ingest_field_note(
             session, ex, project.canonical_id, "we also need to patch the ceiling"
         )
@@ -1137,14 +1305,12 @@ class TestParentTaskIndex:
 
     def test_null_omits_parent_task_id(self, session, project):
         """parent_task_index=null → no parent_task_id key in proposed_value."""
-        session.add(Task(
-            title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id
-        ))
+        session.add(Task(title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id))
         session.commit()
 
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [self._new_task_signal(parent_task_index=None)]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[{"signals": [self._new_task_signal(parent_task_index=None)]}]
+        )
         batch = ingest_field_note(
             session, ex, project.canonical_id, "we also need to patch the ceiling"
         )
@@ -1156,14 +1322,12 @@ class TestParentTaskIndex:
 
     def test_out_of_range_silently_ignored(self, session, project):
         """Out-of-range parent_task_index is silently dropped (no error, no parent key)."""
-        session.add(Task(
-            title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id
-        ))
+        session.add(Task(title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id))
         session.commit()
 
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [self._new_task_signal(parent_task_index=999)]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[{"signals": [self._new_task_signal(parent_task_index=999)]}]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
         session.commit()
 
@@ -1174,14 +1338,12 @@ class TestParentTaskIndex:
 
     def test_negative_index_silently_ignored(self, session, project):
         """Negative parent_task_index is out-of-bounds and silently dropped."""
-        session.add(Task(
-            title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id
-        ))
+        session.add(Task(title="Flooring", status=TaskStatus.TODO, project_id=project.canonical_id))
         session.commit()
 
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [self._new_task_signal(parent_task_index=-1)]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[{"signals": [self._new_task_signal(parent_task_index=-1)]}]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
         session.commit()
 
@@ -1194,14 +1356,17 @@ class TestParentTaskIndex:
         the resolver climbs to the subitem's own parent so the new work still
         lands alongside the related step instead of failing at accept time."""
         top = Task(
-            title="Drywall finishing", status=TaskStatus.IN_PROGRESS,
+            title="Drywall finishing",
+            status=TaskStatus.IN_PROGRESS,
             project_id=project.canonical_id,
         )
         session.add(top)
         session.flush()
         sub = Task(
-            title="Tape and mud", status=TaskStatus.IN_PROGRESS,
-            project_id=project.canonical_id, is_subitem=True,
+            title="Tape and mud",
+            status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id,
+            is_subitem=True,
             parent_task_id=top.canonical_id,
         )
         session.add(sub)
@@ -1209,9 +1374,9 @@ class TestParentTaskIndex:
 
         # Tasks render Active-first; the subitem is index 1 (top is index 0).
         # Point the LLM at the SUBITEM and confirm it climbs to `top`.
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [self._new_task_signal(parent_task_index=1)]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[{"signals": [self._new_task_signal(parent_task_index=1)]}]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
         session.commit()
 
@@ -1224,16 +1389,18 @@ class TestParentTaskIndex:
         host a subitem; the resolver drops the parent rather than emit a
         proposal doomed to fail at accept time."""
         orphan_sub = Task(
-            title="Loose subitem", status=TaskStatus.IN_PROGRESS,
-            project_id=project.canonical_id, is_subitem=True,
+            title="Loose subitem",
+            status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id,
+            is_subitem=True,
             parent_task_id=None,
         )
         session.add(orphan_sub)
         session.commit()
 
-        ex = MockFieldNoteExtractor(responses=[{
-            "signals": [self._new_task_signal(parent_task_index=0)]
-        }])
+        ex = MockFieldNoteExtractor(
+            responses=[{"signals": [self._new_task_signal(parent_task_index=0)]}]
+        )
         batch = ingest_field_note(session, ex, project.canonical_id, "patch the ceiling")
         session.commit()
 

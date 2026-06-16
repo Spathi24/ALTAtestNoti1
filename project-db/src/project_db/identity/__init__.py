@@ -1,4 +1,5 @@
 """Identity resolution layer -- canonical ID strategy."""
+
 from project_db.identity.matcher import (
     EntityMatcher,
     ExactFieldMatcher,

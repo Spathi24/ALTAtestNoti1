@@ -8,11 +8,13 @@ Design mirrors the Document -> DocumentText / FinancialRecord sidecar pattern.
 Every actionable signal generates a Proposal row (via the existing Proposal
 engine) so humans review and accept before anything touches Monday.
 """
+
 from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Column, DateTime, Enum as SAEnum, Float, ForeignKey, Numeric, String, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Numeric, String, Text
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
@@ -56,7 +58,7 @@ class FieldNote(Base, CanonicalMixin):
 
     classification = Column(SAEnum(NoteClass), nullable=True)
     quoted_excerpt = Column(Text, nullable=True)
-    workers = Column(String, nullable=True)      # comma-separated names
+    workers = Column(String, nullable=True)  # comma-separated names
     hours_worked = Column(Numeric(8, 2), nullable=True)
     matched_task_id = Column(
         UUID(as_uuid=True),

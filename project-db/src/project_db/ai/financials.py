@@ -32,6 +32,7 @@ Design rules carried over from the proposal engine:
   - The model extracts; it never does arithmetic.  Sums/margins are the
     reconciliation report's job.
 """
+
 from __future__ import annotations
 
 import json
@@ -122,13 +123,13 @@ def content_is_rollup(text: str | None) -> bool:
 # time from already-extracted fields, so the dashboard reuses one function and
 # there is no column to migrate/backfill.
 FINANCIAL_MONEY_TYPES = {
-    "contract_revenue",   # our quote/contract to the client (renovation revenue)
-    "supplier_cost",      # a contractor/supplier billing us
-    "buyout_cost",        # actual payment to a tenant to vacate (agency or own)
-    "lease_rental",       # lease / rent figures
-    "deposit",            # deposit / down-payment
-    "tax",                # GST/QST/TPS/TVQ
-    "other",              # direction unknown / uncategorized
+    "contract_revenue",  # our quote/contract to the client (renovation revenue)
+    "supplier_cost",  # a contractor/supplier billing us
+    "buyout_cost",  # actual payment to a tenant to vacate (agency or own)
+    "lease_rental",  # lease / rent figures
+    "deposit",  # deposit / down-payment
+    "tax",  # GST/QST/TPS/TVQ
+    "other",  # direction unknown / uncategorized
 }
 
 # Tenant-buyout / settlement signals (EN + FR).  Includes 'tenant'/'locataire'
@@ -172,14 +173,12 @@ def set_document_financial_status(
     did = _as_uuid(document_id)
     if did is None:
         return {"ok": False, "error": f"not a valid UUID: {document_id!r}"}
-    row = (
-        session.query(DocumentFinancialStatus)
-        .filter_by(document_id=did)
-        .one_or_none()
-    )
+    row = session.query(DocumentFinancialStatus).filter_by(document_id=did).one_or_none()
     if row is None:
         row = DocumentFinancialStatus(
-            document_id=did, confirmed=bool(confirmed), decided_by=decided_by,
+            document_id=did,
+            confirmed=bool(confirmed),
+            decided_by=decided_by,
         )
         session.add(row)
     else:
@@ -220,6 +219,7 @@ def classify_money_type(
         return "supplier_cost"
     return "other"
 
+
 # Who "we" are -- the signal the model needs to tell client-facing revenue
 # (a quote/estimate/invoice WE issue) from contractor cost (a bill issued TO
 # us).  Without this, a detailed cost-itemized estimate on our own letterhead
@@ -231,23 +231,57 @@ DEFAULT_COMPANY_NAME = "Alta Construction Group"
 def _company_name() -> str:
     return (os.environ.get("COMPANY_NAME") or DEFAULT_COMPANY_NAME).strip()
 
+
 # Bilingual (EN/FR) keyword priors used to pick which of a project's many
 # documents are worth sending to the model.  This is ONLY a cheap pre-filter
 # to keep the prompt small and focused -- the model still reads the content
 # and decides.  Folder/name signal is a hint, never authoritative (5768's
 # "Invoices" folder held a quote), so a generous prior is fine.
 _FINANCIAL_KEYWORDS = (
-    "invoice", "facture", "quote", "quoting", "soumission", "devis", "estimate",
-    "estimat", "receipt", "quittance", "payment", "paiement", "deposit",
-    "acompte", "contract", "contrat", "change order", "purchase", "bon de",
-    "sales", "billing", "cost", "budget", "financ", "material", "materiel",
-    "contractor", "entrepreneur", "sub quote", "order",
+    "invoice",
+    "facture",
+    "quote",
+    "quoting",
+    "soumission",
+    "devis",
+    "estimate",
+    "estimat",
+    "receipt",
+    "quittance",
+    "payment",
+    "paiement",
+    "deposit",
+    "acompte",
+    "contract",
+    "contrat",
+    "change order",
+    "purchase",
+    "bon de",
+    "sales",
+    "billing",
+    "cost",
+    "budget",
+    "financ",
+    "material",
+    "materiel",
+    "contractor",
+    "entrepreneur",
+    "sub quote",
+    "order",
     # Added 2026-06-04: real project financial docs were being filtered out
     # because the gate only checked the file NAME and missed these (923 Rockland
     # had 0 records: "Final SOW.pdf" / "preliminary quoting file.xlsx" all
     # scored 0 -- "quote" does not match "quoting", and SOW/scope had no keyword).
-    "sow", "scope of work", "proposal", "milestone", "retainage", "holdback",
-    "work package", "bid", "tender", "$",
+    "sow",
+    "scope of work",
+    "proposal",
+    "milestone",
+    "retainage",
+    "holdback",
+    "work package",
+    "bid",
+    "tender",
+    "$",
 )
 
 # Clearly NON-transactional analysis / underwriting / model spreadsheets that
@@ -281,12 +315,13 @@ _FINANCIAL_MIMES = {
 @dataclass
 class FinancialExtractionBatch:
     """Outcome of one extraction run -- everything the CLI needs to report."""
+
     project_id: str
     project_name: str
     prompt_version: str
     records: list[FinancialRecord] = field(default_factory=list)
     documents_considered: int = 0
-    superseded_count: int = 0          # prior rows deleted on a fresh run
+    superseded_count: int = 0  # prior rows deleted on a fresh run
     llm_raw_item_count: int = 0
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -351,7 +386,8 @@ def extract_financials_for_project(
     project_uuid = _as_uuid(project_id)
     project = (
         session.query(Project).filter_by(canonical_id=project_uuid).one_or_none()
-        if project_uuid else None
+        if project_uuid
+        else None
     )
     project_name = project.name if project is not None else str(project_id)
     batch = FinancialExtractionBatch(
@@ -365,7 +401,8 @@ def extract_financials_for_project(
         return batch
 
     candidates = _select_financial_documents(
-        session, project_id,
+        session,
+        project_id,
         max_documents=max_documents,
         per_doc_char_cap=per_doc_char_cap,
         total_char_budget=max_documents * per_doc_char_cap,
@@ -385,11 +422,7 @@ def extract_financials_for_project(
     # midway) must never destroy the previously-good extraction.  (Learned
     # 2026-05-29: an up-front delete wiped 189 good records when the batches
     # then 429'd.)
-    prior = (
-        session.query(FinancialRecord)
-        .filter(FinancialRecord.project_id == project_uuid)
-        .all()
-    )
+    prior = session.query(FinancialRecord).filter(FinancialRecord.project_id == project_uuid).all()
 
     new_records: list[FinancialRecord] = []
     any_batch_failed = False
@@ -397,22 +430,19 @@ def extract_financials_for_project(
         system, user = _build_financial_prompt(chunk, company_name=_company_name())
         try:
             raw = _complete_with_backoff(
-                provider, system, user, max_output_tokens,
+                provider,
+                system,
+                user,
+                max_output_tokens,
             )
         except LLMProviderError as exc:
-            names = ", ".join(
-                (c.document.name if c.document is not None else "?") for c in chunk
-            )
-            batch.errors.append(
-                f"LLM call failed for batch [{names[:120]}]: {exc}"
-            )
+            names = ", ".join((c.document.name if c.document is not None else "?") for c in chunk)
+            batch.errors.append(f"LLM call failed for batch [{names[:120]}]: {exc}")
             any_batch_failed = True
             continue
         items = _coerce_item_list(raw, key="records")
         batch.llm_raw_item_count += len(items)
-        new_records.extend(
-            _build_records_for_batch(batch, items, chunk, project_uuid)
-        )
+        new_records.extend(_build_records_for_batch(batch, items, chunk, project_uuid))
 
     if any_batch_failed:
         # All-or-nothing: keep prior records, write nothing.  Better a stale
@@ -438,8 +468,13 @@ def extract_financials_for_project(
 
 
 def _complete_with_backoff(
-    provider: LLMProvider, system: str, user: str, max_tokens: int,
-    *, retries: int = 2, base_delay: float = 8.0,
+    provider: LLMProvider,
+    system: str,
+    user: str,
+    max_tokens: int,
+    *,
+    retries: int = 2,
+    base_delay: float = 8.0,
 ) -> Any:
     """complete_json with linear backoff on provider errors (transient 429s).
 
@@ -470,8 +505,17 @@ def _complete_with_backoff(
 
 
 _TRANSIENT_MARKERS = (
-    "429", "rate limit", "rate_limit", "overloaded", "529", "503", "502",
-    "500", "timeout", "timed out", "connection",
+    "429",
+    "rate limit",
+    "rate_limit",
+    "overloaded",
+    "529",
+    "503",
+    "502",
+    "500",
+    "timeout",
+    "timed out",
+    "connection",
 )
 
 
@@ -481,7 +525,9 @@ def _is_transient(message: str) -> bool:
 
 
 def _chunk_candidates(
-    candidates: list[_Candidate], char_budget: int, max_docs: int,
+    candidates: list[_Candidate],
+    char_budget: int,
+    max_docs: int,
 ) -> list[list[_Candidate]]:
     """Greedily group candidates into batches bounded by char budget + count.
 
@@ -511,9 +557,10 @@ def _chunk_candidates(
 @dataclass
 class _Candidate:
     """A financial-candidate document plus the (clipped) text shown to the LLM."""
+
     document: Document
-    text: str            # clipped to per_doc_char_cap
-    full_text: str       # full extracted text, for excerpt verification
+    text: str  # clipped to per_doc_char_cap
+    full_text: str  # full extracted text, for excerpt verification
     truncated: bool
 
 
@@ -605,9 +652,7 @@ def _select_financial_documents(
         is_contract_shaped = doc.mime_type in _CONTRACT_SHAPED_MIMES
         if score == 0 and not is_contract_shaped:
             continue
-        scored.append(
-            (max(score, 1), doc.modified_at_source or doc.created_at, doc, txt)
-        )
+        scored.append((max(score, 1), doc.modified_at_source or doc.created_at, doc, txt))
 
     # Highest keyword score first, then most-recently modified.
     scored.sort(key=lambda r: (r[0], r[1] or datetime.min), reverse=True)
@@ -641,7 +686,9 @@ def _select_financial_documents(
 
 
 def _build_financial_prompt(
-    candidates: list[_Candidate], *, company_name: str = DEFAULT_COMPANY_NAME,
+    candidates: list[_Candidate],
+    *,
+    company_name: str = DEFAULT_COMPANY_NAME,
 ) -> tuple[str, str]:
     """Construct (system, user) for financial extraction.
 
@@ -653,7 +700,7 @@ def _build_financial_prompt(
         "estate company.  You read financial documents and extract every "
         "monetary amount EXACTLY as written.  Documents may be in English or "
         "French.\n\n"
-        f"OUR COMPANY is \"{company_name}\".  Deciding the DIRECTION of money "
+        f'OUR COMPANY is "{company_name}".  Deciding the DIRECTION of money '
         "hinges on who ISSUED a document and who it is ADDRESSED to:\n"
         "- MONEY IN (direction='client_in'): the document is issued BY us and "
         "addressed to a CLIENT/tenant -- our revenue.  Tells: our name on the "
@@ -712,8 +759,7 @@ def _build_financial_prompt(
 
     lines: list[str] = []
     lines.append(
-        f"=== FINANCIAL DOCUMENTS ({len(candidates)}) -- "
-        f"reference each by its [index] ==="
+        f"=== FINANCIAL DOCUMENTS ({len(candidates)}) -- reference each by its [index] ==="
     )
     for i, cand in enumerate(candidates):
         d = cand.document
@@ -763,7 +809,7 @@ def _build_financial_prompt(
         '      "phase": "<phase/section label if the document is phased, '
         'else empty>",\n'
         '      "amount": <number, no currency symbol or thousands '
-        'separators>,\n'
+        "separators>,\n"
         '      "currency": "<e.g. CAD, USD; empty if unstated>",\n'
         '      "doc_date": "YYYY-MM-DD or empty",\n'
         '      "quoted_excerpt": "<verbatim text containing the amount, '
@@ -772,7 +818,7 @@ def _build_financial_prompt(
         "    }\n"
         "  ]\n"
         "}\n\n"
-        'If no document contains a clear monetary amount, return '
+        "If no document contains a clear monetary amount, return "
         '{"records": []}.'
     )
     return system, user
@@ -812,9 +858,7 @@ def _build_records_for_batch(
 
         amount = _parse_amount(raw_item.get("amount"))
         if amount is None:
-            batch.errors.append(
-                f"doc_index={idx}: unparseable amount {raw_item.get('amount')!r}"
-            )
+            batch.errors.append(f"doc_index={idx}: unparseable amount {raw_item.get('amount')!r}")
             continue
         # Skip $0 / placeholder amounts (blank template lines) -- they carry no
         # money signal and pollute the record list (e.g. quittance templates).
@@ -822,16 +866,27 @@ def _build_records_for_batch(
             continue
 
         direction = _coerce_vocab(
-            raw_item.get("direction"), FINANCIAL_DIRECTIONS, "unknown",
-            batch, f"doc_index={idx} direction",
+            raw_item.get("direction"),
+            FINANCIAL_DIRECTIONS,
+            "unknown",
+            batch,
+            f"doc_index={idx} direction",
         )
         doc_role = _coerce_vocab(
-            raw_item.get("doc_role"), FINANCIAL_DOC_ROLES, "other",
-            batch, f"doc_index={idx} doc_role", allow_empty=True,
+            raw_item.get("doc_role"),
+            FINANCIAL_DOC_ROLES,
+            "other",
+            batch,
+            f"doc_index={idx} doc_role",
+            allow_empty=True,
         )
         record_kind = _coerce_vocab(
-            raw_item.get("record_kind"), FINANCIAL_RECORD_KINDS, "other",
-            batch, f"doc_index={idx} record_kind", allow_empty=True,
+            raw_item.get("record_kind"),
+            FINANCIAL_RECORD_KINDS,
+            "other",
+            batch,
+            f"doc_index={idx} record_kind",
+            allow_empty=True,
         )
 
         cand = candidates[idx]
@@ -921,8 +976,7 @@ def _coerce_vocab(
         return s
     if not allow_empty or s:
         batch.warnings.append(
-            f"{where}: unknown value {s!r} -- expected one of "
-            f"{sorted(vocab)}; using {default!r}"
+            f"{where}: unknown value {s!r} -- expected one of {sorted(vocab)}; using {default!r}"
         )
     return default
 
@@ -955,9 +1009,9 @@ def _number_interpretations(token: str) -> set[Decimal]:
         if tok.rfind(",") > tok.rfind("."):
             cands.append(tok.replace(".", "").replace(",", "."))  # European 1.234,56
         else:
-            cands.append(tok.replace(",", ""))                    # English 1,234.56
+            cands.append(tok.replace(",", ""))  # English 1,234.56
     elif has_c:
-        cands.append(tok.replace(",", ""))                        # comma = thousands
+        cands.append(tok.replace(",", ""))  # comma = thousands
         # A single comma with 1-2 trailing digits is a French decimal (923,44).
         if tok.count(",") == 1 and 1 <= len(tok.rsplit(",", 1)[1]) <= 2:
             cands.append(tok.replace(",", "."))

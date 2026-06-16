@@ -13,9 +13,11 @@ needed, no network calls, repeatable.  Two construction patterns:
 Every call is captured in ``self.calls`` so tests can assert what was
 sent: ``provider.calls[0]["messages"]``, etc.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from project_db.ai.providers.base import (
     LLMMessage,
@@ -48,19 +50,24 @@ class MockLLMProvider(LLMProvider):
         max_tokens: int = 4000,
         response_format: ResponseFormat = "text",
     ) -> LLMResponse:
-        self.calls.append({
-            "messages": messages,
-            "system": system,
-            "model": model,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "response_format": response_format,
-        })
+        self.calls.append(
+            {
+                "messages": messages,
+                "system": system,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "response_format": response_format,
+            }
+        )
 
         if self._on_call is not None:
             content = self._on_call(
-                messages=messages, system=system, model=model,
-                temperature=temperature, max_tokens=max_tokens,
+                messages=messages,
+                system=system,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 response_format=response_format,
             )
         elif self._responses:
@@ -72,8 +79,10 @@ class MockLLMProvider(LLMProvider):
         return LLMResponse(
             content=content,
             finish_reason="stop",
-            usage={"input_tokens": sum(len(m.content) for m in messages) // 4,
-                   "output_tokens": len(content) // 4},
+            usage={
+                "input_tokens": sum(len(m.content) for m in messages) // 4,
+                "output_tokens": len(content) // 4,
+            },
             model=model or "mock",
             raw=None,
         )

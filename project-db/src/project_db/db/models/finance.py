@@ -13,10 +13,10 @@ against a known vocabulary (unknown values warn, never crash) so the model
 survives the file-convention drift the owner flagged, and the raw LLM item is
 kept in `source_meta_json`.
 """
+
 from __future__ import annotations
 
 import enum
-
 from datetime import datetime
 
 from sqlalchemy import (
@@ -24,17 +24,18 @@ from sqlalchemy import (
     Column,
     Date,
     DateTime,
-    Enum as SAEnum,
     Float,
     ForeignKey,
     Numeric,
     String,
     Text,
 )
+from sqlalchemy import (
+    Enum as SAEnum,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
-
 
 # --- FinancialRecord vocabularies -------------------------------------------
 # Plain string sets, NOT DB enums: the owner asked us not to hardcode a rigid
@@ -47,7 +48,12 @@ from project_db.db.base import Base, CanonicalMixin
 FINANCIAL_DIRECTIONS = {"client_in", "contractor_out", "unknown"}
 # What kind of financial document the amount came from.
 FINANCIAL_DOC_ROLES = {
-    "quote", "estimate", "invoice", "receipt", "change_order", "other",
+    "quote",
+    "estimate",
+    "invoice",
+    "receipt",
+    "change_order",
+    "other",
 }
 # What the individual amount represents within its document.  Used by the
 # reconciliation report to avoid double-counting a line item AND its total.
@@ -68,9 +74,7 @@ class Invoice(Base, CanonicalMixin):
     amount = Column(Numeric(12, 2), nullable=False, default=0)
     issue_date = Column(Date, nullable=False)
     due_date = Column(Date, nullable=True)
-    status = Column(
-        SAEnum(InvoiceStatus), nullable=False, default=InvoiceStatus.DRAFT
-    )
+    status = Column(SAEnum(InvoiceStatus), nullable=False, default=InvoiceStatus.DRAFT)
 
     project_id = Column(
         UUID(as_uuid=True),
@@ -121,13 +125,13 @@ class FinancialRecord(Base, CanonicalMixin):
     # report prefer a document's total over re-summing its line items.
     record_kind = Column(String, nullable=True)
 
-    counterparty = Column(String, nullable=True)   # client or contractor name
-    description = Column(Text, nullable=True)        # what the amount is for
-    phase = Column(String, nullable=True)            # phase label, if phased
+    counterparty = Column(String, nullable=True)  # client or contractor name
+    description = Column(Text, nullable=True)  # what the amount is for
+    phase = Column(String, nullable=True)  # phase label, if phased
 
     amount = Column(Numeric(14, 2), nullable=True)
-    currency = Column(String, nullable=True)         # e.g. CAD, USD
-    doc_date = Column(Date, nullable=True)           # date on the document
+    currency = Column(String, nullable=True)  # e.g. CAD, USD
+    doc_date = Column(Date, nullable=True)  # date on the document
 
     # Verbatim evidence -- the exact text from the document containing the
     # amount.  A reviewer can Ctrl-F this against the extracted DocumentText.

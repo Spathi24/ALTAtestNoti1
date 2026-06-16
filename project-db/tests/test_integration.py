@@ -4,12 +4,12 @@ Exercises the end-to-end shape of cross-system data: same client in two
 sources resolves to one canonical entity, project spans Monday + QB IDs,
 invoice links to project by code, delta sync timestamps advance.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-import pytest
 from sqlalchemy.orm import Session
 
 from project_db.db.models import (
@@ -56,9 +56,7 @@ class TestMultiSourceDeduplication:
 
         assert qb.entity.canonical_id == monday.entity.canonical_id
 
-        ext_ids = session.query(ExternalId).filter_by(
-            canonical_id=monday.entity.canonical_id
-        ).all()
+        ext_ids = session.query(ExternalId).filter_by(canonical_id=monday.entity.canonical_id).all()
         assert len(ext_ids) == 2
         sources = {e.source for e in ext_ids}
         assert SourceSystem.MONDAY in sources
@@ -66,9 +64,7 @@ class TestMultiSourceDeduplication:
 
 
 class TestCrossSystemProjectTracking:
-    def test_project_with_monday_board_and_qb_job(
-        self, session: Session, org, client_factory
-    ):
+    def test_project_with_monday_board_and_qb_job(self, session: Session, org, client_factory):
         client = client_factory(name="Owner")
         project = Project(
             name="923 Rockland Renovation",
@@ -98,9 +94,7 @@ class TestCrossSystemProjectTracking:
         )
         session.commit()
 
-        ext_ids = session.query(ExternalId).filter_by(
-            canonical_id=project.canonical_id
-        ).all()
+        ext_ids = session.query(ExternalId).filter_by(canonical_id=project.canonical_id).all()
         assert len(ext_ids) == 2
         assert {e.source for e in ext_ids} == {
             SourceSystem.MONDAY,
@@ -203,9 +197,7 @@ class TestComplexMultiSourceScenario:
 
 
 class TestDeltaSyncIncremental:
-    def test_external_id_last_synced_at_advances(
-        self, session: Session, org, client_factory
-    ):
+    def test_external_id_last_synced_at_advances(self, session: Session, org, client_factory):
         client = client_factory(name="Acme")
         ext = ExternalId(
             source=SourceSystem.MONDAY,

@@ -14,11 +14,13 @@ Polymorphic by design:
     structured payloads uniformly. Readers parse based on `field_name`
     semantics.
 """
+
 from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Column, DateTime, Enum as SAEnum, Float, String, Text
+from sqlalchemy import Column, DateTime, Float, String, Text
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin

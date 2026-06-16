@@ -1,4 +1,5 @@
 """Project list + detail + document detail routes.  Read-only."""
+
 from __future__ import annotations
 
 import uuid as _uuid
@@ -16,9 +17,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
     @router.get("/projects", response_class=HTMLResponse)
     def projects_index(request: Request, session: Session = Depends(db)) -> HTMLResponse:
         rows = ui_views.project_list_rows(session)
-        return templates.TemplateResponse(
-            request, "project_list.html", {"rows": rows}
-        )
+        return templates.TemplateResponse(request, "project_list.html", {"rows": rows})
 
     @router.get("/projects/{project_id}", response_class=HTMLResponse)
     def project_show(
@@ -29,9 +28,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         data = ui_views.project_detail(session, project_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        return templates.TemplateResponse(
-            request, "project_detail.html", {"d": data}
-        )
+        return templates.TemplateResponse(request, "project_detail.html", {"d": data})
 
     @router.get("/projects/{project_id}/financials", response_class=HTMLResponse)
     def project_financials_show(
@@ -42,12 +39,9 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         data = ui_views.project_financials(session, project_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        return templates.TemplateResponse(
-            request, "project_financials.html", {"d": data}
-        )
+        return templates.TemplateResponse(request, "project_financials.html", {"d": data})
 
-    @router.post("/documents/{document_id}/financial-status",
-                 response_class=HTMLResponse)
+    @router.post("/documents/{document_id}/financial-status", response_class=HTMLResponse)
     def set_financial_status(
         document_id: str,
         request: Request,
@@ -77,16 +71,17 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
 
         val = confirmed.strip().lower() in ("true", "1", "yes", "on")
         res = set_document_financial_status(
-            session, document_id, val, decided_by="ui",
+            session,
+            document_id,
+            val,
+            decided_by="ui",
         )
         if not res.get("ok"):
             raise HTTPException(status_code=400, detail=res.get("error", "bad request"))
         data = ui_views.project_financials(session, str(doc.project_id))
         if data is None:
             raise HTTPException(status_code=404, detail="project not found")
-        return templates.TemplateResponse(
-            request, "_partials/financials_body.html", {"d": data}
-        )
+        return templates.TemplateResponse(request, "_partials/financials_body.html", {"d": data})
 
     @router.post("/projects/{project_id}/field-note", response_class=HTMLResponse)
     def project_field_note_submit(
@@ -101,10 +96,11 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         The session is committed here -- the service function flushes but the
         route owns the transaction boundary.
         """
-        result = ui_views.submit_field_note(session, project_id, note_text)
+        ui_views.submit_field_note(session, project_id, note_text)
         session.commit()
         # Redirect back to the project proposals section so the PM sees the queue.
         from fastapi.responses import RedirectResponse
+
         return RedirectResponse(
             url=f"/projects/{project_id}#proposals",
             status_code=303,
@@ -145,6 +141,4 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         data = ui_views.document_detail(session, document_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Document not found")
-        return templates.TemplateResponse(
-            request, "document_detail.html", {"d": data}
-        )
+        return templates.TemplateResponse(request, "document_detail.html", {"d": data})

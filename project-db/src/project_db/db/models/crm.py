@@ -1,10 +1,11 @@
 """CRM pipeline entities: Lead → Deal → (Project)."""
+
 from __future__ import annotations
 
 import enum
-from datetime import date
 
-from sqlalchemy import Column, Date, Enum as SAEnum, Float, ForeignKey, Numeric, String
+from sqlalchemy import Column, Date, Float, ForeignKey, Numeric, String
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin

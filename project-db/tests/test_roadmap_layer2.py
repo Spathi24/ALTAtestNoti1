@@ -20,12 +20,14 @@ Tests cover:
     block reaches the LLM call args; the parsed source label lands
     in the Proposal row
 """
+
 from __future__ import annotations
 
 import json
 
 import pytest
 
+from project_db.ai.context import ProjectContext
 from project_db.ai.proposals import (
     SCOPE_PROMPT_VERSION,
     TIMELINE_PROMPT_VERSION,
@@ -33,7 +35,6 @@ from project_db.ai.proposals import (
     _build_timeline_prompt,
     generate_scope_proposals,
 )
-from project_db.ai.context import ProjectContext
 from project_db.ai.providers.mock import MockLLMProvider
 from project_db.ai.roadmap import import_roadmap_rows, list_roadmap_tasks
 from project_db.db.models import (
@@ -48,7 +49,6 @@ from project_db.db.models import (
     Task,
 )
 from project_db.db.models.docs import DocumentText
-from project_db.db.models.proposals import ProposalStatus
 from project_db.db.models.work import ProjectStatus, TaskStatus
 
 
@@ -57,13 +57,28 @@ def roadmap(session):
     """Seed a tiny roadmap (3 tasks, mixed actors) into the test DB."""
     rows = [
         # SD: one ARCHITECT (will be filtered out) + one BOTH
-        {"phase": RoadmapPhase.SD, "ordinal": 1, "task_name": "Site Analysis",
-         "sub_tasks": ["a"], "notes": None},
-        {"phase": RoadmapPhase.SD, "ordinal": 2, "task_name": "Project Kickoff",
-         "sub_tasks": ["a"], "notes": None},
+        {
+            "phase": RoadmapPhase.SD,
+            "ordinal": 1,
+            "task_name": "Site Analysis",
+            "sub_tasks": ["a"],
+            "notes": None,
+        },
+        {
+            "phase": RoadmapPhase.SD,
+            "ordinal": 2,
+            "task_name": "Project Kickoff",
+            "sub_tasks": ["a"],
+            "notes": None,
+        },
         # CA: one CONTRACTOR
-        {"phase": RoadmapPhase.CA, "ordinal": 1, "task_name": "Punch List",
-         "sub_tasks": None, "notes": None},
+        {
+            "phase": RoadmapPhase.CA,
+            "ordinal": 1,
+            "task_name": "Punch List",
+            "sub_tasks": None,
+            "notes": None,
+        },
     ]
     import_roadmap_rows(session, rows)
 
@@ -88,7 +103,10 @@ class TestRoadmapActorColumn:
         Verify NULL is allowed (the filter helper treats NULL as
         'pre-classify; do not inject')."""
         rt = RoadmapTask(
-            phase=RoadmapPhase.SD, ordinal=99, task_name="t", actor=None,
+            phase=RoadmapPhase.SD,
+            ordinal=99,
+            task_name="t",
+            actor=None,
         )
         session.add(rt)
         session.commit()
@@ -97,7 +115,9 @@ class TestRoadmapActorColumn:
 
     def test_enum_values(self):
         assert [a.value for a in RoadmapActor] == [
-            "ARCHITECT", "CONTRACTOR", "BOTH",
+            "ARCHITECT",
+            "CONTRACTOR",
+            "BOTH",
         ]
 
 
@@ -116,7 +136,8 @@ class TestListRoadmapTasksFilter:
 
     def test_contractor_plus_both(self, session, roadmap):
         rows = list_roadmap_tasks(
-            session, actors=[RoadmapActor.CONTRACTOR, RoadmapActor.BOTH],
+            session,
+            actors=[RoadmapActor.CONTRACTOR, RoadmapActor.BOTH],
         )
         names = {r["task_name"] for r in rows}
         assert names == {"Project Kickoff", "Punch List"}  # no Site Analysis
@@ -151,9 +172,14 @@ def _trivial_ctx() -> ProjectContext:
         tasks=[],
         documents=[],
         document_texts=[
-            {"name": "SOW.pdf", "folder_path": "p/", "mime_type": "application/pdf",
-             "text": "Scope: install kitchen.", "truncated": False,
-             "document_id": "abc"}
+            {
+                "name": "SOW.pdf",
+                "folder_path": "p/",
+                "mime_type": "application/pdf",
+                "text": "Scope: install kitchen.",
+                "truncated": False,
+                "document_id": "abc",
+            }
         ],
         invoices=[],
         daily_logs=[],
@@ -176,7 +202,7 @@ class TestTimelinePromptHasNoRoadmap:
         from datetime import date
 
         ctx = _trivial_ctx()
-        sys_p, user_p = _build_timeline_prompt(
+        _sys_p, user_p = _build_timeline_prompt(
             ctx,
             dateless=[{"title": "T", "is_subitem": False}],
             dated=[],
@@ -223,30 +249,39 @@ def scope_world(session, org: Organization, roadmap):
     session.add(c)
     session.flush()
     project = Project(
-        name="P", client_id=c.canonical_id, status=ProjectStatus.ACTIVE,
+        name="P",
+        client_id=c.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
     # One Monday task so the prompt has tasks to compare against
-    session.add(Task(
-        project_id=project.canonical_id, title="Existing task",
-        status=TaskStatus.TODO,
-    ))
+    session.add(
+        Task(
+            project_id=project.canonical_id,
+            title="Existing task",
+            status=TaskStatus.TODO,
+        )
+    )
     session.flush()
     doc = Document(
         project_id=project.canonical_id,
-        name="SOW.pdf", mime_type="application/pdf",
-        url="drive://x", folder_path="01. PROJECTS/ACTIVE/P",
+        name="SOW.pdf",
+        mime_type="application/pdf",
+        url="drive://x",
+        folder_path="01. PROJECTS/ACTIVE/P",
         is_trashed=False,
     )
     session.add(doc)
     session.flush()
-    session.add(DocumentText(
-        document_id=doc.canonical_id,
-        extracted_text="Scope: install kitchen cabinets and complete punch list.",
-        extraction_method="pdf",
-        token_count=20,
-    ))
+    session.add(
+        DocumentText(
+            document_id=doc.canonical_id,
+            extracted_text="Scope: install kitchen cabinets and complete punch list.",
+            extraction_method="pdf",
+            token_count=20,
+        )
+    )
     session.commit()
     return {"project": project, "doc": doc}
 
@@ -257,7 +292,9 @@ class TestGenerateScopeNoRoadmapInjection:
         must NOT carry the roadmap section (injection removed 2026-05-29)."""
         provider = MockLLMProvider(responses=[json.dumps({"scope_gaps": []})])
         generate_scope_proposals(
-            session, provider, scope_world["project"].canonical_id,
+            session,
+            provider,
+            scope_world["project"].canonical_id,
         )
         assert provider.calls
         last_user = provider.calls[-1]["messages"][-1].content
@@ -267,17 +304,27 @@ class TestGenerateScopeNoRoadmapInjection:
     def test_source_label_still_persists_if_model_supplies_it(self, session, scope_world):
         """Backward compat: _persist_scope_items still records a `source`
         label the model happens to return, defaulting to 'contract'."""
-        provider = MockLLMProvider(responses=[json.dumps({
-            "scope_gaps": [{
-                "scope_item": "Install kitchen cabinets",
-                "suggested_task_title": "Install kitchen cabinets",
-                "confidence": 0.9,
-                "reasoning": "SOW.pdf states 'install kitchen'.",
-                "source_document": "SOW.pdf",
-            }]
-        })])
+        provider = MockLLMProvider(
+            responses=[
+                json.dumps(
+                    {
+                        "scope_gaps": [
+                            {
+                                "scope_item": "Install kitchen cabinets",
+                                "suggested_task_title": "Install kitchen cabinets",
+                                "confidence": 0.9,
+                                "reasoning": "SOW.pdf states 'install kitchen'.",
+                                "source_document": "SOW.pdf",
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
         batch = generate_scope_proposals(
-            session, provider, scope_world["project"].canonical_id,
+            session,
+            provider,
+            scope_world["project"].canonical_id,
         )
         assert batch.created_count == 1
         p = session.query(Proposal).filter_by(field_name="scope_gap").one()
@@ -286,18 +333,28 @@ class TestGenerateScopeNoRoadmapInjection:
     def test_backward_compat_when_model_omits_source(self, session, scope_world):
         """A model that doesn't return `source` (pre-Layer-2 behavior)
         should still work -- we default to 'contract'."""
-        provider = MockLLMProvider(responses=[json.dumps({
-            "scope_gaps": [{
-                "scope_item": "X",
-                "suggested_task_title": "X",
-                "confidence": 0.9,
-                "reasoning": "stated in SOW.pdf",
-                "source_document": "SOW.pdf",
-                # NO 'source' field
-            }]
-        })])
+        provider = MockLLMProvider(
+            responses=[
+                json.dumps(
+                    {
+                        "scope_gaps": [
+                            {
+                                "scope_item": "X",
+                                "suggested_task_title": "X",
+                                "confidence": 0.9,
+                                "reasoning": "stated in SOW.pdf",
+                                "source_document": "SOW.pdf",
+                                # NO 'source' field
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
         batch = generate_scope_proposals(
-            session, provider, scope_world["project"].canonical_id,
+            session,
+            provider,
+            scope_world["project"].canonical_id,
         )
         assert batch.created_count == 1
         p = session.query(Proposal).filter_by(field_name="scope_gap").one()
@@ -305,18 +362,28 @@ class TestGenerateScopeNoRoadmapInjection:
         assert pv["source"] == "contract"  # default
 
     def test_unknown_source_warns_and_defaults(self, session, scope_world):
-        provider = MockLLMProvider(responses=[json.dumps({
-            "scope_gaps": [{
-                "scope_item": "X",
-                "suggested_task_title": "X",
-                "confidence": 0.9,
-                "reasoning": "stated in SOW.pdf",
-                "source_document": "SOW.pdf",
-                "source": "BOGUS",
-            }]
-        })])
+        provider = MockLLMProvider(
+            responses=[
+                json.dumps(
+                    {
+                        "scope_gaps": [
+                            {
+                                "scope_item": "X",
+                                "suggested_task_title": "X",
+                                "confidence": 0.9,
+                                "reasoning": "stated in SOW.pdf",
+                                "source_document": "SOW.pdf",
+                                "source": "BOGUS",
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
         batch = generate_scope_proposals(
-            session, provider, scope_world["project"].canonical_id,
+            session,
+            provider,
+            scope_world["project"].canonical_id,
         )
         # Created but warned
         assert batch.created_count == 1

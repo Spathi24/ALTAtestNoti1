@@ -10,6 +10,7 @@ Coverage:
   - Dispatcher routes the right report and surfaces missing-ref errors
   - "Pure function" contract: no side effects, JSON-serializable
 """
+
 from __future__ import annotations
 
 import json
@@ -22,16 +23,15 @@ import pytest
 from project_db.ai import extract_project_ref
 from project_db.ai.query import AiAssistant
 from project_db.ai.views import (
+    _extract_money_amounts,
+    _resolve_project,
     report_budget_vs_contract,
     report_docs_for_project,
     report_missing_documents,
     report_project_overview,
     report_tasks_without_dates,
-    _extract_money_amounts,
-    _resolve_project,
 )
 from project_db.db.models import (
-    Client,
     DailyLog,
     Deal,
     Document,
@@ -44,7 +44,6 @@ from project_db.db.models import (
 )
 from project_db.db.models.crm import LeadStage
 from project_db.db.models.work import ProjectStatus
-
 
 # ---------------------------------------------------------------------------
 # Fixture: a richly-populated project for the overview / docs / budget tests
@@ -67,28 +66,36 @@ def rich_project(session, client_factory):
     session.commit()
 
     # 3 tasks: 1 fully dated, 2 dateless
-    session.add_all([
-        Task(title="Demo walls", status=TaskStatus.DONE,
-             start_date=date(2026, 4, 1), end_date=date(2026, 4, 5),
-             project_id=p.canonical_id),
-        Task(title="Frame addition", status=TaskStatus.TODO,
-             project_id=p.canonical_id),
-        Task(title="Inspections", status=TaskStatus.TODO,
-             project_id=p.canonical_id),
-    ])
+    session.add_all(
+        [
+            Task(
+                title="Demo walls",
+                status=TaskStatus.DONE,
+                start_date=date(2026, 4, 1),
+                end_date=date(2026, 4, 5),
+                project_id=p.canonical_id,
+            ),
+            Task(title="Frame addition", status=TaskStatus.TODO, project_id=p.canonical_id),
+            Task(title="Inspections", status=TaskStatus.TODO, project_id=p.canonical_id),
+        ]
+    )
 
     # 2 docs: one contract PDF (extracted), one stray image
     contract = Document(
-        name="Contract - 923 Rockland.pdf", url="https://drive/c",
-        mime_type="application/pdf", storage_ref="c1",
+        name="Contract - 923 Rockland.pdf",
+        url="https://drive/c",
+        mime_type="application/pdf",
+        storage_ref="c1",
         folder_path="Active/923 Rockland",
         size_bytes=12345,
         modified_at_source=datetime(2026, 4, 10),
         project_id=p.canonical_id,
     )
     image = Document(
-        name="site.heic", url="https://drive/i",
-        mime_type="image/heic", storage_ref="i1",
+        name="site.heic",
+        url="https://drive/i",
+        mime_type="image/heic",
+        storage_ref="i1",
         folder_path="Active/923 Rockland",
         size_bytes=2000000,
         modified_at_source=datetime(2026, 4, 12),
@@ -99,25 +106,35 @@ def rich_project(session, client_factory):
 
     # Contract text mentions several dollar amounts; the largest should be
     # treated as the "contract total" by the regex extractor.
-    session.add(DocumentText(
-        document_id=contract.canonical_id,
-        extracted_text=(
-            "TOTAL CONTRACT PRICE: $148,500.00 inclusive of taxes.\n"
-            "Deposit due on signing: $14,850.00\n"
-            "Mid-project milestone: $50,000.00\n"
-        ),
-        extraction_method="pdf-pymupdf",
-        token_count=20,
-    ))
-    session.add(Invoice(
-        number="INV-001", amount=Decimal("14850.00"),
-        status=InvoiceStatus.PAID, issue_date=date(2026, 3, 5),
-        client_id=c.canonical_id, project_id=p.canonical_id,
-    ))
-    session.add(DailyLog(
-        log_date=date(2026, 4, 10), summary="Crew arrived",
-        project_id=p.canonical_id,
-    ))
+    session.add(
+        DocumentText(
+            document_id=contract.canonical_id,
+            extracted_text=(
+                "TOTAL CONTRACT PRICE: $148,500.00 inclusive of taxes.\n"
+                "Deposit due on signing: $14,850.00\n"
+                "Mid-project milestone: $50,000.00\n"
+            ),
+            extraction_method="pdf-pymupdf",
+            token_count=20,
+        )
+    )
+    session.add(
+        Invoice(
+            number="INV-001",
+            amount=Decimal("14850.00"),
+            status=InvoiceStatus.PAID,
+            issue_date=date(2026, 3, 5),
+            client_id=c.canonical_id,
+            project_id=p.canonical_id,
+        )
+    )
+    session.add(
+        DailyLog(
+            log_date=date(2026, 4, 10),
+            summary="Crew arrived",
+            project_id=p.canonical_id,
+        )
+    )
     session.commit()
     return p
 
@@ -153,19 +170,23 @@ class TestSerializer:
 
     def test_str_enum_serializes_to_value(self):
         from project_db.ai.views import _ser
+
         assert _ser(ProjectStatus.ACTIVE) == "ACTIVE"
         assert _ser(TaskStatus.DONE) == "DONE"
 
     def test_none_passthrough(self):
         from project_db.ai.views import _ser
+
         assert _ser(None) is None
 
     def test_decimal_becomes_float(self):
         from project_db.ai.views import _ser
+
         assert _ser(Decimal("123.45")) == 123.45
 
     def test_date_to_iso(self):
         from project_db.ai.views import _ser
+
         assert _ser(date(2026, 5, 15)) == "2026-05-15"
 
 
@@ -277,7 +298,9 @@ class TestMissingDocuments:
         c = client_factory(name="C")
         # Project has NO documents at all.
         bare = Project(
-            name="Bare Project", code="B", status=ProjectStatus.ACTIVE,
+            name="Bare Project",
+            code="B",
+            status=ProjectStatus.ACTIVE,
             client_id=c.canonical_id,
         )
         session.add(bare)
@@ -293,9 +316,7 @@ class TestMissingDocuments:
         for p in result["projects"]:
             assert p["name"] != "923 Rockland"
 
-    def test_empty_crm_deal_placeholder_is_not_flagged(
-        self, session, client_factory
-    ):
+    def test_empty_crm_deal_placeholder_is_not_flagged(self, session, client_factory):
         c = client_factory(name="CRM Client")
         session.add(
             Deal(
@@ -321,7 +342,9 @@ class TestMissingDocuments:
     def test_completed_projects_not_in_scope(self, session, client_factory):
         c = client_factory(name="C")
         done = Project(
-            name="Old Job", code="O", status=ProjectStatus.COMPLETED,
+            name="Old Job",
+            code="O",
+            status=ProjectStatus.COMPLETED,
             client_id=c.canonical_id,
         )
         session.add(done)
@@ -372,7 +395,9 @@ class TestBudgetVsContract:
     def test_custom_threshold(self, session, rich_project):
         # 50% threshold -- 18.8% divergence should NOT flag.
         result = report_budget_vs_contract(
-            session, "Rockland", divergence_threshold=0.50,
+            session,
+            "Rockland",
+            divergence_threshold=0.50,
         )
         assert result["flagged"] is False
 

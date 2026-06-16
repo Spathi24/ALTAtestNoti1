@@ -16,6 +16,7 @@ current corpus scale (hundreds of docs -> a few thousand chunks) that is
 sub-10ms and needs no native extension.  ``content_hash`` makes re-embedding
 idempotent: a chunk whose text + model + dims are unchanged is left alone.
 """
+
 from __future__ import annotations
 
 from datetime import datetime

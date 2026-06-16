@@ -7,6 +7,7 @@ canonical UUID it resolves to.
 Composite uniqueness on (source, entity_type, external_key) means we can't
 accidentally double-register the same source record.
 """
+
 from __future__ import annotations
 
 import enum
@@ -16,13 +17,13 @@ from datetime import datetime
 from sqlalchemy import (
     Column,
     DateTime,
-    Enum as SAEnum,
-    ForeignKey,
     String,
     UniqueConstraint,
 )
+from sqlalchemy import (
+    Enum as SAEnum,
+)
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 
 from project_db.db.base import Base, CanonicalMixin
 
@@ -64,9 +65,7 @@ class ExternalId(Base):
     raw_payload_hash = Column(String, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint(
-            "source", "entity_type", "external_key", name="uq_external_id_lookup"
-        ),
+        UniqueConstraint("source", "entity_type", "external_key", name="uq_external_id_lookup"),
     )
 
     def __repr__(self) -> str:

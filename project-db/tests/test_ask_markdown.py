@@ -9,10 +9,8 @@ template.  This file pins:
   - HTML embedded in the LLM output is escaped (safety net)
   - Canned-report dict/list answers still go through JSON path
 """
-from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock
+from __future__ import annotations
 
 import pytest
 from sqlalchemy import create_engine
@@ -21,15 +19,16 @@ from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
 pytest.importorskip("markdown")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
+from project_db.db.base import Base
 
 
 @pytest.fixture
 def db_engine():
     engine = create_engine(
-        "sqlite:///:memory:", future=True,
+        "sqlite:///:memory:",
+        future=True,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -41,6 +40,7 @@ def db_engine():
 @pytest.fixture
 def patched_session_factory(db_engine, monkeypatch):
     from project_db.db import session as session_mod
+
     factory = sessionmaker(bind=db_engine, expire_on_commit=False)
     monkeypatch.setattr(session_mod, "_SessionLocal", factory)
     yield factory
@@ -49,6 +49,7 @@ def patched_session_factory(db_engine, monkeypatch):
 @pytest.fixture
 def client(patched_session_factory):
     from project_db.web.app import create_app
+
     return TestClient(create_app())
 
 
@@ -56,23 +57,26 @@ def client(patched_session_factory):
 def fake_haiku(monkeypatch):
     """Mock get_fast_provider so /ask's no-match fallback hits a fake."""
     from project_db.ai.providers import mock as mock_mod
-    prov = mock_mod.MockLLMProvider(responses=[
-        "Based on the snapshot, **923 Rockland** appears most at risk:\n\n"
-        "- 63 dateless tasks\n"
-        "- 3 documents only\n\n"
-        "Recommended: run `propose timelines` for that project."
-    ])
+
+    prov = mock_mod.MockLLMProvider(
+        responses=[
+            "Based on the snapshot, **923 Rockland** appears most at risk:\n\n"
+            "- 63 dateless tasks\n"
+            "- 3 documents only\n\n"
+            "Recommended: run `propose timelines` for that project."
+        ]
+    )
     monkeypatch.setattr(
-        "project_db.ai.providers.get_fast_provider", lambda: prov,
+        "project_db.ai.providers.get_fast_provider",
+        lambda: prov,
     )
     return prov
 
 
 def test_unit_markdown_renders_bold_and_lists():
     from project_db.web.routes.ask import _render_markdown
-    html = _render_markdown(
-        "Hello **world**.\n\n- one\n- two\n\nNext paragraph."
-    )
+
+    html = _render_markdown("Hello **world**.\n\n- one\n- two\n\nNext paragraph.")
     assert "<strong>world</strong>" in html
     # markdown's `extra` extension produces standard <ul><li>
     assert "<ul>" in html
@@ -86,6 +90,7 @@ def test_unit_markdown_escapes_embedded_html():
     """Safety net: even though we render LLM output as HTML, raw HTML
     embedded by the model must NOT pass through."""
     from project_db.web.routes.ask import _render_markdown
+
     html = _render_markdown("Hello <script>alert('xss')</script> world")
     # The lib escapes the angle brackets -- the literal text appears,
     # the executable tag does not.

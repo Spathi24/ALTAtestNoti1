@@ -11,6 +11,7 @@ EmailIngest
 
 Both inherit from Base + CanonicalMixin (canonical_id UUID primary key).
 """
+
 from __future__ import annotations
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
@@ -39,8 +40,8 @@ class Worker(Base, CanonicalMixin):
     )
     active = Column(Boolean, nullable=False, default=True)
     # Categorization filled in by the PM after reviewing recurring senders.
-    role = Column(String, nullable=True)    # PM / tradesman / crew / subcontractor
-    tags = Column(String, nullable=True)    # comma-separated free-text labels
+    role = Column(String, nullable=True)  # PM / tradesman / crew / subcontractor
+    tags = Column(String, nullable=True)  # comma-separated free-text labels
     # False = auto-created from first email; True = manually added / confirmed.
     verified = Column(Boolean, nullable=False, default=False)
 

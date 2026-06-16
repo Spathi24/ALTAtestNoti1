@@ -4,6 +4,7 @@ Renders report_project_financials in the browser -- money-type buckets,
 two-sided totals, roll-up cross-check, per-document, records with badges.
 No mutation routes; pure render of stored data (no API).
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -14,17 +15,17 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
-from project_db.db.models import (  # noqa: E402
+from project_db.db.base import Base
+from project_db.db.models import (
     Client,
     Document,
     FinancialRecord,
     Organization,
     Project,
 )
-from project_db.db.models.work import ProjectStatus  # noqa: E402
+from project_db.db.models.work import ProjectStatus
 
 
 @pytest.fixture
@@ -61,27 +62,44 @@ def fin_project(session, org: Organization):
     c = Client(name="Acme", organization_id=org.canonical_id)
     session.add(c)
     session.flush()
-    p = Project(name="Test Reno", client_id=c.canonical_id,
-                status=ProjectStatus.ACTIVE)
+    p = Project(name="Test Reno", client_id=c.canonical_id, status=ProjectStatus.ACTIVE)
     session.add(p)
     session.flush()
-    d1 = Document(name="Geller Quote.xlsx", url="x://1",
-                  mime_type="application/pdf", project_id=p.canonical_id)
-    d2 = Document(name="Costs.xlsx", url="x://2",
-                  mime_type="application/pdf", project_id=p.canonical_id)
+    d1 = Document(
+        name="Geller Quote.xlsx",
+        url="x://1",
+        mime_type="application/pdf",
+        project_id=p.canonical_id,
+    )
+    d2 = Document(
+        name="Costs.xlsx", url="x://2", mime_type="application/pdf", project_id=p.canonical_id
+    )
     session.add_all([d1, d2])
     session.flush()
-    session.add_all([
-        FinancialRecord(project_id=p.canonical_id, document_id=d1.canonical_id,
-                        direction="client_in", record_kind="total",
-                        amount=Decimal("250"), is_rollup=False,
-                        doc_role="quote", amount_verified=True),
-        # internal cost sheet -> rollup, excluded from totals
-        FinancialRecord(project_id=p.canonical_id, document_id=d2.canonical_id,
-                        direction="contractor_out", record_kind="total",
-                        amount=Decimal("999"), is_rollup=True,
-                        amount_verified=True),
-    ])
+    session.add_all(
+        [
+            FinancialRecord(
+                project_id=p.canonical_id,
+                document_id=d1.canonical_id,
+                direction="client_in",
+                record_kind="total",
+                amount=Decimal("250"),
+                is_rollup=False,
+                doc_role="quote",
+                amount_verified=True,
+            ),
+            # internal cost sheet -> rollup, excluded from totals
+            FinancialRecord(
+                project_id=p.canonical_id,
+                document_id=d2.canonical_id,
+                direction="contractor_out",
+                record_kind="total",
+                amount=Decimal("999"),
+                is_rollup=True,
+                amount_verified=True,
+            ),
+        ]
+    )
     session.commit()
     return p
 
@@ -92,7 +110,9 @@ class TestMoneyClarity:
 
         g = money_glossary()
         assert [s["authority"] for s in g["sources"]] == [
-            "authoritative", "reference", "rough",
+            "authoritative",
+            "reference",
+            "rough",
         ]
         assert all(s["blurb"].strip() for s in g["sources"])
         assert any(t["key"] == "contract_revenue" for t in g["money_types"])
@@ -116,8 +136,8 @@ class TestFinancialsPanel:
         assert r.status_code == 200
         body = r.text
         assert "Financials" in body
-        assert "contract_revenue" in body          # money-type bucket
-        assert "Roll-up cross-check" in body        # rollup surfaced separately
+        assert "contract_revenue" in body  # money-type bucket
+        assert "Roll-up cross-check" in body  # rollup surfaced separately
         # primary client_in total is 250 (Geller); the rollup 999 is excluded.
         assert "250.00" in body
 
@@ -139,6 +159,7 @@ class TestFinancialsPanel:
 
     def test_confirmed_toggle_updates_total(self, client, fin_project, session):
         from project_db.db.models import Document
+
         geller = session.query(Document).filter_by(name="Geller Quote.xlsx").one()
         gid = str(geller.canonical_id)
 
@@ -149,10 +170,9 @@ class TestFinancialsPanel:
         assert "0 of 1" in r0.text
 
         # Toggle it ON -> the route returns the body fragment, now 1 of 1.
-        r1 = client.post(f"/documents/{gid}/financial-status",
-                         data={"confirmed": "true"})
+        r1 = client.post(f"/documents/{gid}/financial-status", data={"confirmed": "true"})
         assert r1.status_code == 200
-        assert 'id="fin-body"' in r1.text     # body fragment for HTMX swap
+        assert 'id="fin-body"' in r1.text  # body fragment for HTMX swap
         assert "1 of 1" in r1.text
 
         # Persisted: a fresh GET still shows it counted.
@@ -160,6 +180,8 @@ class TestFinancialsPanel:
         assert "1 of 1" in r2.text
 
     def test_toggle_bad_document_404(self, client, fin_project):
-        r = client.post("/documents/00000000-0000-0000-0000-000000000000/financial-status",
-                        data={"confirmed": "true"})
+        r = client.post(
+            "/documents/00000000-0000-0000-0000-000000000000/financial-status",
+            data={"confirmed": "true"},
+        )
         assert r.status_code == 404

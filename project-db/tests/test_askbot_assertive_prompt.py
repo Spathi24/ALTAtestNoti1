@@ -24,6 +24,7 @@ Scope note: the proposal bots (timeline / scope) stay conservative
 -- they extract facts for Monday write-back; refusal-on-uncertainty
 is the desired behavior there.  This file does NOT test them.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -124,9 +125,7 @@ class TestUserPromptPushesBestEffort:
             "label the inference",
             "Do not stop at missing information",
         ]:
-            assert phrase in user_content, (
-                f"user prompt must contain {phrase!r}."
-            )
+            assert phrase in user_content, f"user prompt must contain {phrase!r}."
 
 
 # ---------------------------------------------------------------------------
@@ -158,11 +157,13 @@ class TestProposalBotsStayConservative:
 
     def test_timeline_prompt_still_forbids_inventing(self):
         # _build_timeline_prompt is internal; we import directly to check.
-        from project_db.ai.proposals import _build_timeline_prompt
         # We can't call it without a ProjectContext, but its source text
         # contains the conservative anchors -- read the function's
         # source and check.
         import inspect
+
+        from project_db.ai.proposals import _build_timeline_prompt
+
         src = inspect.getsource(_build_timeline_prompt).lower()
         # The timeline prompt is explicit about staying conservative.
         # Look for ANY of the existing anchors that mean "don't make stuff up".
@@ -182,10 +183,13 @@ class TestProposalBotsStayConservative:
         )
 
     def test_scope_prompt_still_forbids_inventing(self):
-        from project_db.ai.proposals import _build_scope_prompt
         import inspect
+
+        from project_db.ai.proposals import _build_scope_prompt
+
         src = inspect.getsource(_build_scope_prompt)
-        assert "never invent" in src.lower() or "do not flag" in src.lower() \
-               or "explicitly stated" in src.lower(), (
-            "scope prompt should still warn against inventing scope."
-        )
+        assert (
+            "never invent" in src.lower()
+            or "do not flag" in src.lower()
+            or "explicitly stated" in src.lower()
+        ), "scope prompt should still warn against inventing scope."

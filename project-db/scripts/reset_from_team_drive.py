@@ -32,6 +32,7 @@ Usage:
     py -3.13 scripts/reset_from_team_drive.py          # dry-run
     py -3.13 scripts/reset_from_team_drive.py --apply
 """
+
 from __future__ import annotations
 
 import sys
@@ -40,11 +41,13 @@ import sys
 def main(apply: bool) -> int:
     try:
         from project_db.cli import force_utf8_output
+
         force_utf8_output()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
-    from sqlalchemy import inspect as sa_inspect, text
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
 
     from project_db.db import get_engine
     from project_db.db.base import Base
@@ -64,8 +67,7 @@ def main(apply: bool) -> int:
         ("document_financial_status", None),
         ("document_text", None),
         ("external_id", "entity_type = 'Document'"),
-        ("external_id", "entity_type = 'SyncState' AND external_key = "
-                        "'gdrive_changes_page_token'"),
+        ("external_id", "entity_type = 'SyncState' AND external_key = 'gdrive_changes_page_token'"),
         ("document", None),
     ]
 
@@ -100,8 +102,10 @@ def main(apply: bool) -> int:
         if is_sqlite:
             conn.execute(text("PRAGMA foreign_keys=ON"))
 
-    print("Wipe complete. Documents and all derived data cleared; Drive cursor "
-          "reset.\nNext: project_db sync GOOGLE_DRIVE  (full team-Drive crawl).")
+    print(
+        "Wipe complete. Documents and all derived data cleared; Drive cursor "
+        "reset.\nNext: project_db sync GOOGLE_DRIVE  (full team-Drive crawl)."
+    )
     return 0
 
 

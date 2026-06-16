@@ -44,12 +44,12 @@ PERT 3-point estimates in the deps file
 
 Windows note: all output is ASCII-only (no arrows, box chars, or ellipsis).
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import math
-import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -75,14 +75,26 @@ from project_db.connectors.monday.connector import apply_portfolio_mirror_overla
 PROJECT_WORKSPACE_NAMES = {"Project Management"}
 NON_PROJECT_WORKSPACE_NAMES = {"CRM"}
 NON_PROJECT_BOARD_KEYWORDS = (
-    "lead", "deal", "contact", "account", "client", "crm", "pipeline",
-    "quote", "invoice", "activity", "activities", "task sheet", "subitems",
+    "lead",
+    "deal",
+    "contact",
+    "account",
+    "client",
+    "crm",
+    "pipeline",
+    "quote",
+    "invoice",
+    "activity",
+    "activities",
+    "task sheet",
+    "subitems",
 )
 
 
 # ===========================================================================
 # Data model
 # ===========================================================================
+
 
 @dataclass
 class Activity:
@@ -95,7 +107,7 @@ class Activity:
     status: str
     start_date: date | None
     end_date: date | None
-    duration: float             # calendar days (from timeline or date columns)
+    duration: float  # calendar days (from timeline or date columns)
 
     # PERT 3-point estimates (days)
     optimistic: float = 0.0
@@ -103,34 +115,35 @@ class Activity:
     pessimistic: float = 0.0
 
     # Derived PERT values
-    expected: float = 0.0       # te = (o + 4m + p) / 6
-    std_dev: float = 0.0        # sdte = (p - o) / 6
-    variance: float = 0.0       # sdte^2
+    expected: float = 0.0  # te = (o + 4m + p) / 6
+    std_dev: float = 0.0  # sdte = (p - o) / 6
+    variance: float = 0.0  # sdte^2
 
     # Network
     predecessors: list[str] = field(default_factory=list)
     successors: list[str] = field(default_factory=list)
 
     # CPM forward/backward pass
-    es: float = 0.0             # Early Start
-    ef: float = 0.0             # Early Finish
-    ls: float = 0.0             # Late Start
-    lf: float = 0.0             # Late Finish
-    total_float: float = 0.0    # LF - EF  (or LS - ES)
-    free_float: float = 0.0     # min(ES of successors) - EF
+    es: float = 0.0  # Early Start
+    ef: float = 0.0  # Early Finish
+    ls: float = 0.0  # Late Start
+    lf: float = 0.0  # Late Finish
+    total_float: float = 0.0  # LF - EF  (or LS - ES)
+    free_float: float = 0.0  # min(ES of successors) - EF
     is_critical: bool = False
-    drag: float = 0.0           # drag on the critical path
+    drag: float = 0.0  # drag on the critical path
 
     def apply_pert(self) -> None:
         """Compute expected time, std_dev, variance from 3-point estimates."""
         self.expected = (self.optimistic + 4 * self.most_likely + self.pessimistic) / 6
         self.std_dev = (self.pessimistic - self.optimistic) / 6
-        self.variance = self.std_dev ** 2
+        self.variance = self.std_dev**2
 
 
 # ===========================================================================
 # Monday data fetch
 # ===========================================================================
+
 
 def fetch_board_tasks(client: MondayClient, board_id: int) -> list[dict[str, Any]]:
     """Pull items from a board (with mirror-column overlay) and return raw dicts.
@@ -175,15 +188,17 @@ def fetch_board_tasks(client: MondayClient, board_id: int) -> list[dict[str, Any
                     status_raw = v.get("text") or v.get("label") or ""
                     break
 
-        result.append({
-            "id": item["id"],
-            "name": item["name"],
-            "group": group,
-            "status": status_raw,
-            "start_date": str(start) if start else None,
-            "end_date": str(end) if end else None,
-            "duration": duration,
-        })
+        result.append(
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "group": group,
+                "status": status_raw,
+                "start_date": str(start) if start else None,
+                "end_date": str(end) if end else None,
+                "duration": duration,
+            }
+        )
     return result
 
 
@@ -202,10 +217,7 @@ def list_project_boards(client: MondayClient) -> list[dict[str, Any]]:
             continue
 
         cols = client.list_board_columns(board_id)
-        has_dates = any(
-            (c.get("type") in ("timeline", "date"))
-            for c in cols
-        )
+        has_dates = any((c.get("type") in ("timeline", "date")) for c in cols)
         if not has_dates:
             continue
         project_boards.append(b)
@@ -232,9 +244,11 @@ def _looks_like_project_board(board: dict[str, Any]) -> bool:
 # Dependency helpers
 # ===========================================================================
 
+
 def auto_deps_sequential(tasks: list[dict]) -> dict[str, list[str]]:
     """Within each group, each task depends on the previous one (chain)."""
     from collections import defaultdict
+
     by_group: dict[str, list[str]] = defaultdict(list)
     for t in tasks:
         by_group[t["group"]].append(t["id"])
@@ -264,10 +278,11 @@ def load_deps_file(path: str, task_ids: set[str]) -> dict[str, list[str]]:
 # PERT/CPM engine
 # ===========================================================================
 
+
 def build_activities(
     tasks: list[dict],
     deps: dict[str, list[str]],
-    pert_overrides: dict[str, dict],   # task_id -> {optimistic, most_likely, pessimistic}
+    pert_overrides: dict[str, dict],  # task_id -> {optimistic, most_likely, pessimistic}
 ) -> dict[str, Activity]:
     """Construct Activity objects with PERT estimates applied."""
     activities: dict[str, Activity] = {}
@@ -341,11 +356,7 @@ def cpm_forward_pass(activities: dict[str, Activity]) -> None:
         if not act.predecessors:
             act.es = 0.0
         else:
-            act.es = max(
-                activities[p].ef
-                for p in act.predecessors
-                if p in activities
-            )
+            act.es = max(activities[p].ef for p in act.predecessors if p in activities)
         act.ef = act.es + act.expected
 
 
@@ -359,11 +370,7 @@ def cpm_backward_pass(activities: dict[str, Activity]) -> None:
         if not act.successors:
             act.lf = project_ef
         else:
-            act.lf = min(
-                activities[s].ls
-                for s in act.successors
-                if s in activities
-            )
+            act.lf = min(activities[s].ls for s in act.successors if s in activities)
         act.ls = act.lf - act.expected
         act.total_float = round(act.lf - act.ef, 4)
         act.is_critical = abs(act.total_float) < 0.001
@@ -375,11 +382,7 @@ def compute_free_float(activities: dict[str, Activity]) -> None:
         if not act.successors:
             act.free_float = act.total_float
         else:
-            min_succ_es = min(
-                activities[s].es
-                for s in act.successors
-                if s in activities
-            )
+            min_succ_es = min(activities[s].es for s in act.successors if s in activities)
             act.free_float = round(min_succ_es - act.ef, 4)
 
 
@@ -400,9 +403,7 @@ def compute_drag(activities: dict[str, Activity]) -> None:
             continue
         # Find parallel non-critical activities
         parallel_floats = [
-            nc.total_float
-            for nc in non_critical
-            if nc.es < act.ef and nc.ef > act.es
+            nc.total_float for nc in non_critical if nc.es < act.ef and nc.ef > act.es
         ]
         if not parallel_floats:
             act.drag = act.expected
@@ -413,7 +414,7 @@ def compute_drag(activities: dict[str, Activity]) -> None:
 
 def _topological_sort(activities: dict[str, Activity]) -> list[str]:
     """Kahn's algorithm. Raises on cycles."""
-    in_degree = {tid: 0 for tid in activities}
+    in_degree = dict.fromkeys(activities, 0)
     for act in activities.values():
         for p in act.predecessors:
             if p in in_degree:
@@ -454,7 +455,7 @@ def get_all_paths(activities: dict[str, Activity]) -> list[tuple[list[str], floa
     paths: list[tuple[list[str], float]] = []
 
     def dfs(current: str, path: list[str], total: float) -> None:
-        path = path + [current]
+        path = [*path, current]
         total = total + activities[current].expected
         if current in sinks:
             paths.append((path, round(total, 2)))
@@ -487,11 +488,7 @@ def get_probability_path(activities: dict[str, Activity]) -> list[Activity]:
             best[act_id] = (act.expected, act.variance, [act_id])
             continue
 
-        pred_scores = [
-            best[pred_id]
-            for pred_id in act.predecessors
-            if pred_id in best
-        ]
+        pred_scores = [best[pred_id] for pred_id in act.predecessors if pred_id in best]
         if not pred_scores:
             best[act_id] = (act.expected, act.variance, [act_id])
             continue
@@ -503,7 +500,7 @@ def get_probability_path(activities: dict[str, Activity]) -> list[Activity]:
         best[act_id] = (
             pred_duration + act.expected,
             pred_variance + act.variance,
-            pred_path + [act_id],
+            [*pred_path, act_id],
         )
 
     sink_ids = [a.id for a in activities.values() if not a.successors]
@@ -519,6 +516,7 @@ def get_probability_path(activities: dict[str, Activity]) -> list[Activity]:
 # ===========================================================================
 # PERT probability
 # ===========================================================================
+
 
 def pert_probability(
     activities: dict[str, Activity],
@@ -585,18 +583,20 @@ def print_critical_path(activities: dict[str, Activity]) -> None:
     print(f"  Critical tasks:                {len(crits)}")
     print()
     print(f"  {'Task':<35} {'Group':<20} {'te':>6} {'ES':>6} {'EF':>6}  Status")
-    print(f"  {'-'*35} {'-'*20} {'-'*6} {'-'*6} {'-'*6}  {'-'*12}")
+    print(f"  {'-' * 35} {'-' * 20} {'-' * 6} {'-' * 6} {'-' * 6}  {'-' * 12}")
     for a in crits:
         name = a.name[:34]
         grp = a.group[:19]
-        print(f"  {name:<35} {grp:<20} {_fmt(a.expected):>6} {_fmt(a.es):>6} {_fmt(a.ef):>6}  {a.status}")
+        print(
+            f"  {name:<35} {grp:<20} {_fmt(a.expected):>6} {_fmt(a.es):>6} {_fmt(a.ef):>6}  {a.status}"
+        )
 
     # All paths if network is small enough
     if len(activities) <= 30:
         print()
         print("  All paths (longest first):")
         print(f"  {'Duration':>8}  Path")
-        print(f"  {'-'*8}  {'-'*50}")
+        print(f"  {'-' * 8}  {'-' * 50}")
         paths = get_all_paths(activities)
         for path_ids, dur in paths[:10]:
             names = [activities[pid].name[:12] for pid in path_ids]
@@ -611,7 +611,7 @@ def print_slack(activities: dict[str, Activity]) -> None:
     print("  FLOAT / SLACK ANALYSIS")
     print("=" * 72)
     print(f"  {'Task':<35} {'Group':<18} {'te':>5} {'TF':>7} {'FF':>7}  Critical")
-    print(f"  {'-'*35} {'-'*18} {'-'*5} {'-'*7} {'-'*7}  {'-'*8}")
+    print(f"  {'-' * 35} {'-' * 18} {'-' * 5} {'-' * 7} {'-' * 7}  {'-' * 8}")
     sorted_acts = sorted(activities.values(), key=lambda a: a.total_float)
     for a in sorted_acts:
         crit = "YES (*)" if a.is_critical else ""
@@ -640,12 +640,10 @@ def print_drag(activities: dict[str, Activity]) -> None:
         return
     crits_by_drag = sorted(crits, key=lambda a: a.drag, reverse=True)
     print(f"  {'Task':<35} {'Group':<18} {'te':>5} {'Drag':>6}  Parallel?")
-    print(f"  {'-'*35} {'-'*18} {'-'*5} {'-'*6}  {'-'*10}")
+    print(f"  {'-' * 35} {'-' * 18} {'-' * 5} {'-' * 6}  {'-' * 10}")
     non_crit = [a for a in activities.values() if not a.is_critical]
     for a in crits_by_drag:
-        has_parallel = any(
-            nc.es < a.ef and nc.ef > a.es for nc in non_crit
-        )
+        has_parallel = any(nc.es < a.ef and nc.ef > a.es for nc in non_crit)
         par_str = "yes" if has_parallel else "no (drag=te)"
         name = a.name[:34]
         grp = a.group[:17]
@@ -675,8 +673,7 @@ def print_fast_track(activities: dict[str, Activity]) -> None:
     candidates = []
     for a in crits:
         critical_preds = [
-            pid for pid in a.predecessors
-            if pid in activities and activities[pid].is_critical
+            pid for pid in a.predecessors if pid in activities and activities[pid].is_critical
         ]
         if critical_preds:
             candidates.append((a, critical_preds))
@@ -687,7 +684,7 @@ def print_fast_track(activities: dict[str, Activity]) -> None:
         return
 
     print(f"  {'Task':<35} {'Depends on (critical)':<35}  Potential saving")
-    print(f"  {'-'*35} {'-'*35}  {'-'*15}")
+    print(f"  {'-' * 35} {'-' * 35}  {'-' * 15}")
     for act, preds in candidates:
         pred_names = ", ".join(activities[p].name[:15] for p in preds)
         # Max saving if we run them fully in parallel
@@ -714,7 +711,7 @@ def print_crash(activities: dict[str, Activity]) -> None:
     crits_by_drag = sorted(crits, key=lambda a: a.drag, reverse=True)
 
     print(f"  Priority  {'Task':<35} {'te':>5} {'Drag':>6}  Action")
-    print(f"  {'-'*8}  {'-'*35} {'-'*5} {'-'*6}  {'-'*30}")
+    print(f"  {'-' * 8}  {'-' * 35} {'-' * 5} {'-' * 6}  {'-' * 30}")
     for rank, a in enumerate(crits_by_drag, 1):
         if a.drag < 0.5:
             action = "Low priority (drag < 0.5 day)"
@@ -729,7 +726,7 @@ def print_crash(activities: dict[str, Activity]) -> None:
 
     total_save = sum(a.drag for a in crits_by_drag)
     print()
-    print(f"  If all critical tasks are crashed to zero drag, theoretical")
+    print("  If all critical tasks are crashed to zero drag, theoretical")
     print(f"  project reduction: up to {_fmt(total_save)} days")
     print("  (Actual saving is limited by the next longest non-critical path.)")
 
@@ -756,10 +753,15 @@ def print_probability(activities: dict[str, Activity], target_days: float) -> No
     sigma = result["critical_path_std_dev"]
     print("  Completion probability table:")
     print(f"  {'Target (days)':>14}  {'Probability':>12}")
-    print(f"  {'-'*14}  {'-'*12}")
+    print(f"  {'-' * 14}  {'-' * 12}")
     if sigma > 0:
-        for z, label in [(-2, "-2 sigma"), (-1, "-1 sigma"), (0, "mean"),
-                          (1, "+1 sigma"), (2, "+2 sigma")]:
+        for z, label in [
+            (-2, "-2 sigma"),
+            (-1, "-1 sigma"),
+            (0, "mean"),
+            (1, "+1 sigma"),
+            (2, "+2 sigma"),
+        ]:
             t = mean + z * sigma
             p = _normal_cdf(z) * 100
             marker = " <-- target" if abs(t - target_days) < sigma * 0.5 else ""
@@ -780,8 +782,10 @@ def print_summary(activities: dict[str, Activity]) -> None:
     n_total = len(activities)
     print()
     print(LINE)
-    print(f"  Tasks: {n_total}   Critical: {n_critical}   "
-          f"Project duration: {_fmt(project_duration)} days")
+    print(
+        f"  Tasks: {n_total}   Critical: {n_critical}   "
+        f"Project duration: {_fmt(project_duration)} days"
+    )
     print(LINE)
 
 
@@ -789,13 +793,16 @@ def print_summary(activities: dict[str, Activity]) -> None:
 # Deps JSON format
 # ===========================================================================
 
+
 def build_deps_skeleton(tasks: list[dict]) -> dict:
     """Create a skeleton deps JSON the user can fill in."""
-    skeleton: dict = {"_instructions": (
-        "Fill in 'predecessors' for each task with the IDs of tasks that must "
-        "complete before this one starts. Add 'pert' block for 3-point estimates "
-        "(days). Leave predecessors empty [] for tasks with no dependencies."
-    )}
+    skeleton: dict = {
+        "_instructions": (
+            "Fill in 'predecessors' for each task with the IDs of tasks that must "
+            "complete before this one starts. Add 'pert' block for 3-point estimates "
+            "(days). Leave predecessors empty [] for tasks with no dependencies."
+        )
+    }
     for t in tasks:
         skeleton[t["id"]] = {
             "name": t["name"],
@@ -809,8 +816,8 @@ def build_deps_skeleton(tasks: list[dict]) -> dict:
                 "optimistic": t["duration"],
                 "most_likely": t["duration"],
                 "pessimistic": t["duration"],
-                "_note": "Edit these values to model uncertainty. Keep most_likely = calendar duration."
-            }
+                "_note": "Edit these values to model uncertainty. Keep most_likely = calendar duration.",
+            },
         }
     return skeleton
 
@@ -828,6 +835,7 @@ def load_pert_overrides(deps_raw: dict, task_ids: set[str]) -> dict[str, dict]:
 # ===========================================================================
 # CLI commands
 # ===========================================================================
+
 
 def cmd_list_boards(args: argparse.Namespace) -> int:
     client = MondayClient(token=settings.monday_api_token)
@@ -939,7 +947,7 @@ def print_selected_analysis(
 ) -> None:
     """Print one or more analysis sections."""
     print_summary(activities)
-    run_all = (analysis == "all")
+    run_all = analysis == "all"
 
     if run_all or analysis == "critical-path":
         print_critical_path(activities)
@@ -1041,6 +1049,7 @@ def _demo_task(task_id: str, name: str, group: str, duration: float) -> dict[str
 # Entry point
 # ===========================================================================
 
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="project_optimizer",
@@ -1058,14 +1067,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which analysis to run (default: all)",
     )
     demo.add_argument(
-        "--target", type=float, metavar="DAYS",
+        "--target",
+        type=float,
+        metavar="DAYS",
         help="Target project duration in days for probability analysis",
     )
     demo.set_defaults(func=cmd_demo)
 
-    sub.add_parser("list-boards", help="List project boards").set_defaults(
-        func=cmd_list_boards
-    )
+    sub.add_parser("list-boards", help="List project boards").set_defaults(func=cmd_list_boards)
 
     exp = sub.add_parser(
         "export-deps",
@@ -1073,7 +1082,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     exp.add_argument("board_id", help="Monday board ID")
     exp.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Output file path (default: deps_<board_id>.json)",
     )
     exp.set_defaults(func=cmd_export_deps)
@@ -1083,15 +1093,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     dep_group = an.add_mutually_exclusive_group()
     dep_group.add_argument(
-        "--deps", metavar="FILE",
+        "--deps",
+        metavar="FILE",
         help="JSON dependency file created by export-deps (fill in predecessors)",
     )
     dep_group.add_argument(
-        "--auto-deps", action="store_true",
+        "--auto-deps",
+        action="store_true",
         help="Auto-chain tasks sequentially within each board group",
     )
     dep_group.add_argument(
-        "--no-deps", action="store_true",
+        "--no-deps",
+        action="store_true",
         help="Treat all tasks as independent (no dependencies)",
     )
 
@@ -1102,7 +1115,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which analysis to run (default: all)",
     )
     an.add_argument(
-        "--target", type=float, metavar="DAYS",
+        "--target",
+        type=float,
+        metavar="DAYS",
         help="Target project duration in days for probability analysis",
     )
     an.set_defaults(func=cmd_analyze)
@@ -1112,6 +1127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     import logging
+
     logging.basicConfig(level=logging.WARNING)
     parser = build_parser()
     args = parser.parse_args(argv)

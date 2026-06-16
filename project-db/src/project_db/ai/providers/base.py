@@ -18,6 +18,7 @@ Design rules:
   - Never raise generic exceptions.  Wrap backend errors in
     ``LLMProviderError`` so callers can write one ``except`` block.
 """
+
 from __future__ import annotations
 
 import json
@@ -40,6 +41,7 @@ class LLMMessage:
     system prompt as a separate field -- our providers handle that
     translation internally.
     """
+
     role: Role
     content: str
 
@@ -47,11 +49,12 @@ class LLMMessage:
 @dataclass
 class LLMResponse:
     """A model's response, normalized across backends."""
+
     content: str
-    finish_reason: str            # "stop" | "length" | "error" | backend-specific
+    finish_reason: str  # "stop" | "length" | "error" | backend-specific
     usage: dict[str, int] = field(default_factory=dict)  # {"input_tokens": N, "output_tokens": N}
     model: str | None = None
-    raw: Any = None               # backend-specific payload, for debugging
+    raw: Any = None  # backend-specific payload, for debugging
 
 
 class LLMProviderError(RuntimeError):
@@ -163,9 +166,10 @@ class LLMProvider(ABC):
                 last_was_truncated = truncated
                 logger.warning(
                     "[%s] JSON parse failed on attempt %d (finish_reason=%s%s): %s",
-                    self.name, attempt + 1, resp.finish_reason,
-                    "; output truncated -- bumping max_tokens for retry"
-                    if truncated else "",
+                    self.name,
+                    attempt + 1,
+                    resp.finish_reason,
+                    "; output truncated -- bumping max_tokens for retry" if truncated else "",
                     exc,
                 )
                 # If we ran out of room last time, retrying with the same
@@ -176,22 +180,22 @@ class LLMProvider(ABC):
                         int(current_max_tokens * 1.5),
                         max_tokens_ceiling,
                     )
-                convo = list(messages) + [
+                convo = [
+                    *list(messages),
                     LLMMessage(role="assistant", content=resp.content),
                     LLMMessage(
                         role="user",
-                        content=(
-                            f"Your previous output was not valid JSON.  "
-                            f"Parse error: {exc}.  "
-                            + (
-                                "Your previous reply was cut off because "
-                                "you ran out of token budget; be more "
-                                "concise this time.  "
-                                if truncated else ""
-                            )
-                            + "Reply with ONLY valid JSON, no prose, no "
-                            "markdown fences."
-                        ),
+                        content=f"Your previous output was not valid JSON.  "
+                        f"Parse error: {exc}.  "
+                        + (
+                            "Your previous reply was cut off because "
+                            "you ran out of token budget; be more "
+                            "concise this time.  "
+                            if truncated
+                            else ""
+                        )
+                        + "Reply with ONLY valid JSON, no prose, no "
+                        "markdown fences.",
                     ),
                 ]
                 attempt += 1
@@ -202,10 +206,10 @@ class LLMProvider(ABC):
             "  The model's output was truncated at the token cap on the "
             "last attempt -- pass a larger max_tokens, or shrink the "
             "input prompt."
-            if last_was_truncated else ""
+            if last_was_truncated
+            else ""
         )
         raise LLMProviderError(
             f"{self.name}: response was not parseable JSON after "
-            f"{max_retries + 1} attempts.  Last error: {last_error}."
-            + truncation_hint
+            f"{max_retries + 1} attempts.  Last error: {last_error}." + truncation_hint
         )

@@ -3,6 +3,7 @@
 Models use canonical schema: enums for statuses, FK chains for org scoping,
 and a single ExternalId table for source-system mapping.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -96,7 +97,9 @@ class TestProjectModel:
 
 
 class TestInvoiceModel:
-    def test_create_invoice(self, org: Organization, session: Session, client_factory, project_factory):
+    def test_create_invoice(
+        self, org: Organization, session: Session, client_factory, project_factory
+    ):
         client = client_factory(name="Acme")
         project = project_factory(name="Site", client=client)
         invoice = Invoice(
@@ -211,9 +214,7 @@ class TestExternalIdModel:
         assert ext_id.id is not None
         assert ext_id.source == SourceSystem.MONDAY
 
-    def test_external_id_uniqueness(
-        self, org: Organization, session: Session, client_factory
-    ):
+    def test_external_id_uniqueness(self, org: Organization, session: Session, client_factory):
         from sqlalchemy.exc import IntegrityError
 
         client = client_factory(name="Acme")

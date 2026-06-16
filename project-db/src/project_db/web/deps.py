@@ -3,13 +3,14 @@
 These are deliberately thin.  Anything that does derived work belongs in
 ``ui_views`` (a service module the routes call into), not here.
 """
+
 from __future__ import annotations
 
 import os
 import subprocess
 import time
+from collections.abc import Iterator
 from functools import lru_cache
-from typing import Iterator
 
 from sqlalchemy.orm import Session
 
@@ -62,8 +63,9 @@ def app_version() -> str:
     """Project version from package metadata, or 'dev' if not installed."""
     try:
         from importlib.metadata import version as _pkg_version
+
         return _pkg_version("project_db")
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "dev"
 
 

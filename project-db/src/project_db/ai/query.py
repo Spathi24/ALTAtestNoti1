@@ -13,6 +13,7 @@ strategy.
 Mode 3 (RAG over DocumentText) is now implemented -- see ai/rag.py and the
 CHANGELOG.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,6 @@ from sqlalchemy.orm import Session
 
 from project_db.ai.providers import LLMMessage, LLMProvider, LLMProviderError
 from project_db.ai.views import REPORT_REGISTRY
-
 
 # Pulls a UUID (any 8-4-4-4-12 hex) from anywhere in the question.
 _UUID_RE = re.compile(
@@ -77,7 +77,7 @@ def extract_project_ref(question: str) -> str | None:
 
 @dataclass
 class AiResponse:
-    mode: str            # "canned" | "llm" | "sql" | "rag"
+    mode: str  # "canned" | "llm" | "sql" | "rag"
     answer: Any
     used_report: str | None = None
     # When RAG supplied document excerpts, the chunks that were fed to the
@@ -98,12 +98,20 @@ class AiAssistant:
         # Discoverability: a non-technical user has no way to know which
         # phrases work.  Catch the common "what can you do" formulations
         # and list every routed pattern so they can copy/paste.
-        if q in {"help", "?", ""} or any(p in q for p in (
-            "what can you do", "list reports", "what reports",
-            "available reports", "available queries", "available commands",
-        )):
+        if q in {"help", "?", ""} or any(
+            p in q
+            for p in (
+                "what can you do",
+                "list reports",
+                "what reports",
+                "available reports",
+                "available queries",
+                "available commands",
+            )
+        ):
             return AiResponse(
-                mode="canned", used_report="help",
+                mode="canned",
+                used_report="help",
                 answer=_HELP_PAYLOAD,
             )
 
@@ -142,7 +150,11 @@ class AiAssistant:
         )
 
     def _dispatch_with_project(
-        self, name: str, ref: str | None, *, allow_no_ref: bool = False,
+        self,
+        name: str,
+        ref: str | None,
+        *,
+        allow_no_ref: bool = False,
     ) -> AiResponse:
         """Call a per-project report, surfacing a useful error when ref is missing."""
         if ref is None and not allow_no_ref:
@@ -164,8 +176,12 @@ class AiAssistant:
         )
 
     def _retrieve_context(
-        self, question: str, embedding_provider: Any, *,
-        top_k: int, min_similarity: float,
+        self,
+        question: str,
+        embedding_provider: Any,
+        *,
+        top_k: int,
+        min_similarity: float,
     ) -> list[dict[str, Any]]:
         """Best-effort RAG retrieval for the askbot.
 
@@ -185,10 +201,14 @@ class AiAssistant:
                 if proj is not None:
                     project_id = proj.canonical_id
             return retrieve_chunks(
-                self.session, embedding_provider, question,
-                project_id=project_id, top_k=top_k, min_similarity=min_similarity,
+                self.session,
+                embedding_provider,
+                question,
+                project_id=project_id,
+                top_k=top_k,
+                min_similarity=min_similarity,
             )
-        except Exception:  # noqa: BLE001 -- retrieval must never break ask
+        except Exception:
             return []
 
     def answer_with_llm(
@@ -236,12 +256,10 @@ class AiAssistant:
         system = (
             "You are ALTA, a senior operations and project intelligence "
             "assistant for a construction company.\n\n"
-
             "Your job is not merely to answer literal database questions. "
             "Your job is to help the user reason through projects, tasks, "
             "deals, clients, invoices, documents, risks, and next actions "
             "using the available company data.\n\n"
-
             "Core behavior:\n"
             "- Be assertive, practical, and analytical.\n"
             "- Do not give up just because the question is imperfect, "
@@ -260,7 +278,6 @@ class AiAssistant:
             "- If multiple interpretations are possible, choose the most "
             "likely one based on the question and answer under that "
             "assumption.\n\n"
-
             "Data rules (these are non-negotiable):\n"
             "- Use only facts present in the provided JSON snapshot as "
             "hard facts.\n"
@@ -276,7 +293,6 @@ class AiAssistant:
             "analysis requires the DocumentText / RAG layer.\n"
             "- 'generated_on' is today's date; judge overdue, upcoming, "
             "and stale items relative to it.\n\n"
-
             "Response style:\n"
             "- Be concise but not shallow.\n"
             "- Do not apologize.\n"
@@ -291,10 +307,13 @@ class AiAssistant:
         # snapshot, exactly as before.
         chunks = (
             self._retrieve_context(
-                question, embedding_provider,
-                top_k=top_k, min_similarity=min_similarity,
+                question,
+                embedding_provider,
+                top_k=top_k,
+                min_similarity=min_similarity,
             )
-            if embedding_provider is not None else []
+            if embedding_provider is not None
+            else []
         )
         excerpts_block = ""
         sources: list[dict[str, Any]] | None = None
@@ -309,8 +328,7 @@ class AiAssistant:
                 "- Do not invent document text beyond what the excerpts show."
             )
             _lines = [
-                f"[{i}] ({c['document_name']}) "
-                f"{' '.join((c['text'] or '').split())}"
+                f"[{i}] ({c['document_name']}) {' '.join((c['text'] or '').split())}"
                 for i, c in enumerate(chunks, 1)
             ]
             excerpts_block = (
@@ -356,7 +374,9 @@ class AiAssistant:
             )
         except LLMProviderError as exc:
             return AiResponse(
-                mode="llm", used_report=None, answer=f"LLM call failed: {exc}",
+                mode="llm",
+                used_report=None,
+                answer=f"LLM call failed: {exc}",
             )
         return AiResponse(
             mode="rag" if chunks else "llm",

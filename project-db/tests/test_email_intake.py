@@ -20,11 +20,11 @@ Coverage:
   - MockGmailPoller: list_unprocessed / get_message / apply_label / ensure_labels
   - Win 3: image attachment paths passed to extractor; photo-only email proceeds
 """
+
 from __future__ import annotations
 
 import base64
 import json
-import uuid
 from datetime import datetime
 
 import pytest
@@ -51,7 +51,6 @@ from project_db.db.models import (
     Worker,
 )
 from project_db.db.models.work import ProjectStatus, TaskStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -200,20 +199,26 @@ def _make_photo_only_message(
 
 
 def _simple_extractor_done(task_index: int = 0) -> MockFieldNoteExtractor:
-    return MockFieldNoteExtractor(responses=[{
-        "signals": [{
-            "classification": "task_done",
-            "quoted_excerpt": "finished the work",
-            "task_index": task_index,
-            "proposed_status": "Done",
-            "proposed_start_date": None,
-            "proposed_end_date": None,
-            "new_task_title": None,
-            "workers": None,
-            "hours_worked": None,
-            "confidence": 0.9,
-        }]
-    }])
+    return MockFieldNoteExtractor(
+        responses=[
+            {
+                "signals": [
+                    {
+                        "classification": "task_done",
+                        "quoted_excerpt": "finished the work",
+                        "task_index": task_index,
+                        "proposed_status": "Done",
+                        "proposed_start_date": None,
+                        "proposed_end_date": None,
+                        "new_task_title": None,
+                        "workers": None,
+                        "hours_worked": None,
+                        "confidence": 0.9,
+                    }
+                ]
+            }
+        ]
+    )
 
 
 @pytest.fixture
@@ -611,9 +616,7 @@ def test_poll_mailbox_happy_path(session, rockland, task, worker_marco):
     assert ingest.status == "processed"
     assert str(ingest.project_id) == str(rockland.canonical_id)
 
-    fn_rows = session.query(FieldNote).filter_by(
-        email_ingest_id=ingest.canonical_id
-    ).all()
+    fn_rows = session.query(FieldNote).filter_by(email_ingest_id=ingest.canonical_id).all()
     assert len(fn_rows) == 1
 
     applied = [(mid, lbl) for mid, lbl, add in poller.applied_labels if add]
@@ -907,16 +910,20 @@ def test_poll_mailbox_multi_message_unknown_human(session, rockland, task, worke
 def test_retry_quarantined_clears_rows(session):
     """retry_quarantined deletes quarantined EmailIngest rows."""
     for i in range(3):
-        session.add(EmailIngest(
-            gmail_message_id=f"q{i}",
+        session.add(
+            EmailIngest(
+                gmail_message_id=f"q{i}",
+                received_at=datetime.utcnow(),
+                status="quarantined",
+            )
+        )
+    session.add(
+        EmailIngest(
+            gmail_message_id="p1",
             received_at=datetime.utcnow(),
-            status="quarantined",
-        ))
-    session.add(EmailIngest(
-        gmail_message_id="p1",
-        received_at=datetime.utcnow(),
-        status="processed",
-    ))
+            status="processed",
+        )
+    )
     session.commit()
 
     count = retry_quarantined(session)
@@ -937,9 +944,7 @@ def test_retry_quarantined_empty(session):
 # ---------------------------------------------------------------------------
 
 
-def test_email_timestamp_flows_to_extractor_and_field_note(
-    session, rockland, task, worker_marco
-):
+def test_email_timestamp_flows_to_extractor_and_field_note(session, rockland, task, worker_marco):
     """internalDate from Gmail is passed to ingest_field_note as received_at.
 
     Two assertions:
@@ -968,25 +973,26 @@ def test_email_timestamp_flows_to_extractor_and_field_note(
 
     # Compute the expected naive UTC datetime from internalDate (same formula
     # as email_intake.py).
-    expected_ts = datetime.fromtimestamp(
-        ts_ms / 1000.0, tz=timezone.utc
-    ).replace(tzinfo=None)
+    expected_ts = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).replace(tzinfo=None)
 
     # 1. Extractor received the email's timestamp (not utcnow).
     assert len(extractor.timestamp_calls) == 1
     delta = abs((extractor.timestamp_calls[0] - expected_ts).total_seconds())
     assert delta < 1.0, (
-        f"Expected extractor.note_timestamp ~{expected_ts}, "
-        f"got {extractor.timestamp_calls[0]}"
+        f"Expected extractor.note_timestamp ~{expected_ts}, got {extractor.timestamp_calls[0]}"
     )
 
     # 2. FieldNote.received_at mirrors the email send time.
-    fn_rows = session.query(FieldNote).filter_by(
-        email_ingest_id=session.query(EmailIngest)
-        .filter_by(gmail_message_id="tsflow001")
-        .one()
-        .canonical_id
-    ).all()
+    fn_rows = (
+        session.query(FieldNote)
+        .filter_by(
+            email_ingest_id=session.query(EmailIngest)
+            .filter_by(gmail_message_id="tsflow001")
+            .one()
+            .canonical_id
+        )
+        .all()
+    )
     assert len(fn_rows) == 1
     fn_delta = abs((fn_rows[0].received_at - expected_ts).total_seconds())
     assert fn_delta < 1.0, (
@@ -1029,9 +1035,7 @@ def test_poll_mailbox_image_attachment_paths_passed_to_extractor(
     assert len(refs) == 1
 
 
-def test_poll_mailbox_photo_only_email_proceeds(
-    session, rockland, task, worker_marco, tmp_path
-):
+def test_poll_mailbox_photo_only_email_proceeds(session, rockland, task, worker_marco, tmp_path):
     """An email with NO text body but a JPEG attachment is processed (not failed)."""
     msg = _make_photo_only_message(
         "photo001",

@@ -15,6 +15,7 @@ Notes on the translation:
   - Errors from the SDK are wrapped in ``LLMProviderError`` so the
     caller has a single exception type to handle.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,7 +40,7 @@ _DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 def _resolve_default_model(explicit: str) -> str:
     """Return the model to use, checking ANTHROPIC_MODEL env var first."""
     if explicit != _DEFAULT_MODEL:
-        return explicit          # caller passed an explicit override
+        return explicit  # caller passed an explicit override
     return os.environ.get("ANTHROPIC_MODEL", _DEFAULT_MODEL)
 
 
@@ -65,8 +66,7 @@ class AnthropicProvider(LLMProvider):
             key = api_key or os.environ.get("ANTHROPIC_API_KEY")
             if not key:
                 raise LLMProviderError(
-                    "ANTHROPIC_API_KEY not set.  Either pass api_key= "
-                    "or set the env var."
+                    "ANTHROPIC_API_KEY not set.  Either pass api_key= or set the env var."
                 )
             self._client = Anthropic(api_key=key)
         self._default_model = _resolve_default_model(default_model)
@@ -104,16 +104,14 @@ class AnthropicProvider(LLMProvider):
 
         try:
             resp = self._client.messages.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001 -- wrap every SDK error
+        except Exception as exc:
             raise LLMProviderError(f"anthropic.messages.create failed: {exc}") from exc
 
         # Anthropic returns content as a list of blocks; we expect one text block.
         try:
             content = resp.content[0].text
         except (AttributeError, IndexError, TypeError) as exc:
-            raise LLMProviderError(
-                f"anthropic response missing text content: {resp!r}"
-            ) from exc
+            raise LLMProviderError(f"anthropic response missing text content: {resp!r}") from exc
 
         usage = {}
         if hasattr(resp, "usage") and resp.usage is not None:

@@ -14,6 +14,7 @@ Used by:
     block
   - eventually the gap-finder (Layer 3)
 """
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,6 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from project_db.db.models import RoadmapActor, RoadmapPhase, RoadmapTask
-
 
 # Sentinel values that show up in the xlsx as "blank" but read as
 # strings via openpyxl / pandas.  Treat them as empty.
@@ -89,8 +89,7 @@ def parse_roadmap_xlsx(path: str | Path) -> list[dict[str, Any]]:
         from openpyxl import load_workbook
     except ImportError as exc:
         raise RuntimeError(
-            "openpyxl is required to parse the roadmap xlsx.  "
-            "Install with: pip install openpyxl"
+            "openpyxl is required to parse the roadmap xlsx.  Install with: pip install openpyxl"
         ) from exc
 
     wb = load_workbook(filename=str(path), read_only=True, data_only=True)
@@ -103,23 +102,21 @@ def parse_roadmap_xlsx(path: str | Path) -> list[dict[str, Any]]:
     # Find columns by header name -- the xlsx editor may shuffle columns,
     # but the names ("Design Phase", "Task", "Notes", "Sub-tasks") are
     # stable.
-    lookup = {
-        (h or "").strip().lower(): i for i, h in enumerate(header)
-    }
+    lookup = {(h or "").strip().lower(): i for i, h in enumerate(header)}
     try:
         col_phase = lookup["design phase"]
         col_task = lookup["task"]
     except KeyError as exc:
         raise ValueError(
             f"roadmap xlsx is missing required column {exc.args[0]!r}.  "
-            f"Headers found: {[h for h in header]}"
+            f"Headers found: {list(header)}"
         ) from exc
     col_notes = lookup.get("notes")
     col_sub = lookup.get("sub-tasks")
 
     out: list[dict[str, Any]] = []
     # Ordinals reset per phase so each phase reads as 1, 2, 3, ...
-    ordinals: dict[RoadmapPhase, int] = {p: 0 for p in RoadmapPhase}
+    ordinals: dict[RoadmapPhase, int] = dict.fromkeys(RoadmapPhase, 0)
 
     def _safe_get(row: tuple, idx: int | None):
         """Bounds-safe row access.
@@ -152,13 +149,15 @@ def parse_roadmap_xlsx(path: str | Path) -> list[dict[str, Any]]:
         ordinals[phase] += 1
         notes_raw = _safe_get(row, col_notes)
         sub_raw = _safe_get(row, col_sub)
-        out.append({
-            "phase": phase,
-            "ordinal": ordinals[phase],
-            "task_name": str(task_raw).strip(),
-            "sub_tasks": _split_sub_tasks(sub_raw),
-            "notes": str(notes_raw).strip() if not _looks_blank(notes_raw) else None,
-        })
+        out.append(
+            {
+                "phase": phase,
+                "ordinal": ordinals[phase],
+                "task_name": str(task_raw).strip(),
+                "sub_tasks": _split_sub_tasks(sub_raw),
+                "notes": str(notes_raw).strip() if not _looks_blank(notes_raw) else None,
+            }
+        )
     return out
 
 
@@ -197,16 +196,16 @@ def import_roadmap_rows(
 
     by_phase: dict[str, int] = {p.value: 0 for p in RoadmapPhase}
     for row in parsed:
-        sub_tasks_json = (
-            json.dumps(row["sub_tasks"]) if row["sub_tasks"] is not None else None
+        sub_tasks_json = json.dumps(row["sub_tasks"]) if row["sub_tasks"] is not None else None
+        session.add(
+            RoadmapTask(
+                phase=row["phase"],
+                ordinal=row["ordinal"],
+                task_name=row["task_name"],
+                sub_tasks_json=sub_tasks_json,
+                notes=row.get("notes"),
+            )
         )
-        session.add(RoadmapTask(
-            phase=row["phase"],
-            ordinal=row["ordinal"],
-            task_name=row["task_name"],
-            sub_tasks_json=sub_tasks_json,
-            notes=row.get("notes"),
-        ))
         by_phase[row["phase"].value] += 1
     session.flush()
 
@@ -246,18 +245,21 @@ def list_roadmap_tasks(
             sub = json.loads(r.sub_tasks_json) if r.sub_tasks_json else None
         except (json.JSONDecodeError, TypeError):
             sub = None
-        out.append({
-            "canonical_id": str(r.canonical_id),
-            "phase": r.phase.value if hasattr(r.phase, "value") else str(r.phase),
-            "ordinal": int(r.ordinal),
-            "task_name": r.task_name,
-            "sub_tasks": sub,
-            "notes": r.notes,
-            "actor": (
-                r.actor.value if r.actor is not None and hasattr(r.actor, "value")
-                else (str(r.actor) if r.actor is not None else None)
-            ),
-        })
+        out.append(
+            {
+                "canonical_id": str(r.canonical_id),
+                "phase": r.phase.value if hasattr(r.phase, "value") else str(r.phase),
+                "ordinal": int(r.ordinal),
+                "task_name": r.task_name,
+                "sub_tasks": sub,
+                "notes": r.notes,
+                "actor": (
+                    r.actor.value
+                    if r.actor is not None and hasattr(r.actor, "value")
+                    else (str(r.actor) if r.actor is not None else None)
+                ),
+            }
+        )
     return out
 
 
@@ -314,14 +316,10 @@ def classify_roadmap_actors(
     lines = ["=== ROADMAP TASKS TO CLASSIFY ==="]
     for t in tasks:
         sub = " | ".join(t["sub_tasks"]) if t["sub_tasks"] else "(no sub-tasks)"
-        lines.append(
-            f'\n[{t["phase"]}-{t["ordinal"]}] "{t["task_name"]}"\n'
-            f'  sub-tasks: {sub}'
-        )
+        lines.append(f'\n[{t["phase"]}-{t["ordinal"]}] "{t["task_name"]}"\n  sub-tasks: {sub}')
 
     user = (
-        "\n".join(lines)
-        + "\n\n---\n\n"
+        "\n".join(lines) + "\n\n---\n\n"
         "INSTRUCTION: Classify EVERY task above by actor.  Return strict "
         "JSON:\n\n"
         "{\n"
@@ -343,7 +341,7 @@ def classify_roadmap_actors(
             system=system,
             max_tokens=4000,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"ok": False, "error": f"LLM call failed: {exc}"}
 
     classifications = raw.get("classifications") or []
@@ -380,9 +378,7 @@ def classify_roadmap_actors(
             continue
         row = by_key.get((phase, ordinal))
         if row is None:
-            errors.append(
-                f"[{phase}-{ordinal}] no matching roadmap_task row"
-            )
+            errors.append(f"[{phase}-{ordinal}] no matching roadmap_task row")
             continue
         row.actor = actor
         by_actor[actor.value] += 1

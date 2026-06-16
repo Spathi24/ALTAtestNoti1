@@ -10,6 +10,7 @@ Vectors are plain ``list[float]`` at this boundary; ``ai/rag.py`` packs them to
 float32 bytes for storage.  ``text-embedding-3-small`` returns length-1536,
 L2-normalised vectors, so cosine similarity == dot product.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -86,13 +87,15 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         cleaned = [(t.replace("\n", " ").strip() or " ") for t in texts]
         out: list[list[float]] = []
         for i in range(0, len(cleaned), self._batch_size):
-            batch = cleaned[i:i + self._batch_size]
+            batch = cleaned[i : i + self._batch_size]
             try:
                 resp = self._client.embeddings.create(
-                    model=self.model, input=batch, dimensions=self.dims,
+                    model=self.model,
+                    input=batch,
+                    dimensions=self.dims,
                     encoding_format="float",
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise EmbeddingError(f"OpenAI embeddings call failed: {exc}") from exc
             # The API guarantees data is returned in input order, but sort on
             # index defensively.
@@ -134,9 +137,7 @@ def get_embedding_provider() -> EmbeddingProvider:
     """
     if os.environ.get("OPENAI_API_KEY"):
         return OpenAIEmbeddingProvider()
-    raise EmbeddingError(
-        "No embedding provider available: set OPENAI_API_KEY in .env."
-    )
+    raise EmbeddingError("No embedding provider available: set OPENAI_API_KEY in .env.")
 
 
 def get_optional_embedding_provider() -> EmbeddingProvider | None:

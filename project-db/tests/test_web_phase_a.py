@@ -6,6 +6,7 @@ Two halves:
     (sync, propose, edit) do NOT exist.  This is a regression net against
     future drift -- if someone adds /sync as a button, the test fails.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,11 +20,10 @@ from sqlalchemy.pool import StaticPool
 # pytest will skip the entire module if fastapi isn't installed; that lets
 # the suite stay green for anyone who hasn't installed the [ui] extra yet.
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.db.base import Base  # noqa: E402
-
-from project_db.db.models import (  # noqa: E402
+from project_db.db.base import Base
+from project_db.db.models import (
     Client,
     Document,
     Organization,
@@ -31,9 +31,9 @@ from project_db.db.models import (  # noqa: E402
     Proposal,
     Task,
 )
-from project_db.db.models.docs import DocumentText  # noqa: E402
-from project_db.db.models.proposals import ProposalStatus  # noqa: E402
-from project_db.db.models.work import ProjectStatus, TaskStatus  # noqa: E402
+from project_db.db.models.docs import DocumentText
+from project_db.db.models.proposals import ProposalStatus
+from project_db.db.models.work import ProjectStatus, TaskStatus
 
 
 @pytest.fixture
@@ -128,22 +128,26 @@ def seeded(session, org: Organization):
     session.add_all([doc_with, doc_without])
     session.flush()
 
-    session.add(DocumentText(
-        document_id=doc_with.canonical_id,
-        extracted_text="This is the contract text.",
-        extraction_method="pdf",
-        token_count=6,
-    ))
+    session.add(
+        DocumentText(
+            document_id=doc_with.canonical_id,
+            extracted_text="This is the contract text.",
+            extraction_method="pdf",
+            token_count=6,
+        )
+    )
 
-    session.add(Proposal(
-        entity_type="Task",
-        entity_id=dateless.canonical_id,
-        field_name="timeline",
-        proposed_value=json.dumps({"start_date": "2026-07-01", "end_date": "2026-07-05"}),
-        confidence=0.9,
-        status=ProposalStatus.PENDING,
-        prompt_version="test-v1",
-    ))
+    session.add(
+        Proposal(
+            entity_type="Task",
+            entity_id=dateless.canonical_id,
+            field_name="timeline",
+            proposed_value=json.dumps({"start_date": "2026-07-01", "end_date": "2026-07-05"}),
+            confidence=0.9,
+            status=ProposalStatus.PENDING,
+            prompt_version="test-v1",
+        )
+    )
     session.commit()
     return project
 
@@ -165,9 +169,8 @@ class TestDashboardRenders:
         assert 'data-testid="projects-total"' in body
         # Sanity-check the project counter renders the seeded "1"
         import re
-        m = re.search(
-            r'data-testid="projects-total"[^>]*>\s*(\d+)\s*<', body
-        )
+
+        m = re.search(r'data-testid="projects-total"[^>]*>\s*(\d+)\s*<', body)
         assert m is not None
         assert int(m.group(1)) == 1
 
@@ -243,24 +246,27 @@ class TestForbiddenRoutes:
     """v1 is read-mostly.  These routes must NOT exist.  If a future
     change adds one of them by accident, this test fails loud."""
 
-    @pytest.mark.parametrize("path", [
-        # No sync via the UI -- syncs are long-running CLI work
-        "/sync",
-        "/sync/monday",
-        "/sync/GOOGLE_DRIVE",
-        # No proposal generation in v1 -- LLM tokens must be deliberate
-        "/propose",
-        "/propose/timelines",
-        "/propose/scope",
-        # No direct entity edit endpoints
-        "/projects/edit",
-        "/projects/00000000-0000-0000-0000-000000000000/edit",
-        "/tasks/edit",
-        "/documents/edit",
-        # No raw SQL exec endpoint
-        "/db/exec",
-        "/db/query",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # No sync via the UI -- syncs are long-running CLI work
+            "/sync",
+            "/sync/monday",
+            "/sync/GOOGLE_DRIVE",
+            # No proposal generation in v1 -- LLM tokens must be deliberate
+            "/propose",
+            "/propose/timelines",
+            "/propose/scope",
+            # No direct entity edit endpoints
+            "/projects/edit",
+            "/projects/00000000-0000-0000-0000-000000000000/edit",
+            "/tasks/edit",
+            "/documents/edit",
+            # No raw SQL exec endpoint
+            "/db/exec",
+            "/db/query",
+        ],
+    )
     def test_route_does_not_exist(self, client, path):
         resp = client.get(path)
         assert resp.status_code == 404, (
@@ -268,9 +274,14 @@ class TestForbiddenRoutes:
             f"exist in v1.  See M5 plan, section 9 (Things explicitly NOT in v1)."
         )
 
-    @pytest.mark.parametrize("path", [
-        "/sync", "/propose", "/projects/edit",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/sync",
+            "/propose",
+            "/projects/edit",
+        ],
+    )
     def test_post_to_forbidden_route(self, client, path):
         """Sync / propose / direct entity edits are NOT in v1.  POST must
         404 or 405 (no POST handler exists for these paths).
@@ -290,9 +301,7 @@ class TestCorsAndHostBinding:
         """No CORS middleware on purpose.  A cross-origin request should not
         get Access-Control-Allow-Origin back."""
         resp = client.get("/", headers={"Origin": "http://evil.example.com"})
-        assert "access-control-allow-origin" not in {
-            k.lower() for k in resp.headers.keys()
-        }
+        assert "access-control-allow-origin" not in {k.lower() for k in resp.headers.keys()}
 
 
 class TestFooterAndChrome:
@@ -311,6 +320,7 @@ class TestDeps:
     def test_git_sha_never_raises(self):
         """Even in a non-git checkout, git_sha must return a string."""
         from project_db.web.deps import git_sha
+
         git_sha.cache_clear()
         sha = git_sha()
         assert isinstance(sha, str)

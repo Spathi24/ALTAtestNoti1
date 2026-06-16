@@ -1,4 +1,5 @@
 """Core domain entities: User, Client, Vendor, Property."""
+
 from __future__ import annotations
 
 from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String

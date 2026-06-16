@@ -35,6 +35,7 @@ Task list rendering (Strategy C):
   large.  Sub-tasks carry a parent annotation so the model understands
   hierarchy without the parent needing to appear adjacent.
 """
+
 from __future__ import annotations
 
 import json
@@ -105,16 +106,56 @@ def _load_image_b64(path: str) -> str | None:
         logger.warning("[field-note] cannot read image %s: %s -- skipped", path, exc)
         return None
 
+
 # ---------------------------------------------------------------------------
-# Task-block scoring: status × semantic × temporal composite
+# Task-block scoring: status x semantic x temporal composite
 # ---------------------------------------------------------------------------
 
-_STOPWORDS: frozenset[str] = frozenset({
-    "the", "a", "an", "and", "or", "of", "to", "in", "for", "on", "at",
-    "is", "was", "be", "been", "have", "has", "do", "did", "will", "with",
-    "this", "that", "it", "its", "by", "from", "are", "not", "no", "as",
-    "we", "they", "he", "she", "my", "our", "so", "if", "but", "up",
-})
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "for",
+        "on",
+        "at",
+        "is",
+        "was",
+        "be",
+        "been",
+        "have",
+        "has",
+        "do",
+        "did",
+        "will",
+        "with",
+        "this",
+        "that",
+        "it",
+        "its",
+        "by",
+        "from",
+        "are",
+        "not",
+        "no",
+        "as",
+        "we",
+        "they",
+        "he",
+        "she",
+        "my",
+        "our",
+        "so",
+        "if",
+        "but",
+        "up",
+    }
+)
 
 _ACTIVE_LABELS: frozenset[str] = frozenset(
     {"working on it", "in progress", "in_progress", "stuck", "blocked"}
@@ -123,13 +164,13 @@ _DONE_LABELS: frozenset[str] = frozenset({"done", "complete", "completed"})
 
 _STATUS_SCORES: dict[str, float] = {
     "Working on it": 1.00,
-    "In Progress":   1.00,
-    "Stuck":         0.95,
-    "Blocked":       0.95,
-    "TODO":          0.55,
-    "On Hold":       0.45,
-    "Future steps":  0.40,
-    "Done":          0.10,
+    "In Progress": 1.00,
+    "Stuck": 0.95,
+    "Blocked": 0.95,
+    "TODO": 0.55,
+    "On Hold": 0.45,
+    "Future steps": 0.40,
+    "Done": 0.10,
 }
 
 _DONE_TRIM_K = 30
@@ -137,19 +178,17 @@ _DONE_TRIM_K = 30
 
 def _keyword_tokens(text: str) -> frozenset[str]:
     return frozenset(
-        w for w in re.findall(r"[a-z]+", (text or "").lower())
-        if w not in _STOPWORDS and len(w) > 2
+        w for w in re.findall(r"[a-z]+", (text or "").lower()) if w not in _STOPWORDS and len(w) > 2
     )
 
 
-def _task_status_label(task: "Task") -> str:
-    return (
-        task.monday_status_label
-        or (task.status.value if hasattr(task.status, "value") else str(task.status or "TODO"))
+def _task_status_label(task: Task) -> str:
+    return task.monday_status_label or (
+        task.status.value if hasattr(task.status, "value") else str(task.status or "TODO")
     )
 
 
-def _task_status_score(task: "Task") -> float:
+def _task_status_score(task: Task) -> float:
     label = _task_status_label(task)
     # Canonical enum values ("IN_PROGRESS", "DONE", "BLOCKED") map via aliases.
     _aliases = {"IN_PROGRESS": "Working on it", "DONE": "Done", "BLOCKED": "Stuck", "TODO": "TODO"}
@@ -157,7 +196,7 @@ def _task_status_score(task: "Task") -> float:
     return _STATUS_SCORES.get(resolved, 0.30)
 
 
-def _task_temporal_score(task: "Task", today: _date_type) -> float:
+def _task_temporal_score(task: Task, today: _date_type) -> float:
     """Proximity of the task's dates to today.  0.5 for undated (neutral)."""
     dates = [d for d in [task.start_date, task.end_date] if d]
     if hasattr(task, "due_date") and task.due_date:
@@ -178,7 +217,7 @@ def _task_temporal_score(task: "Task", today: _date_type) -> float:
     return 0.15
 
 
-def _task_semantic_score(task: "Task", note_tokens: frozenset[str]) -> float:
+def _task_semantic_score(task: Task, note_tokens: frozenset[str]) -> float:
     """Keyword recall: fraction of task-title tokens present in the note."""
     task_tokens = _keyword_tokens(task.title or "")
     if not task_tokens or not note_tokens:
@@ -186,7 +225,7 @@ def _task_semantic_score(task: "Task", note_tokens: frozenset[str]) -> float:
     return len(task_tokens & note_tokens) / len(task_tokens)
 
 
-def _task_composite(task: "Task", note_tokens: frozenset[str], today: _date_type) -> float:
+def _task_composite(task: Task, note_tokens: frozenset[str], today: _date_type) -> float:
     return (
         0.50 * _task_status_score(task)
         + 0.30 * _task_semantic_score(task, note_tokens)
@@ -194,7 +233,7 @@ def _task_composite(task: "Task", note_tokens: frozenset[str], today: _date_type
     )
 
 
-def _task_bucket(task: "Task") -> str:
+def _task_bucket(task: Task) -> str:
     label = _task_status_label(task).lower()
     if label in _ACTIVE_LABELS:
         return "active"
@@ -211,7 +250,7 @@ def _task_bucket(task: "Task") -> str:
 
 
 def _render_task_block(
-    tasks: list["Task"],
+    tasks: list[Task],
     note_text: str,
     *,
     today: _date_type | None = None,
@@ -237,9 +276,9 @@ def _render_task_block(
     note_tokens = _keyword_tokens(note_text)
     by_id = {t.canonical_id: t for t in tasks}
 
-    active: list["Task"] = []
-    upcoming: list["Task"] = []
-    done: list["Task"] = []
+    active: list[Task] = []
+    upcoming: list[Task] = []
+    done: list[Task] = []
     for t in tasks:
         b = _task_bucket(t)
         if b == "active":
@@ -249,7 +288,7 @@ def _render_task_block(
         else:
             upcoming.append(t)
 
-    def sort_key(t: "Task") -> tuple:
+    def sort_key(t: Task) -> tuple:
         return (-_task_composite(t, note_tokens, today), str(t.created_at or ""))
 
     active.sort(key=sort_key)
@@ -261,7 +300,7 @@ def _render_task_block(
         trimmed = len(done) - done_trim_k
         done = done[:done_trim_k]
 
-    def parent_note(t: "Task") -> str:
+    def parent_note(t: Task) -> str:
         if not t.is_subitem or t.parent_task_id is None:
             return ""
         parent = by_id.get(t.parent_task_id)
@@ -298,8 +337,13 @@ def _render_task_block(
 # ---------------------------------------------------------------------------
 
 _CLASSIFICATION_VOCAB = [
-    "task_done", "task_progress", "blocker",
-    "new_task", "date_shift", "scope_change", "other",
+    "task_done",
+    "task_progress",
+    "blocker",
+    "new_task",
+    "date_shift",
+    "scope_change",
+    "other",
 ]
 
 FIELD_NOTE_SCHEMA: dict[str, Any] = {
@@ -316,11 +360,18 @@ FIELD_NOTE_SCHEMA: dict[str, Any] = {
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "classification", "quoted_excerpt", "task_index",
+                        "classification",
+                        "quoted_excerpt",
+                        "task_index",
                         "parent_task_index",
-                        "proposed_status", "proposed_start_date",
-                        "proposed_end_date", "new_task_title",
-                        "workers", "hours_worked", "confidence", "reasoning",
+                        "proposed_status",
+                        "proposed_start_date",
+                        "proposed_end_date",
+                        "new_task_title",
+                        "workers",
+                        "hours_worked",
+                        "confidence",
+                        "reasoning",
                     ],
                     "properties": {
                         "reasoning": {
@@ -600,9 +651,14 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
         image_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         # task_block (pre-rendered) takes priority over legacy task_lines.
-        rendered_tasks = task_block if task_block is not None else (
-            "\n".join(f"[{i}] {title}" for i, title in enumerate(task_lines))
-            if task_lines else "(no tasks found for this project)"
+        rendered_tasks = (
+            task_block
+            if task_block is not None
+            else (
+                "\n".join(f"[{i}] {title}" for i, title in enumerate(task_lines))
+                if task_lines
+                else "(no tasks found for this project)"
+            )
         )
         labels_block = (
             "\n".join(f"- {lbl}" for lbl in status_labels)
@@ -650,7 +706,7 @@ class OpenAIFieldNoteExtractor(FieldNoteExtractor):
                 ],
                 response_format={"type": "json_schema", "json_schema": FIELD_NOTE_SCHEMA},
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise FieldNoteExtractorError(f"OpenAI extraction call failed: {exc}") from exc
         msg = resp.choices[0].message
         if getattr(msg, "refusal", None):
@@ -710,6 +766,7 @@ class MockFieldNoteExtractor(FieldNoteExtractor):
 @dataclass
 class FieldNoteBatch:
     """Outcome of one field-note ingest run."""
+
     project_id: str
     raw_text: str
     field_notes: list[FieldNote] = field(default_factory=list)
@@ -750,6 +807,7 @@ def _parse_date_str(v: Any):
         return None
     try:
         from datetime import date
+
         return date.fromisoformat(v[:10])
     except (ValueError, AttributeError):
         return None
@@ -757,9 +815,8 @@ def _parse_date_str(v: Any):
 
 def _task_context_line(t: Task) -> str:
     """One-line task description for the LLM prompt: title + status + dates."""
-    status_label = (
-        t.monday_status_label
-        or (t.status.value if hasattr(t.status, "value") else str(t.status))
+    status_label = t.monday_status_label or (
+        t.status.value if hasattr(t.status, "value") else str(t.status)
     )
     parts = [t.title or "(untitled)", f"[{status_label}]"]
     if t.start_date:
@@ -835,10 +892,7 @@ def ingest_field_note(
 
     # Fetch task list for this project (for task matching by index).
     tasks: list[Task] = (
-        session.query(Task)
-        .filter_by(project_id=pid)
-        .order_by(Task.created_at)
-        .all()
+        session.query(Task).filter_by(project_id=pid).order_by(Task.created_at).all()
     )
     # Build a status-stratified, relevance-sorted block (Strategy C).
     # task_ids mirrors the rendered order so task_index N -> task_ids[N].
@@ -859,12 +913,16 @@ def ingest_field_note(
             from project_db.ai.proposals import _retrieve_proposal_chunks
 
             chunks = _retrieve_proposal_chunks(
-                session, embedding_provider, pid, raw_text.strip(),
-                top_k=rag_top_k, min_similarity=rag_min_similarity,
+                session,
+                embedding_provider,
+                pid,
+                raw_text.strip(),
+                top_k=rag_top_k,
+                min_similarity=rag_min_similarity,
             )
             context_excerpts = [c.get("text") or "" for c in chunks]
             batch.rag_chunks_used = len(context_excerpts)
-        except Exception:  # noqa: BLE001 -- retrieval must never break ingest
+        except Exception:
             context_excerpts = []
 
     # Resolve the note's timestamp: email send time if provided, ingest time otherwise.
@@ -900,12 +958,19 @@ def ingest_field_note(
     for sig in signals:
         try:
             _process_signal(
-                session, batch, sig, pid, raw_text,
-                channel, sender_ref, note_received_at,
-                task_ids, eid,
+                session,
+                batch,
+                sig,
+                pid,
+                raw_text,
+                channel,
+                sender_ref,
+                note_received_at,
+                task_ids,
+                eid,
                 known_labels=known_labels,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             batch.errors.append(f"signal processing error: {exc}")
 
     session.flush()
@@ -935,9 +1000,7 @@ def _process_signal(
 
     quoted = (sig.get("quoted_excerpt") or "").strip()
     if not quoted:
-        batch.errors.append(
-            f"signal {raw_class!r} has no quoted_excerpt -- skipped (A6)"
-        )
+        batch.errors.append(f"signal {raw_class!r} has no quoted_excerpt -- skipped (A6)")
         return
 
     conf = _clamp_conf(sig.get("confidence", 0.5))
@@ -953,7 +1016,7 @@ def _process_signal(
                 matched_task_id = task_ids[idx]
             else:
                 batch.errors.append(
-                    f"task_index {idx} out of range (0..{len(task_ids)-1}) -- match declined"
+                    f"task_index {idx} out of range (0..{len(task_ids) - 1}) -- match declined"
                 )
         except (TypeError, ValueError):
             batch.errors.append(f"invalid task_index {task_idx!r} -- match declined")
@@ -984,8 +1047,17 @@ def _process_signal(
 
     # Create Proposal rows for actionable signals.
     _maybe_create_proposal(
-        session, batch, sig, note_class, fn, project_id, matched_task_id,
-        task_ids, conf, quoted, reasoning,
+        session,
+        batch,
+        sig,
+        note_class,
+        fn,
+        project_id,
+        matched_task_id,
+        task_ids,
+        conf,
+        quoted,
+        reasoning,
         known_labels=list(known_labels),
     )
 
@@ -1036,9 +1108,7 @@ def _normalize_status_label(proposed: str, known_labels: list[str]) -> str:
     return proposed
 
 
-def _subtask_window_note(
-    session: Session, task_id: Any, start: Any, end: Any
-) -> str | None:
+def _subtask_window_note(session: Session, task_id: Any, start: Any, end: Any) -> str | None:
     """Advisory string when a subtask's proposed dates fall outside its parent's
     window, else None.  Loose bound -- the caller warns, never blocks (A1)."""
     task = session.query(Task).filter_by(canonical_id=task_id).one_or_none()
@@ -1180,9 +1250,7 @@ def _maybe_create_proposal(
             # real top-level task) so the new work still lands alongside the
             # related step; if the subitem has no resolvable parent, fall back
             # to a top-level task (no parent) rather than emit a doomed proposal.
-            parent_obj = (
-                session.query(Task).filter_by(canonical_id=parent_uuid).one_or_none()
-            )
+            parent_obj = session.query(Task).filter_by(canonical_id=parent_uuid).one_or_none()
             if parent_obj is not None and parent_obj.is_subitem:
                 parent_uuid = parent_obj.parent_task_id
             if parent_uuid is not None:

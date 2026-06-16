@@ -3,6 +3,7 @@
 Read-only. Uses a mock embedding provider (monkeypatched in, matching the
 mock-embedded corpus) so no OpenAI key / network is needed.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -11,20 +12,22 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from project_db.ai.embeddings import MockEmbeddingProvider  # noqa: E402
-from project_db.ai.rag import embed_documents_for  # noqa: E402
-from project_db.db.base import Base  # noqa: E402
-from project_db.db.models import Document  # noqa: E402
-from project_db.db.models.docs import DocumentText  # noqa: E402
+from project_db.ai.embeddings import MockEmbeddingProvider
+from project_db.ai.rag import embed_documents_for
+from project_db.db.base import Base
+from project_db.db.models import Document
+from project_db.db.models.docs import DocumentText
 
 
 @pytest.fixture
 def db_engine():
     engine = create_engine(
-        "sqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        "sqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
     yield engine
@@ -49,14 +52,19 @@ def client(patched_session_factory):
 
 def _seed_and_embed(session, project_factory):
     p = project_factory(name="Search Proj")
-    d = Document(name="Payments.pdf", url="x://1", mime_type="application/pdf",
-                 project_id=p.canonical_id)
+    d = Document(
+        name="Payments.pdf", url="x://1", mime_type="application/pdf", project_id=p.canonical_id
+    )
     session.add(d)
     session.flush()
-    session.add(DocumentText(
-        document_id=d.canonical_id, extraction_method="test",
-        extracted_text="The client shall pay fifty percent on signing and the "
-                       "balance on completion."))
+    session.add(
+        DocumentText(
+            document_id=d.canonical_id,
+            extraction_method="test",
+            extracted_text="The client shall pay fifty percent on signing and the "
+            "balance on completion.",
+        )
+    )
     session.commit()
     embed_documents_for(session, MockEmbeddingProvider(dims=64))
 

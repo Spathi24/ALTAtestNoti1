@@ -21,16 +21,15 @@ Write-back capability:
   MondayConnector.sync_back() pushes canonical changes to Monday. Use after
   syncing data from other sources (e.g., QB invoices -> update project status).
 """
+
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
-
-from sqlalchemy.orm import Session
 
 from project_db.connectors.base import BaseConnector, SyncReport
 from project_db.connectors.monday.client import MondayClient
@@ -79,7 +78,6 @@ DEFAULT_BOARD_MAPPING: list[dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 DEFAULT_COLUMN_MAPPING: dict[str, dict[str, str]] = {
-
     "Project": {},
     "Lead": {},
     "Deal": {},
@@ -103,14 +101,14 @@ DEFAULT_COLUMN_MAPPING: dict[str, dict[str, str]] = {
 
 # portfolio column id -> (synthetic task-board column id, title, type)
 MIRROR_COLUMN_MAP: dict[str, tuple[str, str, str]] = {
-    "portfolio_project_progress":         ("project_status",   "Status",   "status"),
-    "portfolio_project_actual_timeline":  ("project_timeline", "Timeline", "timeline"),
+    "portfolio_project_progress": ("project_status", "Status", "status"),
+    "portfolio_project_actual_timeline": ("project_timeline", "Timeline", "timeline"),
 }
 # Fallback when column ids differ across portfolios.
 MIRROR_TITLE_MAP: dict[str, tuple[str, str, str]] = {
-    "project progress": ("project_status",   "Status",   "status"),
-    "progress":         ("project_status",   "Status",   "status"),
-    "actual timeline":  ("project_timeline", "Timeline", "timeline"),
+    "project progress": ("project_status", "Status", "status"),
+    "progress": ("project_status", "Status", "status"),
+    "actual timeline": ("project_timeline", "Timeline", "timeline"),
 }
 
 
@@ -260,7 +258,7 @@ def apply_portfolio_mirror_overlay(
 
     try:
         linked_items = client.get_items_with_mirror_values(linked_ids)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         board_label = (board or {}).get("name") or (board or {}).get("id")
         logger.warning(
             "Mirror overlay fetch failed (board=%s): %s -- continuing without",
@@ -329,18 +327,20 @@ def _column_values_json(column_values: list[dict[str, Any]]) -> str:
     keep: list[dict[str, Any]] = []
     for cv in column_values:
         column = cv.get("column") or {}
-        keep.append({
-            "id": cv.get("id"),
-            "title": column.get("title"),
-            "type": cv.get("type"),
-            "text": cv.get("text"),
-            "value": cv.get("value"),
-            "label": cv.get("label"),
-            "number": cv.get("number"),
-            "from": cv.get("from"),
-            "to": cv.get("to"),
-            "display_value": cv.get("display_value"),
-        })
+        keep.append(
+            {
+                "id": cv.get("id"),
+                "title": column.get("title"),
+                "type": cv.get("type"),
+                "text": cv.get("text"),
+                "value": cv.get("value"),
+                "label": cv.get("label"),
+                "number": cv.get("number"),
+                "from": cv.get("from"),
+                "to": cv.get("to"),
+                "display_value": cv.get("display_value"),
+            }
+        )
     return json.dumps(keep, default=str, separators=(",", ":"))
 
 
@@ -350,16 +350,14 @@ class MondayConnector(BaseConnector):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         from project_db.config import settings
-        self.client = MondayClient(
-            token=self.config.get("api_token") or settings.monday_api_token
-        )
+
+        self.client = MondayClient(token=self.config.get("api_token") or settings.monday_api_token)
         self.board_mapping: list[dict[str, Any]] = self.config.get(
             "board_mapping", DEFAULT_BOARD_MAPPING
         )
         self.column_mapping: dict[str, dict[str, str]] = self.config.get(
             "column_mapping", DEFAULT_COLUMN_MAPPING
         )
-
 
     # ------------------------------------------------------------------
     # Entry point
@@ -430,7 +428,7 @@ class MondayConnector(BaseConnector):
                     skipped_unchanged,
                 )
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._record_failure(f"sync failed: {exc}")
         return self._finalize()
 
@@ -448,12 +446,17 @@ class MondayConnector(BaseConnector):
             return True
         try:
             events = self.client.list_activity_logs(
-                int(board_id), from_ts=cursor_ts, limit=1, max_pages=1,
+                int(board_id),
+                from_ts=cursor_ts,
+                limit=1,
+                max_pages=1,
             )
-        except Exception as exc:  # noqa: BLE001 -- never let the gate fail-hard
+        except Exception as exc:
             logger.warning(
                 "[MONDAY] activity_logs probe failed on board=%s: %s "
-                "(treating as changed to be safe)", board_id, exc,
+                "(treating as changed to be safe)",
+                board_id,
+                exc,
             )
             return True
         return bool(events)
@@ -523,7 +526,7 @@ class MondayConnector(BaseConnector):
                     matcher=ExactFieldMatcher(["email"]),
                 )
                 self._record_result(result.was_created, result.was_matched)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("User sync failed (non-fatal): %s", exc)
 
     # ------------------------------------------------------------------
@@ -587,10 +590,8 @@ class MondayConnector(BaseConnector):
                     self._upsert_deal(board, item, fields)
                 elif entity_type == "Client":
                     self._upsert_client(board, item, fields)
-            except Exception as exc:  # noqa: BLE001
-                self._record_failure(
-                    f"item {item.get('id')} on board {board['name']!r}: {exc}"
-                )
+            except Exception as exc:
+                self._record_failure(f"item {item.get('id')} on board {board['name']!r}: {exc}")
 
     # ------------------------------------------------------------------
     # Per-entity upserts
@@ -773,7 +774,7 @@ class MondayConnector(BaseConnector):
                         parent_task_id=parent_task_id,
                         parent_group_title=(item.get("group") or {}).get("title", ""),
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._record_failure(
                     f"task item {item.get('id')} on board {board['name']!r}: {exc}"
                 )
@@ -881,9 +882,7 @@ class MondayConnector(BaseConnector):
             .first()
         )
         if placeholder is None:
-            placeholder = Client(
-                name="Unknown Client", organization_id=self.organization_id
-            )
+            placeholder = Client(name="Unknown Client", organization_id=self.organization_id)
             self.session.add(placeholder)
             self.session.flush()
             logger.info(
@@ -1011,7 +1010,7 @@ class MondayConnector(BaseConnector):
                     items = data.get("items") or []
                     if items:
                         board_id = int(items[0]["board"]["id"])
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning("API fallback to find board_id failed: %s", exc)
                 if board_id is None:
                     return False
@@ -1021,9 +1020,7 @@ class MondayConnector(BaseConnector):
             for key, value in field_updates.items():
                 col_id = self._resolve_column_id(board_id, key)
                 if col_id is None:
-                    logger.warning(
-                        "Cannot resolve column %r on board %s — skipping", key, board_id
-                    )
+                    logger.warning("Cannot resolve column %r on board %s — skipping", key, board_id)
                     continue
                 resolved[col_id] = value
 
@@ -1031,7 +1028,7 @@ class MondayConnector(BaseConnector):
                 logger.warning("sync_back: no resolvable column updates for item %s", item_id)
                 return False
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error("sync_back setup failed: %s", exc)
             return False
 
@@ -1089,12 +1086,9 @@ class MondayConnector(BaseConnector):
                 parent_item_id = int(parent_ext.external_key)
             except (ValueError, TypeError) as exc:
                 raise RuntimeError(
-                    f"Parent Task has a non-numeric Monday key "
-                    f"{parent_ext.external_key!r}"
+                    f"Parent Task has a non-numeric Monday key {parent_ext.external_key!r}"
                 ) from exc
-            return self.client.create_subitem(
-                parent_item_id=parent_item_id, item_name=title
-            )
+            return self.client.create_subitem(parent_item_id=parent_item_id, item_name=title)
 
         # --- top-level path: needs the PROJECT's board id ------------------
         ext_id = (

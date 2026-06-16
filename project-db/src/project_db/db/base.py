@@ -7,11 +7,11 @@ All canonical entities inherit from `Base` (declarative base) plus the
 
 This mirrors the Umple `CanonicalEntity` class.
 """
+
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import Column, DateTime, String
 from sqlalchemy.dialects.postgresql import UUID

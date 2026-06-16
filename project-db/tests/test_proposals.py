@@ -13,11 +13,13 @@ deterministic.  Coverage:
   * read side: list_proposals, get_proposal_detail
   * CLI parsing for propose / proposals list / proposals show
 """
+
 from __future__ import annotations
 
 import json
 import uuid
 from datetime import date
+from typing import ClassVar
 
 import pytest
 
@@ -54,6 +56,7 @@ def _freeze_today(monkeypatch):
     passes those dates every test produces 0 proposals (a time-bomb).  Freezing
     today keeps the hardcoded dates safely in the future, deterministically.
     """
+
     class _Fixed(date):
         @classmethod
         def today(cls):
@@ -72,36 +75,47 @@ def timeline_fixture(session, client_factory):
     """One project, 2 dateless tasks, 1 dated task, 1 contract w/ text."""
     c = client_factory(name="Acme")
     p = Project(
-        name="923 Rockland", code="R923", status=ProjectStatus.ACTIVE,
+        name="923 Rockland",
+        code="R923",
+        status=ProjectStatus.ACTIVE,
         client_id=c.canonical_id,
     )
     session.add(p)
     session.commit()
 
-    session.add_all([
-        Task(title="Demolition", status=TaskStatus.TODO, project_id=p.canonical_id),
-        Task(title="Framing", status=TaskStatus.TODO, project_id=p.canonical_id),
-        Task(title="Already scheduled", status=TaskStatus.TODO,
-             start_date=date(2026, 4, 1), end_date=date(2026, 4, 10),
-             project_id=p.canonical_id),
-    ])
+    session.add_all(
+        [
+            Task(title="Demolition", status=TaskStatus.TODO, project_id=p.canonical_id),
+            Task(title="Framing", status=TaskStatus.TODO, project_id=p.canonical_id),
+            Task(
+                title="Already scheduled",
+                status=TaskStatus.TODO,
+                start_date=date(2026, 4, 1),
+                end_date=date(2026, 4, 10),
+                project_id=p.canonical_id,
+            ),
+        ]
+    )
     contract = Document(
-        name="Contract.pdf", url="https://drive/c",
-        mime_type="application/pdf", storage_ref="c1",
+        name="Contract.pdf",
+        url="https://drive/c",
+        mime_type="application/pdf",
+        storage_ref="c1",
         folder_path="Active/923 Rockland",
         project_id=p.canonical_id,
     )
     session.add(contract)
     session.commit()
-    session.add(DocumentText(
-        document_id=contract.canonical_id,
-        extracted_text=(
-            "SCHEDULE: Demolition runs June 1-7, 2026.  Framing follows, "
-            "June 8-22, 2026."
-        ),
-        extraction_method="pdf-pymupdf",
-        token_count=20,
-    ))
+    session.add(
+        DocumentText(
+            document_id=contract.canonical_id,
+            extracted_text=(
+                "SCHEDULE: Demolition runs June 1-7, 2026.  Framing follows, June 8-22, 2026."
+            ),
+            extraction_method="pdf-pymupdf",
+            token_count=20,
+        )
+    )
     session.commit()
     return p
 
@@ -170,18 +184,16 @@ class TestMatchSourceDocument:
     """Source-document matching is an anti-hallucination gate: a cited
     document that matches NOTHING we supplied is a hallucination signal."""
 
-    _DOCS = {
+    _DOCS: ClassVar[dict[str, str]] = {
         "Alta Construction Group - contract.pdf": "id-1",
         "Tony Estimate.pdf": "id-2",
     }
 
     def test_exact_match(self):
-        assert _match_source_document(
-            "Tony Estimate.pdf", self._DOCS) == "id-2"
+        assert _match_source_document("Tony Estimate.pdf", self._DOCS) == "id-2"
 
     def test_case_insensitive_match(self):
-        assert _match_source_document(
-            "tony estimate.pdf", self._DOCS) == "id-2"
+        assert _match_source_document("tony estimate.pdf", self._DOCS) == "id-2"
 
     def test_unambiguous_substring_match(self):
         # The model abbreviates -- "the contract" -> the contract doc.
@@ -193,8 +205,7 @@ class TestMatchSourceDocument:
 
     def test_no_match_returns_none(self):
         # A document we never supplied -- the hallucination case.
-        assert _match_source_document(
-            "Fabricated Contract.pdf", self._DOCS) is None
+        assert _match_source_document("Fabricated Contract.pdf", self._DOCS) is None
 
     def test_none_and_nonstring(self):
         assert _match_source_document(None, self._DOCS) is None
@@ -209,12 +220,18 @@ class TestMatchSourceDocument:
 
 class TestGenerateTimelineProposals:
     def test_happy_path_creates_proposals(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "Contract says demo runs June 1-7.",
-             "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "Contract says demo runs June 1-7.",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
 
@@ -236,11 +253,18 @@ class TestGenerateTimelineProposals:
 
     def test_proposal_targets_correct_task(self, session, timeline_fixture):
         """The integer index must map to the right canonical Task."""
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.8,
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.8,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         # The proposal's entity_id must be a real dateless Task on this project.
@@ -251,15 +275,20 @@ class TestGenerateTimelineProposals:
 
     def test_skips_when_no_dateless_tasks(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="All Dated", code="AD", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(
+            name="All Dated", code="AD", status=ProjectStatus.ACTIVE, client_id=c.canonical_id
+        )
         session.add(p)
         session.commit()
-        session.add(Task(
-            title="Done deal", status=TaskStatus.TODO,
-            start_date=date(2026, 1, 1), end_date=date(2026, 1, 2),
-            project_id=p.canonical_id,
-        ))
+        session.add(
+            Task(
+                title="Done deal",
+                status=TaskStatus.TODO,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 2),
+                project_id=p.canonical_id,
+            )
+        )
         session.commit()
 
         provider = _mock([])
@@ -270,12 +299,12 @@ class TestGenerateTimelineProposals:
 
     def test_skips_when_no_document_text(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="No Docs", code="ND", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(
+            name="No Docs", code="ND", status=ProjectStatus.ACTIVE, client_id=c.canonical_id
+        )
         session.add(p)
         session.commit()
-        session.add(Task(title="Orphan task", status=TaskStatus.TODO,
-                         project_id=p.canonical_id))
+        session.add(Task(title="Orphan task", status=TaskStatus.TODO, project_id=p.canonical_id))
         session.commit()
 
         provider = _mock([])
@@ -292,14 +321,31 @@ class TestGenerateTimelineProposals:
         assert batch.llm_raw_item_count == 0
 
     def test_malformed_items_recorded_not_raised(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 99, "proposed_start": "2026-06-01",  # index OOR
-             "proposed_end": "2026-06-07", "confidence": 0.5, "reasoning": "x"},
-            {"task_index": 0, "proposed_start": "garbage",       # bad date
-             "proposed_end": "2026-06-07", "confidence": 0.5, "reasoning": "x"},
-            {"task_index": 1, "proposed_start": "2026-06-20",    # end < start
-             "proposed_end": "2026-06-01", "confidence": 0.5, "reasoning": "x"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 99,
+                    "proposed_start": "2026-06-01",  # index OOR
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.5,
+                    "reasoning": "x",
+                },
+                {
+                    "task_index": 0,
+                    "proposed_start": "garbage",  # bad date
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.5,
+                    "reasoning": "x",
+                },
+                {
+                    "task_index": 1,
+                    "proposed_start": "2026-06-20",  # end < start
+                    "proposed_end": "2026-06-01",
+                    "confidence": 0.5,
+                    "reasoning": "x",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 0
@@ -313,11 +359,18 @@ class TestGenerateTimelineProposals:
         assert len(batch.errors) == 1
 
     def test_confidence_clamped_on_persist(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 4.7,  # out of range
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 4.7,  # out of range
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.proposals[0].confidence == 1.0
@@ -326,25 +379,38 @@ class TestGenerateTimelineProposals:
         """A cited source document we never supplied -> proposal still
         created (a human may know the dates), but flagged in
         batch.warnings as a possible hallucination -- NOT an error."""
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.8,
-             "reasoning": "the schedule says so",
-             "source_document": "A Document We Never Gave The Model.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.8,
+                    "reasoning": "the schedule says so",
+                    "source_document": "A Document We Never Gave The Model.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
-        assert batch.created_count == 1          # still created
-        assert not batch.errors                  # not rejected
+        assert batch.created_count == 1  # still created
+        assert not batch.errors  # not rejected
         assert any("hallucination" in w for w in batch.warnings)
 
     def test_missing_reasoning_flagged_as_warning(self, session, timeline_fixture):
         """No reasoning violates the evidence-citation rule -> flagged."""
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.8,
-             "reasoning": "", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.8,
+                    "reasoning": "",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
@@ -355,23 +421,45 @@ class TestGenerateTimelineProposals:
         dateless subtask under it.  Returns (project, parent, subtask)."""
         c = client_factory(name="Acme")
         p = Project(name="P", status=ProjectStatus.ACTIVE, client_id=c.canonical_id)
-        session.add(p); session.commit()
-        parent = Task(title="Phase 1", status=TaskStatus.TODO, project_id=p.canonical_id,
-                      is_subitem=False, start_date=date(2026, 7, 1), end_date=date(2026, 7, 31))
-        session.add(parent); session.commit()
-        sub = Task(title="Sub A", status=TaskStatus.TODO, project_id=p.canonical_id,
-                   is_subitem=True, parent_task_id=parent.canonical_id)
-        session.add(sub); session.commit()
+        session.add(p)
+        session.commit()
+        parent = Task(
+            title="Phase 1",
+            status=TaskStatus.TODO,
+            project_id=p.canonical_id,
+            is_subitem=False,
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+        )
+        session.add(parent)
+        session.commit()
+        sub = Task(
+            title="Sub A",
+            status=TaskStatus.TODO,
+            project_id=p.canonical_id,
+            is_subitem=True,
+            parent_task_id=parent.canonical_id,
+        )
+        session.add(sub)
+        session.commit()
         return p, parent, sub
 
     def test_subtask_outside_parent_window_warns(self, session, client_factory):
         """A subtask proposed outside its parent's window is still created but
         flagged (loose bound: warn, never reject)."""
         p, _parent, _sub = self._project_with_dated_parent_and_subtask(session, client_factory)
-        provider = _mock([  # Aug is AFTER the parent's Jul 31 end
-            {"task_index": 0, "proposed_start": "2026-08-15", "proposed_end": "2026-08-20",
-             "confidence": 0.8, "reasoning": "x", "source_document": ""},
-        ])
+        provider = _mock(
+            [  # Aug is AFTER the parent's Jul 31 end
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-08-15",
+                    "proposed_end": "2026-08-20",
+                    "confidence": 0.8,
+                    "reasoning": "x",
+                    "source_document": "",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, p.canonical_id)
         session.commit()
         assert batch.created_count == 1
@@ -380,10 +468,18 @@ class TestGenerateTimelineProposals:
     def test_subtask_within_parent_window_no_window_warning(self, session, client_factory):
         """Inside the parent window -> no parent-window warning."""
         p, _parent, _sub = self._project_with_dated_parent_and_subtask(session, client_factory)
-        provider = _mock([  # within Jul 1-31
-            {"task_index": 0, "proposed_start": "2026-07-10", "proposed_end": "2026-07-20",
-             "confidence": 0.8, "reasoning": "x", "source_document": ""},
-        ])
+        provider = _mock(
+            [  # within Jul 1-31
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-07-10",
+                    "proposed_end": "2026-07-20",
+                    "confidence": 0.8,
+                    "reasoning": "x",
+                    "source_document": "",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, p.canonical_id)
         session.commit()
         assert batch.created_count == 1
@@ -391,12 +487,18 @@ class TestGenerateTimelineProposals:
 
     def test_well_evidenced_proposal_has_no_warnings(self, session, timeline_fixture):
         """Happy path: matched source + reasoning present -> zero warnings."""
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "Contract says demo runs June 1-7.",
-             "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "Contract says demo runs June 1-7.",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
@@ -407,11 +509,18 @@ class TestGenerateTimelineProposals:
         forward-looking, so a past end date means the task is already done.
         This guards the bug where invoice/lease dates produced 2022 'schedules'.
         """
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2020-01-01",
-             "proposed_end": "2020-02-01", "confidence": 0.9,
-             "reasoning": "Invoice dated 2020.", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2020-01-01",
+                    "proposed_end": "2020-02-01",
+                    "confidence": 0.9,
+                    "reasoning": "Invoice dated 2020.",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 0
@@ -425,22 +534,36 @@ class TestGenerateTimelineProposals:
         (insertion / rowid order), so task_index 0 resolves to the same
         canonical Task on both runs -- we can assert directly.
         """
-        prov1 = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.8,
-             "reasoning": "first", "source_document": "Contract.pdf"},
-        ])
+        prov1 = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.8,
+                    "reasoning": "first",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch1 = generate_timeline_proposals(session, prov1, timeline_fixture.canonical_id)
         session.commit()
         first_id = batch1.proposals[0].canonical_id
         first_task = batch1.proposals[0].entity_id
 
         # Second run proposes for the SAME task (index 0 again).
-        prov2 = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-02",
-             "proposed_end": "2026-06-09", "confidence": 0.95,
-             "reasoning": "revised", "source_document": "Contract.pdf"},
-        ])
+        prov2 = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-02",
+                    "proposed_end": "2026-06-09",
+                    "confidence": 0.95,
+                    "reasoning": "revised",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch2 = generate_timeline_proposals(session, prov2, timeline_fixture.canonical_id)
         session.commit()
 
@@ -452,9 +575,14 @@ class TestGenerateTimelineProposals:
         assert batch2.superseded_count == 1
         old = session.query(Proposal).filter_by(canonical_id=first_id).one()
         assert old.status == ProposalStatus.SUPERSEDED
-        pending = session.query(Proposal).filter_by(
-            entity_id=first_task, status=ProposalStatus.PENDING,
-        ).all()
+        pending = (
+            session.query(Proposal)
+            .filter_by(
+                entity_id=first_task,
+                status=ProposalStatus.PENDING,
+            )
+            .all()
+        )
         assert len(pending) == 1
         assert pending[0].canonical_id == batch2.proposals[0].canonical_id
 
@@ -475,12 +603,17 @@ class TestGenerateTimelineProposals:
 
 class TestGenerateScopeProposals:
     def test_happy_path_creates_scope_proposals(self, session, timeline_fixture):
-        provider = _scope_mock([
-            {"scope_item": "Install fire-rated drywall in stairwell",
-             "suggested_task_title": "Fire-rated drywall - stairwell",
-             "confidence": 0.8, "reasoning": "Contract section 4 requires it.",
-             "source_document": "Contract.pdf"},
-        ])
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "Install fire-rated drywall in stairwell",
+                    "suggested_task_title": "Fire-rated drywall - stairwell",
+                    "confidence": 0.8,
+                    "reasoning": "Contract section 4 requires it.",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
 
@@ -497,12 +630,12 @@ class TestGenerateScopeProposals:
 
     def test_skips_when_no_document_text(self, session, client_factory):
         c = client_factory(name="C")
-        p = Project(name="No Docs", code="ND", status=ProjectStatus.ACTIVE,
-                    client_id=c.canonical_id)
+        p = Project(
+            name="No Docs", code="ND", status=ProjectStatus.ACTIVE, client_id=c.canonical_id
+        )
         session.add(p)
         session.commit()
-        session.add(Task(title="t", status=TaskStatus.TODO,
-                         project_id=p.canonical_id))
+        session.add(Task(title="t", status=TaskStatus.TODO, project_id=p.canonical_id))
         session.commit()
 
         batch = generate_scope_proposals(session, _scope_mock([]), p.canonical_id)
@@ -512,8 +645,7 @@ class TestGenerateScopeProposals:
 
     def test_empty_scope_gaps_is_valid(self, session, timeline_fixture):
         """{"scope_gaps": []} is a legitimate 'task list already covers it'."""
-        batch = generate_scope_proposals(
-            session, _scope_mock([]), timeline_fixture.canonical_id)
+        batch = generate_scope_proposals(session, _scope_mock([]), timeline_fixture.canonical_id)
         assert batch.skipped_reason is None
         assert batch.created_count == 0
 
@@ -522,11 +654,17 @@ class TestGenerateScopeProposals:
         reject -- it becomes a SUBITEM proposal under that task (the existing
         task is the likely parent), flagged for review.  This replaced the old
         hard-reject that silently buried specific scope items (2026-06-15)."""
-        provider = _scope_mock([
-            {"scope_item": "demolition of interior walls",
-             "suggested_task_title": "Demolition",  # already a task in the fixture
-             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "demolition of interior walls",
+                    "suggested_task_title": "Demolition",  # already a task in the fixture
+                    "confidence": 0.7,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         # Now created (as a subitem proposal), not rejected.
@@ -540,48 +678,72 @@ class TestGenerateScopeProposals:
         assert pv["parent_task_title"] == "Demolition"
         assert pv["suggested_task_title"] == "demolition of interior walls"
 
-    def test_collision_with_duplicate_parents_proposes_top_level(
-        self, session, timeline_fixture
-    ):
+    def test_collision_with_duplicate_parents_proposes_top_level(self, session, timeline_fixture):
         """If >1 top-level task shares the suggested title, generation must NOT
         pin a parent (it can't pick safely) -- it proposes top-level and warns."""
-        session.add(Task(title="Demolition", status=TaskStatus.TODO,
-                         project_id=timeline_fixture.canonical_id, is_subitem=False))
+        session.add(
+            Task(
+                title="Demolition",
+                status=TaskStatus.TODO,
+                project_id=timeline_fixture.canonical_id,
+                is_subitem=False,
+            )
+        )
         session.commit()
-        provider = _scope_mock([
-            {"scope_item": "haul away debris", "suggested_task_title": "Demolition",
-             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "haul away debris",
+                    "suggested_task_title": "Demolition",
+                    "confidence": 0.7,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
         pv = json.loads(batch.proposals[0].proposed_value)
-        assert pv["parent_task_id"] == ""        # no parent pinned
-        assert pv["parent_task_title"] == ""     # proposed top-level
+        assert pv["parent_task_id"] == ""  # no parent pinned
+        assert pv["parent_task_title"] == ""  # proposed top-level
         assert any("ambiguous" in w.lower() for w in batch.warnings)
 
-    def test_collision_duplicate_parents_disambiguated_by_unit(
-        self, session, timeline_fixture
-    ):
+    def test_collision_duplicate_parents_disambiguated_by_unit(self, session, timeline_fixture):
         """With >1 same-named top-level task, a correct 'unit' hint pins the
         right per-unit parent (the group-aware fix)."""
-        existing = session.query(Task).filter_by(
-            project_id=timeline_fixture.canonical_id, title="Demolition").one()
+        existing = (
+            session.query(Task)
+            .filter_by(project_id=timeline_fixture.canonical_id, title="Demolition")
+            .one()
+        )
         existing.group_title = "Unit 923"
-        u927 = Task(title="Demolition", status=TaskStatus.TODO,
-                    project_id=timeline_fixture.canonical_id, is_subitem=False,
-                    group_title="Unit 927")
-        session.add(u927); session.commit()
-        provider = _scope_mock([
-            {"scope_item": "debris removal", "suggested_task_title": "Demolition",
-             "unit": "Unit 927", "confidence": 0.7, "reasoning": "x",
-             "source_document": "Contract.pdf"},
-        ])
+        u927 = Task(
+            title="Demolition",
+            status=TaskStatus.TODO,
+            project_id=timeline_fixture.canonical_id,
+            is_subitem=False,
+            group_title="Unit 927",
+        )
+        session.add(u927)
+        session.commit()
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "debris removal",
+                    "suggested_task_title": "Demolition",
+                    "unit": "Unit 927",
+                    "confidence": 0.7,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
         pv = json.loads(batch.proposals[0].proposed_value)
-        assert pv["parent_task_id"] == str(u927.canonical_id)   # the RIGHT unit
+        assert pv["parent_task_id"] == str(u927.canonical_id)  # the RIGHT unit
         assert pv["parent_task_title"] == "Demolition"
         assert any("Unit 927" in w for w in batch.warnings)
 
@@ -590,37 +752,64 @@ class TestGenerateScopeProposals:
     ):
         """A unit hint matching no parent group -> safe top-level fallback, never
         a guessed parent."""
-        existing = session.query(Task).filter_by(
-            project_id=timeline_fixture.canonical_id, title="Demolition").one()
+        existing = (
+            session.query(Task)
+            .filter_by(project_id=timeline_fixture.canonical_id, title="Demolition")
+            .one()
+        )
         existing.group_title = "Unit 923"
-        session.add(Task(title="Demolition", status=TaskStatus.TODO,
-                         project_id=timeline_fixture.canonical_id, is_subitem=False,
-                         group_title="Unit 927"))
+        session.add(
+            Task(
+                title="Demolition",
+                status=TaskStatus.TODO,
+                project_id=timeline_fixture.canonical_id,
+                is_subitem=False,
+                group_title="Unit 927",
+            )
+        )
         session.commit()
-        provider = _scope_mock([
-            {"scope_item": "debris removal", "suggested_task_title": "Demolition",
-             "unit": "Unit 999",  # matches no group
-             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "debris removal",
+                    "suggested_task_title": "Demolition",
+                    "unit": "Unit 999",  # matches no group
+                    "confidence": 0.7,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
         pv = json.loads(batch.proposals[0].proposed_value)
-        assert pv["parent_task_id"] == ""   # NOT pinned -- conservative fallback
+        assert pv["parent_task_id"] == ""  # NOT pinned -- conservative fallback
         assert any("did not single one out" in w for w in batch.warnings)
 
-    def test_collision_with_only_subitem_proposes_top_level(
-        self, session, timeline_fixture
-    ):
+    def test_collision_with_only_subitem_proposes_top_level(self, session, timeline_fixture):
         """If the only same-named task is a subitem (can't host another), the
         gap is proposed top-level, not nested."""
-        session.add(Task(title="Closet shelving", status=TaskStatus.TODO,
-                         project_id=timeline_fixture.canonical_id, is_subitem=True))
+        session.add(
+            Task(
+                title="Closet shelving",
+                status=TaskStatus.TODO,
+                project_id=timeline_fixture.canonical_id,
+                is_subitem=True,
+            )
+        )
         session.commit()
-        provider = _scope_mock([
-            {"scope_item": "install sliding doors", "suggested_task_title": "Closet shelving",
-             "confidence": 0.7, "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "install sliding doors",
+                    "suggested_task_title": "Closet shelving",
+                    "confidence": 0.7,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
@@ -630,15 +819,21 @@ class TestGenerateScopeProposals:
         assert any("subitem" in w.lower() for w in batch.warnings)
 
     def test_malformed_item_recorded_not_raised(self, session, timeline_fixture):
-        provider = MockLLMProvider(
-            responses=[json.dumps({"scope_gaps": ["just a string"]})])
+        provider = MockLLMProvider(responses=[json.dumps({"scope_gaps": ["just a string"]})])
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         assert batch.created_count == 0
         assert len(batch.errors) == 1
 
     def test_rerun_supersedes_prior_scope_proposals(self, session, timeline_fixture):
-        gap = [{"scope_item": "Roof flashing", "suggested_task_title": "Roof flashing install",
-                "confidence": 0.8, "reasoning": "spec 7", "source_document": "Contract.pdf"}]
+        gap = [
+            {
+                "scope_item": "Roof flashing",
+                "suggested_task_title": "Roof flashing install",
+                "confidence": 0.8,
+                "reasoning": "spec 7",
+                "source_document": "Contract.pdf",
+            }
+        ]
         b1 = generate_scope_proposals(session, _scope_mock(gap), timeline_fixture.canonical_id)
         session.commit()
         first_id = b1.proposals[0].canonical_id
@@ -648,8 +843,11 @@ class TestGenerateScopeProposals:
         assert b2.superseded_count == 1
         old = session.query(Proposal).filter_by(canonical_id=first_id).one()
         assert old.status == ProposalStatus.SUPERSEDED
-        pending = session.query(Proposal).filter_by(
-            field_name="scope_gap", status=ProposalStatus.PENDING).all()
+        pending = (
+            session.query(Proposal)
+            .filter_by(field_name="scope_gap", status=ProposalStatus.PENDING)
+            .all()
+        )
         assert len(pending) == 1
 
 
@@ -660,11 +858,18 @@ class TestGenerateScopeProposals:
 
 class TestListProposals:
     def test_lists_created_proposals(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
 
@@ -678,11 +883,18 @@ class TestListProposals:
         assert r["project_name"] == "923 Rockland"
 
     def test_status_filter(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
 
@@ -690,11 +902,18 @@ class TestListProposals:
         assert len(list_proposals(session, status=ProposalStatus.ACCEPTED)) == 0
 
     def test_kind_filter(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert len(list_proposals(session, kind="timeline")) == 1
@@ -706,11 +925,18 @@ class TestListProposals:
 
 class TestGetProposalDetail:
     def test_full_detail(self, session, timeline_fixture):
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "Contract evidence here.", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "Contract evidence here.",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         pid = batch.proposals[0].canonical_id
@@ -740,11 +966,18 @@ class TestRejectProposal:
     """The safe half of the approval loop -- pure DB, no external write."""
 
     def _one_pending(self, session, timeline_fixture) -> Proposal:
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         return batch.proposals[0]
@@ -823,6 +1056,7 @@ class _FakeConnector:
     field_updates payload, and can be configured to return False or
     raise -- the two failure modes accept_proposal must survive.
     """
+
     def __init__(self, *, returns: bool = True, raises: bool = False):
         self.calls: list[dict] = []
         self.create_calls: list[dict] = []
@@ -837,9 +1071,7 @@ class _FakeConnector:
         return self._returns
 
     def create_task(self, project, title, parent_task=None):
-        self.create_calls.append(
-            {"project": project, "title": title, "parent_task": parent_task}
-        )
+        self.create_calls.append({"project": project, "title": title, "parent_task": parent_task})
         if self._raises:
             raise RuntimeError("simulated Monday API failure")
         # Subitems come back with their own subitem-board id; top-level items
@@ -852,11 +1084,18 @@ class TestAcceptProposal:
     the external write happens FIRST; status flips only on success."""
 
     def _one_pending(self, session, timeline_fixture) -> Proposal:
-        provider = _mock([
-            {"task_index": 0, "proposed_start": "2026-06-01",
-             "proposed_end": "2026-06-07", "confidence": 0.9,
-             "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _mock(
+            [
+                {
+                    "task_index": 0,
+                    "proposed_start": "2026-06-01",
+                    "proposed_end": "2026-06-07",
+                    "confidence": 0.9,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_timeline_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         return batch.proposals[0]
@@ -982,19 +1221,27 @@ class TestAcceptProposal:
         SUBITEM under the named parent and mirrors is_subitem/parent_task_id."""
         # A scope run whose suggested title collides with "Demolition" ->
         # becomes a subitem proposal (parent_task_title="Demolition").
-        provider = _scope_mock([
-            {"scope_item": "install load-bearing columns",
-             "suggested_task_title": "Demolition",
-             "confidence": 0.8, "reasoning": "x", "source_document": "Contract.pdf"},
-        ])
+        provider = _scope_mock(
+            [
+                {
+                    "scope_item": "install load-bearing columns",
+                    "suggested_task_title": "Demolition",
+                    "confidence": 0.8,
+                    "reasoning": "x",
+                    "source_document": "Contract.pdf",
+                },
+            ]
+        )
         batch = generate_scope_proposals(session, provider, timeline_fixture.canonical_id)
         session.commit()
         assert batch.created_count == 1
         prop = batch.proposals[0]
 
-        parent = session.query(Task).filter_by(
-            project_id=timeline_fixture.canonical_id, title="Demolition"
-        ).one()
+        parent = (
+            session.query(Task)
+            .filter_by(project_id=timeline_fixture.canonical_id, title="Demolition")
+            .one()
+        )
 
         conn = _FakeConnector(returns=True)
         result = accept_proposal(session, prop.canonical_id, writeback=conn, decided_by="bob")
@@ -1008,26 +1255,33 @@ class TestAcceptProposal:
         assert conn.create_calls[0]["title"] == "install load-bearing columns"
 
         # New canonical Task mirrors the hierarchy.
-        new_task = session.query(Task).filter_by(
-            project_id=timeline_fixture.canonical_id,
-            title="install load-bearing columns",
-        ).one()
+        new_task = (
+            session.query(Task)
+            .filter_by(
+                project_id=timeline_fixture.canonical_id,
+                title="install load-bearing columns",
+            )
+            .one()
+        )
         assert new_task.is_subitem is True
         assert new_task.parent_task_id == parent.canonical_id
 
-    def test_accept_scope_subitem_missing_parent_fails_cleanly(
-        self, session, timeline_fixture
-    ):
+    def test_accept_scope_subitem_missing_parent_fails_cleanly(self, session, timeline_fixture):
         """If the named parent no longer exists, accept fails without writing."""
         from project_db.db.models.proposals import Proposal as _P
+
         prop = _P(
             entity_type="Project",
             entity_id=timeline_fixture.canonical_id,
             field_name="scope_gap",
-            proposed_value=json.dumps({
-                "scope_item": "x", "suggested_task_title": "x",
-                "parent_task_title": "Nonexistent Parent", "reasoning": "y",
-            }),
+            proposed_value=json.dumps(
+                {
+                    "scope_item": "x",
+                    "suggested_task_title": "x",
+                    "parent_task_title": "Nonexistent Parent",
+                    "reasoning": "y",
+                }
+            ),
             confidence=0.7,
             status=ProposalStatus.PENDING,
             prompt_version="scope-v1",
@@ -1040,78 +1294,113 @@ class TestAcceptProposal:
         assert "parent task" in result["error"].lower()
         assert conn.create_calls == [], "must not write when parent is unresolved"
 
-    def test_accept_scope_subitem_resolves_by_pinned_id_not_title(
-        self, session, timeline_fixture
-    ):
+    def test_accept_scope_subitem_resolves_by_pinned_id_not_title(self, session, timeline_fixture):
         """When a title is DUPLICATED, generation pins the exact parent id so
         accept nests under the right one -- never an arbitrary same-named task."""
         # Add a SECOND top-level "Demolition" (a multi-address project really
         # has one per building).  The proposal must still target a specific one.
-        dup = Task(title="Demolition", status=TaskStatus.TODO,
-                   project_id=timeline_fixture.canonical_id, is_subitem=False)
+        dup = Task(
+            title="Demolition",
+            status=TaskStatus.TODO,
+            project_id=timeline_fixture.canonical_id,
+            is_subitem=False,
+        )
         session.add(dup)
         session.commit()
-        intended = session.query(Task).filter_by(
-            project_id=timeline_fixture.canonical_id, title="Demolition"
-        ).first()  # whichever; we pin THIS one explicitly
+        intended = (
+            session.query(Task)
+            .filter_by(project_id=timeline_fixture.canonical_id, title="Demolition")
+            .first()
+        )  # whichever; we pin THIS one explicitly
         prop = Proposal(
-            entity_type="Project", entity_id=timeline_fixture.canonical_id,
+            entity_type="Project",
+            entity_id=timeline_fixture.canonical_id,
             field_name="scope_gap",
-            proposed_value=json.dumps({
-                "scope_item": "remove debris", "suggested_task_title": "remove debris",
-                "parent_task_title": "Demolition",
-                "parent_task_id": str(intended.canonical_id), "reasoning": "x",
-            }),
-            confidence=0.8, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+            proposed_value=json.dumps(
+                {
+                    "scope_item": "remove debris",
+                    "suggested_task_title": "remove debris",
+                    "parent_task_title": "Demolition",
+                    "parent_task_id": str(intended.canonical_id),
+                    "reasoning": "x",
+                }
+            ),
+            confidence=0.8,
+            status=ProposalStatus.PENDING,
+            prompt_version="scope-v1",
         )
-        session.add(prop); session.commit()
+        session.add(prop)
+        session.commit()
         conn = _FakeConnector(returns=True)
         result = accept_proposal(session, prop.canonical_id, writeback=conn)
         assert result["ok"] is True
         assert conn.create_calls[0]["parent_task"].canonical_id == intended.canonical_id
 
-    def test_accept_scope_subitem_ambiguous_title_refused(
-        self, session, timeline_fixture
-    ):
+    def test_accept_scope_subitem_ambiguous_title_refused(self, session, timeline_fixture):
         """A legacy proposal (title only, no pinned id) whose parent title is
         duplicated must REFUSE -- never guess which same-named task to nest under."""
-        session.add(Task(title="Demolition", status=TaskStatus.TODO,
-                         project_id=timeline_fixture.canonical_id, is_subitem=False))
+        session.add(
+            Task(
+                title="Demolition",
+                status=TaskStatus.TODO,
+                project_id=timeline_fixture.canonical_id,
+                is_subitem=False,
+            )
+        )
         session.commit()
         prop = Proposal(
-            entity_type="Project", entity_id=timeline_fixture.canonical_id,
+            entity_type="Project",
+            entity_id=timeline_fixture.canonical_id,
             field_name="scope_gap",
-            proposed_value=json.dumps({
-                "scope_item": "y", "suggested_task_title": "y",
-                "parent_task_title": "Demolition", "reasoning": "x",  # no parent_task_id
-            }),
-            confidence=0.7, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+            proposed_value=json.dumps(
+                {
+                    "scope_item": "y",
+                    "suggested_task_title": "y",
+                    "parent_task_title": "Demolition",
+                    "reasoning": "x",  # no parent_task_id
+                }
+            ),
+            confidence=0.7,
+            status=ProposalStatus.PENDING,
+            prompt_version="scope-v1",
         )
-        session.add(prop); session.commit()
+        session.add(prop)
+        session.commit()
         conn = _FakeConnector(returns=True)
         result = accept_proposal(session, prop.canonical_id, writeback=conn)
         assert result["ok"] is False
         assert "ambiguous" in result["error"].lower()
         assert conn.create_calls == []
 
-    def test_accept_scope_subitem_under_subitem_refused(
-        self, session, timeline_fixture
-    ):
+    def test_accept_scope_subitem_under_subitem_refused(self, session, timeline_fixture):
         """A parent that is itself a subitem must be refused -- Monday forbids
         nesting a subitem under a subitem."""
-        child = Task(title="Closet shelving", status=TaskStatus.TODO,
-                     project_id=timeline_fixture.canonical_id, is_subitem=True)
-        session.add(child); session.commit()
-        prop = Proposal(
-            entity_type="Project", entity_id=timeline_fixture.canonical_id,
-            field_name="scope_gap",
-            proposed_value=json.dumps({
-                "scope_item": "z", "suggested_task_title": "z",
-                "parent_task_id": str(child.canonical_id), "reasoning": "x",
-            }),
-            confidence=0.7, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+        child = Task(
+            title="Closet shelving",
+            status=TaskStatus.TODO,
+            project_id=timeline_fixture.canonical_id,
+            is_subitem=True,
         )
-        session.add(prop); session.commit()
+        session.add(child)
+        session.commit()
+        prop = Proposal(
+            entity_type="Project",
+            entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps(
+                {
+                    "scope_item": "z",
+                    "suggested_task_title": "z",
+                    "parent_task_id": str(child.canonical_id),
+                    "reasoning": "x",
+                }
+            ),
+            confidence=0.7,
+            status=ProposalStatus.PENDING,
+            prompt_version="scope-v1",
+        )
+        session.add(prop)
+        session.commit()
         conn = _FakeConnector(returns=True)
         result = accept_proposal(session, prop.canonical_id, writeback=conn)
         assert result["ok"] is False
@@ -1125,20 +1414,31 @@ class TestAcceptProposal:
         we never create a cross-project subitem."""
         other_c = client_factory(name="Other")
         other = Project(name="Other P", status=ProjectStatus.ACTIVE, client_id=other_c.canonical_id)
-        session.add(other); session.commit()
-        foreign_parent = Task(title="Foreign", status=TaskStatus.TODO,
-                              project_id=other.canonical_id, is_subitem=False)
-        session.add(foreign_parent); session.commit()
-        prop = Proposal(
-            entity_type="Project", entity_id=timeline_fixture.canonical_id,
-            field_name="scope_gap",
-            proposed_value=json.dumps({
-                "scope_item": "x", "suggested_task_title": "x",
-                "parent_task_id": str(foreign_parent.canonical_id), "reasoning": "y",
-            }),
-            confidence=0.7, status=ProposalStatus.PENDING, prompt_version="scope-v1",
+        session.add(other)
+        session.commit()
+        foreign_parent = Task(
+            title="Foreign", status=TaskStatus.TODO, project_id=other.canonical_id, is_subitem=False
         )
-        session.add(prop); session.commit()
+        session.add(foreign_parent)
+        session.commit()
+        prop = Proposal(
+            entity_type="Project",
+            entity_id=timeline_fixture.canonical_id,
+            field_name="scope_gap",
+            proposed_value=json.dumps(
+                {
+                    "scope_item": "x",
+                    "suggested_task_title": "x",
+                    "parent_task_id": str(foreign_parent.canonical_id),
+                    "reasoning": "y",
+                }
+            ),
+            confidence=0.7,
+            status=ProposalStatus.PENDING,
+            prompt_version="scope-v1",
+        )
+        session.add(prop)
+        session.commit()
         conn = _FakeConnector(returns=True)
         result = accept_proposal(session, prop.canonical_id, writeback=conn)
         assert result["ok"] is False
@@ -1159,6 +1459,7 @@ class TestAcceptProposal:
 class TestProposalCLIParsing:
     def test_propose_parser(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["propose", "timelines", "Rockland"])
         assert ns.cmd == "propose"
         assert ns.kind == "timelines"
@@ -1166,6 +1467,7 @@ class TestProposalCLIParsing:
 
     def test_propose_scope_parser(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["propose", "scope", "Rockland"])
         assert ns.cmd == "propose"
         assert ns.kind == "scope"
@@ -1173,6 +1475,7 @@ class TestProposalCLIParsing:
 
     def test_proposals_list_parser(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "list", "--status", "pending"])
         assert ns.cmd == "proposals"
         assert ns.proposals_action == "list"
@@ -1180,6 +1483,7 @@ class TestProposalCLIParsing:
 
     def test_proposals_list_no_filters(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "list"])
         assert ns.proposals_action == "list"
         assert ns.status is None
@@ -1187,16 +1491,25 @@ class TestProposalCLIParsing:
 
     def test_proposals_show_parser(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "show", "some-uuid"])
         assert ns.proposals_action == "show"
         assert ns.proposal_id == "some-uuid"
 
     def test_proposals_reject_parser(self):
         from project_db.cli import build_parser
-        ns = build_parser().parse_args([
-            "proposals", "reject", "some-uuid",
-            "--reason", "stale", "--by", "alice",
-        ])
+
+        ns = build_parser().parse_args(
+            [
+                "proposals",
+                "reject",
+                "some-uuid",
+                "--reason",
+                "stale",
+                "--by",
+                "alice",
+            ]
+        )
         assert ns.proposals_action == "reject"
         assert ns.proposal_id == "some-uuid"
         assert ns.reason == "stale"
@@ -1204,6 +1517,7 @@ class TestProposalCLIParsing:
 
     def test_proposals_reject_parser_minimal(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "reject", "some-uuid"])
         assert ns.proposals_action == "reject"
         assert ns.reason is None
@@ -1211,9 +1525,17 @@ class TestProposalCLIParsing:
 
     def test_proposals_accept_parser(self):
         from project_db.cli import build_parser
-        ns = build_parser().parse_args([
-            "proposals", "accept", "some-uuid", "--dry-run", "--by", "alice",
-        ])
+
+        ns = build_parser().parse_args(
+            [
+                "proposals",
+                "accept",
+                "some-uuid",
+                "--dry-run",
+                "--by",
+                "alice",
+            ]
+        )
         assert ns.proposals_action == "accept"
         assert ns.proposal_id == "some-uuid"
         assert ns.dry_run is True
@@ -1221,6 +1543,7 @@ class TestProposalCLIParsing:
 
     def test_proposals_accept_parser_defaults(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "accept", "some-uuid"])
         assert ns.proposals_action == "accept"
         assert ns.dry_run is False
@@ -1229,6 +1552,7 @@ class TestProposalCLIParsing:
     def test_proposals_accept_parser_no_id(self):
         """`proposals accept` with no id is valid -- it lists pending proposals."""
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "accept"])
         assert ns.proposals_action == "accept"
         assert ns.proposal_id is None
@@ -1236,6 +1560,7 @@ class TestProposalCLIParsing:
 
     def test_proposals_accept_all_parser(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "accept", "all", "--yes"])
         assert ns.proposals_action == "accept"
         assert ns.proposal_id == "all"
@@ -1244,6 +1569,7 @@ class TestProposalCLIParsing:
     def test_proposals_reject_parser_no_id(self):
         """`proposals reject` with no id is valid -- it lists pending proposals."""
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "reject"])
         assert ns.proposals_action == "reject"
         assert ns.proposal_id is None
@@ -1251,6 +1577,7 @@ class TestProposalCLIParsing:
 
     def test_proposals_reject_all_parser(self):
         from project_db.cli import build_parser
+
         ns = build_parser().parse_args(["proposals", "reject", "all", "--yes"])
         assert ns.proposals_action == "reject"
         assert ns.proposal_id == "all"
@@ -1267,6 +1594,7 @@ class TestBulkDismissStale:
 
     def _old_proposal(self, session, project, task, *, days: int = 31) -> Proposal:
         from datetime import datetime, timedelta
+
         p = Proposal(
             entity_type="Task",
             entity_id=task.canonical_id,
@@ -1284,6 +1612,7 @@ class TestBulkDismissStale:
 
     def test_dismisses_old_pending(self, session, timeline_fixture):
         from project_db.ai.proposals import bulk_dismiss_stale
+
         task = session.query(Task).filter_by(project_id=timeline_fixture.canonical_id).first()
         old_p = self._old_proposal(session, timeline_fixture, task, days=31)
 
@@ -1297,6 +1626,7 @@ class TestBulkDismissStale:
 
     def test_skips_fresh_proposals(self, session, timeline_fixture):
         from project_db.ai.proposals import bulk_dismiss_stale
+
         task = session.query(Task).filter_by(project_id=timeline_fixture.canonical_id).first()
         fresh_p = Proposal(
             entity_type="Task",
@@ -1317,7 +1647,9 @@ class TestBulkDismissStale:
 
     def test_skips_non_pending(self, session, timeline_fixture):
         from datetime import datetime, timedelta
+
         from project_db.ai.proposals import bulk_dismiss_stale
+
         task = session.query(Task).filter_by(project_id=timeline_fixture.canonical_id).first()
         accepted_p = Proposal(
             entity_type="Task",
@@ -1338,7 +1670,9 @@ class TestBulkDismissStale:
 
     def test_project_level_proposals_dismissed(self, session, timeline_fixture):
         from datetime import datetime, timedelta
+
         from project_db.ai.proposals import bulk_dismiss_stale
+
         old_p = Proposal(
             entity_type="Project",
             entity_id=timeline_fixture.canonical_id,
@@ -1360,10 +1694,12 @@ class TestBulkDismissStale:
 
     def test_empty_project_returns_zero(self, session, timeline_fixture):
         from project_db.ai.proposals import bulk_dismiss_stale
+
         count = bulk_dismiss_stale(session, timeline_fixture.canonical_id, days_old=30)
         assert count == 0
 
     def test_bad_project_id_returns_zero(self, session):
         from project_db.ai.proposals import bulk_dismiss_stale
+
         count = bulk_dismiss_stale(session, "not-a-uuid", days_old=30)
         assert count == 0

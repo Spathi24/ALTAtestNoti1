@@ -4,6 +4,7 @@ Connectors are mocked (no live API). The embed step uses MockEmbeddingProvider.
 Pins: per-step reporting, resilience (a failing connector doesn't abort the
 run or the embed step), preflight when no org, and embed on/off.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -55,8 +56,9 @@ def _doc_with_text(session, name, body):
     d = Document(name=name, url=f"x://{name}", mime_type="application/pdf")
     session.add(d)
     session.flush()
-    session.add(DocumentText(document_id=d.canonical_id, extracted_text=body,
-                             extraction_method="test"))
+    session.add(
+        DocumentText(document_id=d.canonical_id, extracted_text=body, extraction_method="test")
+    )
     session.commit()
     return d
 
@@ -68,10 +70,8 @@ class TestRunRefresh:
         assert report.steps[0].ok is False
 
     def test_monday_sync_step_ok_and_passes_delta(self, session, _org, monkeypatch):
-        monkeypatch.setattr(refresh_mod, "get_connector_class",
-                            lambda src: _FakeConnector)
-        report = run_refresh(session, delta=True, embed=False,
-                             sources=[SourceSystem.MONDAY])
+        monkeypatch.setattr(refresh_mod, "get_connector_class", lambda src: _FakeConnector)
+        report = run_refresh(session, delta=True, embed=False, sources=[SourceSystem.MONDAY])
         assert len(report.steps) == 1
         assert report.steps[0].ok is True
         assert "synced" in report.steps[0].summary
@@ -79,8 +79,7 @@ class TestRunRefresh:
         assert report.ok is True
 
     def test_failing_connector_is_recorded_not_fatal(self, session, _org, monkeypatch):
-        monkeypatch.setattr(refresh_mod, "get_connector_class",
-                            lambda src: _BoomConnector)
+        monkeypatch.setattr(refresh_mod, "get_connector_class", lambda src: _BoomConnector)
         report = run_refresh(session, embed=False, sources=[SourceSystem.MONDAY])
         assert report.steps[0].ok is False
         assert "no credentials" in report.steps[0].error
@@ -89,7 +88,9 @@ class TestRunRefresh:
     def test_embed_step_runs_with_provider(self, session, _org):
         _doc_with_text(session, "Contract.pdf", "client payment terms on signing")
         report = run_refresh(
-            session, embed=True, sources=[],
+            session,
+            embed=True,
+            sources=[],
             embedding_provider=MockEmbeddingProvider(dims=64),
         )
         embed_steps = [s for s in report.steps if s.name == "embed"]
@@ -115,7 +116,6 @@ class TestRunRefresh:
         assert "embedding provider" in embed_steps[0].error
 
     def test_one_line_summary(self, session, _org, monkeypatch):
-        monkeypatch.setattr(refresh_mod, "get_connector_class",
-                            lambda src: _FakeConnector)
+        monkeypatch.setattr(refresh_mod, "get_connector_class", lambda src: _FakeConnector)
         report = run_refresh(session, embed=False, sources=[SourceSystem.MONDAY])
         assert "step(s) ok" in report.one_line()

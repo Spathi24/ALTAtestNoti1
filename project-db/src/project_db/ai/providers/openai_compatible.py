@@ -13,6 +13,7 @@ is up.  Zero new code -- just construct with a different ``base_url``.
 
 Uses ``httpx`` (already a project dependency); no openai SDK needed.
 """
+
 from __future__ import annotations
 
 import logging
@@ -122,9 +123,7 @@ class OpenAICompatibleProvider(LLMProvider):
             content = choice["message"]["content"]
             finish = choice.get("finish_reason", "stop")
         except (KeyError, IndexError, TypeError) as exc:
-            raise LLMProviderError(
-                f"{self.name}: unexpected response shape: {data!r}"
-            ) from exc
+            raise LLMProviderError(f"{self.name}: unexpected response shape: {data!r}") from exc
 
         usage = {}
         if "usage" in data and isinstance(data["usage"], dict):

@@ -3,6 +3,7 @@
 The CLI lazily imports MondayClient / ColumnExtractor inside each command
 function, so patches target the import source, not the cli module.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -10,7 +11,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from project_db.db.models import (
     Deal,
@@ -159,9 +160,11 @@ class TestCliAsk:
             "project_db.ai.get_fast_provider",
             lambda: MockLLMProvider(responses=["Here is the situation."]),
         )
-        result = cmd_ask(argparse.Namespace(
-            question=["what", "should", "i", "worry", "about"],
-        ))
+        result = cmd_ask(
+            argparse.Namespace(
+                question=["what", "should", "i", "worry", "about"],
+            )
+        )
         out = capsys.readouterr().out
         assert result == 0
         assert "mode=llm" in out
@@ -183,11 +186,13 @@ class TestCliDaily:
         )
         session.add(project)
         session.commit()
-        session.add(Task(
-            title="Frame addition",
-            status=TaskStatus.TODO,
-            project_id=project.canonical_id,
-        ))
+        session.add(
+            Task(
+                title="Frame addition",
+                status=TaskStatus.TODO,
+                project_id=project.canonical_id,
+            )
+        )
         doc = Document(
             name="Contract.pdf",
             mime_type="application/pdf",
@@ -197,22 +202,26 @@ class TestCliDaily:
         )
         session.add(doc)
         session.commit()
-        session.add(DocumentText(
-            document_id=doc.canonical_id,
-            extracted_text="Total contract price: $12,000.00",
-            extraction_method="pdf-pymupdf",
-            token_count=6,
-        ))
+        session.add(
+            DocumentText(
+                document_id=doc.canonical_id,
+                extracted_text="Total contract price: $12,000.00",
+                extraction_method="pdf-pymupdf",
+                token_count=6,
+            )
+        )
         session.commit()
 
-        result = cmd_daily(argparse.Namespace(
-            project=["923", "Rockland"],
-            propose_timelines=False,
-            limit=5,
-            token_budget=20_000,
-            max_docs=30,
-            max_output_tokens=3000,
-        ))
+        result = cmd_daily(
+            argparse.Namespace(
+                project=["923", "Rockland"],
+                propose_timelines=False,
+                limit=5,
+                token_budget=20_000,
+                max_docs=30,
+                max_output_tokens=3000,
+            )
+        )
         out = capsys.readouterr().out
 
         assert result == 0
@@ -277,13 +286,16 @@ class TestCliProposals:
 
         client = client_factory(name="Prop Client")
         project = Project(
-            name="Prop Project", code="PP",
-            status=ProjectStatus.ACTIVE, client_id=client.canonical_id,
+            name="Prop Project",
+            code="PP",
+            status=ProjectStatus.ACTIVE,
+            client_id=client.canonical_id,
         )
         session.add(project)
         session.commit()
         task = Task(
-            title="Pour slab", status=TaskStatus.TODO,
+            title="Pour slab",
+            status=TaskStatus.TODO,
             project_id=project.canonical_id,
         )
         session.add(task)
@@ -292,10 +304,14 @@ class TestCliProposals:
             entity_type="Task",
             entity_id=task.canonical_id,
             field_name="timeline",
-            proposed_value=_json.dumps({
-                "start_date": "2026-06-01", "end_date": "2026-06-07",
-                "task_title": "Pour slab", "reasoning": "contract milestone",
-            }),
+            proposed_value=_json.dumps(
+                {
+                    "start_date": "2026-06-01",
+                    "end_date": "2026-06-07",
+                    "task_title": "Pour slab",
+                    "reasoning": "contract milestone",
+                }
+            ),
             confidence=0.9,
             status=ProposalStatus.PENDING,
         )
@@ -309,24 +325,32 @@ class TestCliProposals:
         from project_db.cli import cmd_proposals
 
         proposal = self._seed_pending_proposal(session, client_factory)
-        result = cmd_proposals(argparse.Namespace(
-            proposals_action="accept", proposal_id=None,
-            dry_run=False, by=None, yes=False,
-        ))
+        result = cmd_proposals(
+            argparse.Namespace(
+                proposals_action="accept",
+                proposal_id=None,
+                dry_run=False,
+                by=None,
+                yes=False,
+            )
+        )
         out = capsys.readouterr().out
         assert result == 0
         assert "1 pending proposal(s)" in out
         assert str(proposal.canonical_id) in out
 
-    def test_accept_with_no_id_and_no_proposals(
-        self, patched_session_factory, capsys
-    ):
+    def test_accept_with_no_id_and_no_proposals(self, patched_session_factory, capsys):
         from project_db.cli import cmd_proposals
 
-        result = cmd_proposals(argparse.Namespace(
-            proposals_action="accept", proposal_id=None,
-            dry_run=False, by=None, yes=False,
-        ))
+        result = cmd_proposals(
+            argparse.Namespace(
+                proposals_action="accept",
+                proposal_id=None,
+                dry_run=False,
+                by=None,
+                yes=False,
+            )
+        )
         out = capsys.readouterr().out
         assert result == 0
         assert "No pending proposals" in out
@@ -337,16 +361,20 @@ class TestCliProposals:
         from project_db.cli import cmd_proposals
 
         proposal = self._seed_pending_proposal(session, client_factory)
-        result = cmd_proposals(argparse.Namespace(
-            proposals_action="accept", proposal_id="all",
-            dry_run=False, by=None, yes=False,
-        ))
+        result = cmd_proposals(
+            argparse.Namespace(
+                proposals_action="accept",
+                proposal_id="all",
+                dry_run=False,
+                by=None,
+                yes=False,
+            )
+        )
         out = capsys.readouterr().out
-        assert result == 1            # refused -- a real bulk write needs --yes
+        assert result == 1  # refused -- a real bulk write needs --yes
         assert "--yes" in out
         session.expire_all()
-        reloaded = session.query(Proposal).filter_by(
-            canonical_id=proposal.canonical_id).one()
+        reloaded = session.query(Proposal).filter_by(canonical_id=proposal.canonical_id).one()
         assert reloaded.status == ProposalStatus.PENDING
 
     def test_reject_all_with_yes_rejects_every_pending(
@@ -355,15 +383,19 @@ class TestCliProposals:
         from project_db.cli import cmd_proposals
 
         proposal = self._seed_pending_proposal(session, client_factory)
-        result = cmd_proposals(argparse.Namespace(
-            proposals_action="reject", proposal_id="all",
-            reason="bulk cleanup", by="tester", yes=True,
-        ))
+        result = cmd_proposals(
+            argparse.Namespace(
+                proposals_action="reject",
+                proposal_id="all",
+                reason="bulk cleanup",
+                by="tester",
+                yes=True,
+            )
+        )
         out = capsys.readouterr().out
         assert result == 0
         assert "rejected 1" in out
         session.expire_all()
-        reloaded = session.query(Proposal).filter_by(
-            canonical_id=proposal.canonical_id).one()
+        reloaded = session.query(Proposal).filter_by(canonical_id=proposal.canonical_id).one()
         assert reloaded.status == ProposalStatus.REJECTED
         assert reloaded.rejection_reason == "bulk cleanup"

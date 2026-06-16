@@ -20,11 +20,13 @@ Source: imported from ``docs/Project Roadmap.xlsx`` via
 ``project_db import-roadmap``.  The xlsx is the editorial source of
 truth; this table is its persisted projection.
 """
+
 from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Column, Enum as SAEnum, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Enum as SAEnum
 
 from project_db.db.base import Base, CanonicalMixin
 
@@ -36,10 +38,11 @@ class RoadmapPhase(str, enum.Enum):
     as the "phase X cannot start before phase X-1 finishes" anchor in
     timeline proposals.
     """
-    SD = "SD"   # Schematic Design
-    DD = "DD"   # Design Development
-    CD = "CD"   # Construction Documents
-    CA = "CA"   # Construction Administration
+
+    SD = "SD"  # Schematic Design
+    DD = "DD"  # Design Development
+    CD = "CD"  # Construction Documents
+    CA = "CA"  # Construction Administration
 
 
 class RoadmapActor(str, enum.Enum):
@@ -51,6 +54,7 @@ class RoadmapActor(str, enum.Enum):
     BOTH is for kickoff / sign-off / submittal review style tasks
     where the contractor is genuinely co-responsible.
     """
+
     ARCHITECT = "ARCHITECT"
     CONTRACTOR = "CONTRACTOR"
     BOTH = "BOTH"

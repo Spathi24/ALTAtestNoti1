@@ -21,6 +21,7 @@ subsumes them.  The arithmetic stays deterministic (invariant N2).  This path
 uses OpenAI (structured outputs are an OpenAI strength); the deterministic
 report (``ai/views.report_project_financials``) is unchanged.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,10 +50,19 @@ STRUCTURED_PROMPT_VERSION = "structured-v1"
 # are NOT project transactions and are dropped; budgets are kept as a roll-up
 # cross-check; the rest are primary transactions.
 _DOC_TYPES = [
-    "construction_quote", "construction_estimate", "client_invoice",
-    "supplier_invoice", "receipt", "change_order", "purchase_order",
-    "lease", "settlement", "budget_or_cost_tracker",
-    "acquisition_or_proforma_model", "market_report_or_valuation", "other",
+    "construction_quote",
+    "construction_estimate",
+    "client_invoice",
+    "supplier_invoice",
+    "receipt",
+    "change_order",
+    "purchase_order",
+    "lease",
+    "settlement",
+    "budget_or_cost_tracker",
+    "acquisition_or_proforma_model",
+    "market_report_or_valuation",
+    "other",
 ]
 # Types whose figures are NOT this project's money -- skip entirely.
 _SKIP_TYPES = {"acquisition_or_proforma_model", "market_report_or_valuation"}
@@ -71,10 +81,15 @@ _DIRECTION_BY_TYPE = {
 }
 # Map document_type -> the doc_role the confirmed-vs-quoted default uses.
 _DOC_ROLE_BY_TYPE = {
-    "construction_quote": "quote", "construction_estimate": "estimate",
-    "client_invoice": "invoice", "supplier_invoice": "invoice",
-    "receipt": "receipt", "change_order": "change_order",
-    "purchase_order": "quote", "lease": "other", "settlement": "other",
+    "construction_quote": "quote",
+    "construction_estimate": "estimate",
+    "client_invoice": "invoice",
+    "supplier_invoice": "invoice",
+    "receipt": "receipt",
+    "change_order": "change_order",
+    "purchase_order": "quote",
+    "lease": "other",
+    "settlement": "other",
     "budget_or_cost_tracker": "other",
 }
 
@@ -108,8 +123,13 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "amount", "currency", "direction", "record_kind",
-                        "description", "quoted_excerpt", "confidence",
+                        "amount",
+                        "currency",
+                        "direction",
+                        "record_kind",
+                        "description",
+                        "quoted_excerpt",
+                        "confidence",
                     ],
                     "properties": {
                         "amount": {"type": "number"},
@@ -137,7 +157,7 @@ def _system_prompt(company_name: str) -> str:
     return (
         "You are a meticulous construction-company bookkeeper. You read ONE "
         "financial document and return structured data about it.\n\n"
-        f"OUR COMPANY is \"{company_name}\".\n\n"
+        f'OUR COMPANY is "{company_name}".\n\n'
         "FIRST classify the document (document_type) and decide is_transactional:\n"
         "- is_transactional = true only for a real quote/estimate/invoice/"
         "receipt/change-order/settlement that records money on THIS project.\n"
@@ -275,7 +295,7 @@ class OpenAIStructuredExtractor(StructuredExtractor):
                 ],
                 response_format={"type": "json_schema", "json_schema": EXTRACTION_SCHEMA},
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise StructuredExtractorError(f"OpenAI extraction call failed: {exc}") from exc
         msg = resp.choices[0].message
         if getattr(msg, "refusal", None):
@@ -291,12 +311,17 @@ class MockStructuredExtractor(StructuredExtractor):
 
     name = "mock-structured"
 
-    def __init__(self, by_name: dict[str, dict[str, Any]] | None = None,
-                 default: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        by_name: dict[str, dict[str, Any]] | None = None,
+        default: dict[str, Any] | None = None,
+    ) -> None:
         self._by_name = by_name or {}
         self._default = default or {
-            "document_type": "other", "is_transactional": False,
-            "summary": "mock", "records": [],
+            "document_type": "other",
+            "is_transactional": False,
+            "summary": "mock",
+            "records": [],
         }
         self.calls: list[str] = []
 
@@ -371,7 +396,8 @@ def extract_financials_structured_for_project(
     project_uuid = _as_uuid(project_id)
     project = (
         session.query(Project).filter_by(canonical_id=project_uuid).one_or_none()
-        if project_uuid else None
+        if project_uuid
+        else None
     )
     batch = StructuredBatch(
         project_id=str(project_id),
@@ -393,27 +419,25 @@ def extract_financials_structured_for_project(
         .all()
     )
     candidates = [
-        (doc, text) for doc, text in rows
-        if (text or "").strip()
-        and (doc.mime_type is None or doc.mime_type in _READABLE_MIMES)
+        (doc, text)
+        for doc, text in rows
+        if (text or "").strip() and (doc.mime_type is None or doc.mime_type in _READABLE_MIMES)
     ][:max_documents]
     if not candidates:
         batch.skipped_reason = "no readable documents with extracted text"
         return batch
     batch.documents_considered = len(candidates)
 
-    prior = (
-        session.query(FinancialRecord)
-        .filter(FinancialRecord.project_id == project_uuid)
-        .all()
-    )
+    prior = session.query(FinancialRecord).filter(FinancialRecord.project_id == project_uuid).all()
 
     new_records: list[FinancialRecord] = []
     any_failed = False
     for doc, text in candidates:
         try:
             result = extractor.extract(
-                doc_name=doc.name or "", doc_text=text, company_name=company_name,
+                doc_name=doc.name or "",
+                doc_text=text,
+                company_name=company_name,
             )
         except StructuredExtractorError as exc:
             batch.errors.append(f"{doc.name}: {exc}")
@@ -429,7 +453,7 @@ def extract_financials_structured_for_project(
             batch.documents_skipped_nontransactional += 1
             continue
 
-        is_rollup = (not is_txn)  # budgets/trackers kept as cross-check only
+        is_rollup = not is_txn  # budgets/trackers kept as cross-check only
         doc_role = _DOC_ROLE_BY_TYPE.get(dtype, "other")
         norm_text = _norm(text)
         for item in (result.get("records") or [])[:30]:
@@ -443,25 +467,27 @@ def extract_financials_structured_for_project(
             # (a construction estimate IS our revenue side) -- deterministic.
             if direction == "unknown":
                 direction = _DIRECTION_BY_TYPE.get(dtype, "unknown")
-            new_records.append(FinancialRecord(
-                project_id=project_uuid,
-                document_id=doc.canonical_id,
-                direction=direction,
-                doc_role=doc_role,
-                record_kind=str(item.get("record_kind") or "other"),
-                description=_clean_str(item.get("description")),
-                amount=amount,
-                currency=_clean_str(item.get("currency")),
-                quoted_excerpt=_clean_str(item.get("quoted_excerpt")),
-                confidence=_clamp_confidence(item.get("confidence")),
-                amount_verified=_amount_in_text(amount, norm_text),
-                is_rollup=is_rollup,
-                prompt_version=STRUCTURED_PROMPT_VERSION,
-                source_meta_json=json.dumps(
-                    {"document_type": dtype, "is_transactional": is_txn, "item": item},
-                    default=str,
-                ),
-            ))
+            new_records.append(
+                FinancialRecord(
+                    project_id=project_uuid,
+                    document_id=doc.canonical_id,
+                    direction=direction,
+                    doc_role=doc_role,
+                    record_kind=str(item.get("record_kind") or "other"),
+                    description=_clean_str(item.get("description")),
+                    amount=amount,
+                    currency=_clean_str(item.get("currency")),
+                    quoted_excerpt=_clean_str(item.get("quoted_excerpt")),
+                    confidence=_clamp_confidence(item.get("confidence")),
+                    amount_verified=_amount_in_text(amount, norm_text),
+                    is_rollup=is_rollup,
+                    prompt_version=STRUCTURED_PROMPT_VERSION,
+                    source_meta_json=json.dumps(
+                        {"document_type": dtype, "is_transactional": is_txn, "item": item},
+                        default=str,
+                    ),
+                )
+            )
 
     if any_failed:
         batch.records = []

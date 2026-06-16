@@ -1,4 +1,5 @@
 """AI assistant layer — canned reports + text-to-SQL + RAG (modes 1/2/3)."""
+
 from project_db.ai.context import ProjectContext, assemble_project_context
 from project_db.ai.financials import (
     FINANCIAL_MONEY_TYPES,
@@ -8,9 +9,9 @@ from project_db.ai.financials import (
     extract_financials_for_project,
 )
 from project_db.ai.proposals import (
-    ProposalBatch,
     SCOPE_PROMPT_VERSION,
     TIMELINE_PROMPT_VERSION,
+    ProposalBatch,
     accept_proposal,
     generate_scope_proposals,
     generate_timeline_proposals,
@@ -33,11 +34,14 @@ from project_db.ai.query import AiAssistant, AiResponse, extract_project_ref
 from project_db.ai.views import REPORT_REGISTRY
 
 __all__ = [
+    "FINANCIAL_MONEY_TYPES",
+    "FINANCIAL_PROMPT_VERSION",
+    "REPORT_REGISTRY",
+    "SCOPE_PROMPT_VERSION",
+    "TIMELINE_PROMPT_VERSION",
     "AiAssistant",
     "AiResponse",
     "AnthropicProvider",
-    "FINANCIAL_MONEY_TYPES",
-    "FINANCIAL_PROMPT_VERSION",
     "FinancialExtractionBatch",
     "LLMMessage",
     "LLMProvider",
@@ -47,9 +51,6 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProjectContext",
     "ProposalBatch",
-    "REPORT_REGISTRY",
-    "SCOPE_PROMPT_VERSION",
-    "TIMELINE_PROMPT_VERSION",
     "accept_proposal",
     "assemble_project_context",
     "classify_money_type",

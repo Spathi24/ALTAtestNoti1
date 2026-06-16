@@ -21,6 +21,7 @@ The connector is NOT responsible for:
   - Identity resolution (lives in `identity/`)
   - Querying canonical data (lives in `ai/` and downstream consumers)
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,9 +54,7 @@ class SyncReport:
 
     def summary(self) -> str:
         duration = (
-            (self.completed_at - self.started_at).total_seconds()
-            if self.completed_at
-            else 0.0
+            (self.completed_at - self.started_at).total_seconds() if self.completed_at else 0.0
         )
         return (
             f"[{self.source.value}] processed={self.records_processed} "
@@ -118,14 +117,13 @@ class BaseConnector(ABC):
             .first()
         )
         if placeholder is None:
-            placeholder = Client(
-                name="Unknown Client", organization_id=self.organization_id
-            )
+            placeholder = Client(name="Unknown Client", organization_id=self.organization_id)
             self.session.add(placeholder)
             self.session.flush()
             logger.info(
                 "[%s] Created 'Unknown Client' placeholder (canonical_id=%s)",
-                self.source.value, placeholder.canonical_id,
+                self.source.value,
+                placeholder.canonical_id,
             )
         return placeholder.canonical_id
 

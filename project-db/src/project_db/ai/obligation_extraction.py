@@ -28,6 +28,7 @@ only EXTRACTS evidence-backed facts.  Like the financial structured path it uses
 OpenAI (structured outputs are an OpenAI strength) and an all-or-nothing snapshot
 (a failed document keeps the prior rows and writes nothing).
 """
+
 from __future__ import annotations
 
 import json
@@ -63,8 +64,13 @@ OBLIGATION_STRUCTURED_PROMPT_VERSION = "obligations-structured-v2"
 # Document types the model classifies into.  Informational -- recorded and shown,
 # not used to drop documents (an "other" doc just yields no obligations).
 _DOC_TYPES = [
-    "contract", "scope_of_work", "settlement", "lease",
-    "change_order_or_amendment", "invoice", "other",
+    "contract",
+    "scope_of_work",
+    "settlement",
+    "lease",
+    "change_order_or_amendment",
+    "invoice",
+    "other",
 ]
 
 # Prose-carrying mimes where obligation clauses live.  A MIME filter, not a
@@ -105,8 +111,15 @@ OBLIGATION_EXTRACTION_SCHEMA: dict[str, Any] = {
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "kind", "direction", "description", "amount", "currency",
-                        "due_date", "trigger", "counterparty", "quoted_excerpt",
+                        "kind",
+                        "direction",
+                        "description",
+                        "amount",
+                        "currency",
+                        "due_date",
+                        "trigger",
+                        "counterparty",
+                        "quoted_excerpt",
                         "confidence",
                     ],
                     "properties": {
@@ -160,7 +173,7 @@ def _system_prompt(company_name: str) -> str:
         "- insurance_expiry: an insurance certificate / coverage that expires.\n"
         "- permit_deadline: a permit or filing deadline.\n"
         "- other: a dated/dollar obligation that fits none of the above.\n\n"
-        f"OUR COMPANY is \"{company_name}\". Set direction from whom the "
+        f'OUR COMPANY is "{company_name}". Set direction from whom the '
         "obligation runs:\n"
         f"- owed_to_us : the CLIENT owes {company_name} (revenue for us to collect).\n"
         f"- owed_by_us : {company_name} owes someone (a sub, tenant, authority).\n"
@@ -244,7 +257,7 @@ class OpenAIObligationExtractor(ObligationExtractor):
                     "json_schema": OBLIGATION_EXTRACTION_SCHEMA,
                 },
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ObligationExtractorError(f"OpenAI extraction call failed: {exc}") from exc
         msg = resp.choices[0].message
         if getattr(msg, "refusal", None):
@@ -260,12 +273,17 @@ class MockObligationExtractor(ObligationExtractor):
 
     name = "mock-obligations"
 
-    def __init__(self, by_name: dict[str, dict[str, Any]] | None = None,
-                 default: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        by_name: dict[str, dict[str, Any]] | None = None,
+        default: dict[str, Any] | None = None,
+    ) -> None:
         self._by_name = by_name or {}
         self._default = default or {
-            "document_type": "other", "is_contractual": False,
-            "summary": "mock", "obligations": [],
+            "document_type": "other",
+            "is_contractual": False,
+            "summary": "mock",
+            "obligations": [],
         }
         self.calls: list[str] = []
 
@@ -277,6 +295,7 @@ class MockObligationExtractor(ObligationExtractor):
 @dataclass
 class ObligationStructuredBatch:
     """Outcome of one structured extraction run -- everything the CLI reports."""
+
     project_id: str
     project_name: str
     prompt_version: str = OBLIGATION_STRUCTURED_PROMPT_VERSION
@@ -328,7 +347,8 @@ def extract_obligations_structured_for_project(
     project_uuid = _as_uuid(project_id)
     project = (
         session.query(Project).filter_by(canonical_id=project_uuid).one_or_none()
-        if project_uuid else None
+        if project_uuid
+        else None
     )
     batch = ObligationStructuredBatch(
         project_id=str(project_id),
@@ -350,14 +370,13 @@ def extract_obligations_structured_for_project(
         .all()
     )
     candidates = [
-        (doc, text) for doc, text in rows
-        if (text or "").strip()
-        and (doc.mime_type is None or doc.mime_type in _OBLIGATION_MIMES)
+        (doc, text)
+        for doc, text in rows
+        if (text or "").strip() and (doc.mime_type is None or doc.mime_type in _OBLIGATION_MIMES)
     ][:max_documents]
     if not candidates:
         batch.skipped_reason = (
-            "no contract-looking documents with extracted text "
-            "(run extract-content first)"
+            "no contract-looking documents with extracted text (run extract-content first)"
         )
         return batch
     batch.documents_considered = len(candidates)
@@ -373,7 +392,9 @@ def extract_obligations_structured_for_project(
     for doc, text in candidates:
         try:
             result = extractor.extract(
-                doc_name=doc.name or "", doc_text=text, company_name=company_name,
+                doc_name=doc.name or "",
+                doc_text=text,
+                company_name=company_name,
             )
         except ObligationExtractorError as exc:
             batch.errors.append(f"{doc.name}: {exc}")
@@ -385,13 +406,13 @@ def extract_obligations_structured_for_project(
         batch.classifications.append((doc.name or "", dtype, is_contractual))
 
         norm_text = _norm(text)
-        for item in (result.get("obligations") or []):
+        for item in result.get("obligations") or []:
             if not isinstance(item, dict):
                 batch.errors.append(f"{doc.name}: obligation is not an object")
                 continue
             amount = _parse_amount(item.get("amount"))
             if amount is not None and amount == 0:
-                amount = None          # $0 is template noise, not a dollar obligation
+                amount = None  # $0 is template noise, not a dollar obligation
             due = _parse_date(item.get("due_date"))
             trigger = _clean_str(item.get("trigger"))
             # Server-side enforcement of the dated-or-dollar rule.
@@ -402,27 +423,30 @@ def extract_obligations_structured_for_project(
                 continue
             kind = _coerce_vocab(item.get("kind"), OBLIGATION_KINDS, "other")
             direction = _coerce_vocab(item.get("direction"), OBLIGATION_DIRECTIONS, "unknown")
-            new_obligations.append(ContractObligation(
-                project_id=project_uuid,
-                document_id=doc.canonical_id,
-                kind=kind,
-                direction=direction,
-                description=_clean_str(item.get("description")),
-                amount=amount,
-                currency=_clean_str(item.get("currency")),
-                due_date=due,
-                trigger=trigger,
-                counterparty=_clean_str(item.get("counterparty")),
-                quoted_excerpt=_clean_str(item.get("quoted_excerpt")),
-                confidence=_clamp_confidence(item.get("confidence")),
-                amount_verified=(None if amount is None
-                                 else _amount_in_text(amount, norm_text)),
-                prompt_version=OBLIGATION_STRUCTURED_PROMPT_VERSION,
-                source_meta_json=json.dumps(
-                    {"document_type": dtype, "is_contractual": is_contractual,
-                     "item": item}, default=str,
-                ),
-            ))
+            new_obligations.append(
+                ContractObligation(
+                    project_id=project_uuid,
+                    document_id=doc.canonical_id,
+                    kind=kind,
+                    direction=direction,
+                    description=_clean_str(item.get("description")),
+                    amount=amount,
+                    currency=_clean_str(item.get("currency")),
+                    due_date=due,
+                    trigger=trigger,
+                    counterparty=_clean_str(item.get("counterparty")),
+                    quoted_excerpt=_clean_str(item.get("quoted_excerpt")),
+                    confidence=_clamp_confidence(item.get("confidence")),
+                    amount_verified=(
+                        None if amount is None else _amount_in_text(amount, norm_text)
+                    ),
+                    prompt_version=OBLIGATION_STRUCTURED_PROMPT_VERSION,
+                    source_meta_json=json.dumps(
+                        {"document_type": dtype, "is_contractual": is_contractual, "item": item},
+                        default=str,
+                    ),
+                )
+            )
 
     if any_failed:
         batch.obligations = []

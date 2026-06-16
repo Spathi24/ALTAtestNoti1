@@ -4,6 +4,7 @@ The matcher API is `find_match(session, entity_class, candidate_attrs) -> entity
 (searches the session for a match), not a pairwise score function. The resolver
 exposes resolve_or_create, lookup_external, and get_external_ids.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -15,10 +16,8 @@ from project_db.identity import (
     ExactFieldMatcher,
     FuzzyFieldMatcher,
     IdentityResolver,
-    NoMatcher,
     ProjectMatcher,
 )
-
 
 # =====================================================================
 # Matchers
@@ -111,9 +110,7 @@ class TestProjectMatcher:
 
     @staticmethod
     def _project(session: Session, client, name: str) -> Project:
-        p = Project(
-            name=name, status=ProjectStatus.ACTIVE, client_id=client.canonical_id
-        )
+        p = Project(name=name, status=ProjectStatus.ACTIVE, client_id=client.canonical_id)
         session.add(p)
         session.flush()
         return p
@@ -124,7 +121,8 @@ class TestProjectMatcher:
         drive = self._project(session, c, "5768 St-Laurent")
 
         result = ProjectMatcher().find_match(
-            session=session, entity_class=Project,
+            session=session,
+            entity_class=Project,
             candidate_attrs={"name": "5768-5770 St Laurent"},
         )
         assert result is not None
@@ -135,7 +133,8 @@ class TestProjectMatcher:
         drive = self._project(session, c, "Cherrier")
 
         result = ProjectMatcher().find_match(
-            session=session, entity_class=Project,
+            session=session,
+            entity_class=Project,
             candidate_attrs={"name": "Cherrier"},
         )
         assert result is not None
@@ -148,7 +147,8 @@ class TestProjectMatcher:
         self._project(session, c, "183 Chemin Bates")
 
         result = ProjectMatcher().find_match(
-            session=session, entity_class=Project,
+            session=session,
+            entity_class=Project,
             candidate_attrs={"name": "Bates"},
         )
         assert result is None
@@ -159,7 +159,8 @@ class TestProjectMatcher:
         self._project(session, c, "923 Rockland (3rd Floor unit)")
 
         result = ProjectMatcher().find_match(
-            session=session, entity_class=Project,
+            session=session,
+            entity_class=Project,
             candidate_attrs={"name": "927 Rockland (Ground Floor unit)"},
         )
         assert result is None
@@ -172,14 +173,16 @@ class TestProjectMatcher:
         self._project(session, c, "5768 Other Street")
 
         result = ProjectMatcher().find_match(
-            session=session, entity_class=Project,
+            session=session,
+            entity_class=Project,
             candidate_attrs={"name": "5768 Elsewhere"},
         )
         assert result is None
 
     def test_no_projects_returns_none(self, session: Session):
         result = ProjectMatcher().find_match(
-            session=session, entity_class=Project,
+            session=session,
+            entity_class=Project,
             candidate_attrs={"name": "Anything"},
         )
         assert result is None
@@ -269,9 +272,7 @@ class TestIdentityResolverMatching:
 
 
 class TestResolverCreateOnlyAttrs:
-    def test_create_only_field_not_overwritten_on_update(
-        self, session: Session, org
-    ):
+    def test_create_only_field_not_overwritten_on_update(self, session: Session, org):
         """A create-only attr is set at creation but never overwritten when the
         same external record re-syncs -- e.g. a Drive-owned project name that
         a later Monday sync must not rename."""
@@ -303,7 +304,8 @@ class TestResolverCreateOnlyAttrs:
             external_url=None,
             entity_class=Client,
             attrs={
-                "name": "N", "email": "old@x.com",
+                "name": "N",
+                "email": "old@x.com",
                 "organization_id": org.canonical_id,
             },
         )
@@ -313,7 +315,8 @@ class TestResolverCreateOnlyAttrs:
             external_url=None,
             entity_class=Client,
             attrs={
-                "name": "N", "email": "new@x.com",
+                "name": "N",
+                "email": "new@x.com",
                 "organization_id": org.canonical_id,
             },
             create_only_attrs={"name"},
@@ -336,7 +339,8 @@ class TestResolverCreateOnlyAttrs:
             external_url=None,
             entity_class=Client,
             attrs={
-                "name": "Acme", "email": "old@x.com",
+                "name": "Acme",
+                "email": "old@x.com",
                 "organization_id": org.canonical_id,
             },
         )
@@ -351,7 +355,8 @@ class TestResolverCreateOnlyAttrs:
             external_url=None,
             entity_class=Client,
             attrs={
-                "name": "Acme", "email": "new@x.com",
+                "name": "Acme",
+                "email": "new@x.com",
                 "organization_id": org.canonical_id,
             },
             matcher=ExactFieldMatcher(["name"]),
@@ -362,9 +367,7 @@ class TestResolverCreateOnlyAttrs:
 
 
 class TestIdentityResolverDeduplication:
-    def test_multisource_dedup_same_external_keys_different_sources(
-        self, session: Session, org
-    ):
+    def test_multisource_dedup_same_external_keys_different_sources(self, session: Session, org):
         resolver = IdentityResolver(session)
 
         # Same client from two sources, matched by name.
@@ -392,9 +395,7 @@ class TestIdentityResolverDeduplication:
         sources = {e.source for e in ext_ids}
         assert sources == {SourceSystem.MONDAY, SourceSystem.QUICKBOOKS}
 
-    def test_prevents_duplicate_external_id_rows(
-        self, session: Session, org, client_factory
-    ):
+    def test_prevents_duplicate_external_id_rows(self, session: Session, org, client_factory):
         """Two ExternalId rows with the same (source, entity_type, external_key)
         violate the composite unique constraint."""
         from sqlalchemy.exc import IntegrityError

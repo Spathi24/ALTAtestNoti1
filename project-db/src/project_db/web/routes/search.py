@@ -4,6 +4,7 @@ Read-only retrieval: no LLM tokens spent, just the tiny query embedding. Finds
 the exact clause / number / name across every contract. GET with query params
 so results are shareable/bookmarkable.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
