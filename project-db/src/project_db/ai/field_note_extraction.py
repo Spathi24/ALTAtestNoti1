@@ -1132,6 +1132,49 @@ def _subtask_window_note(session: Session, task_id: Any, start: Any, end: Any) -
     )
 
 
+def _cascade_for_date_shift(
+    session: Session,
+    project_id: Any,
+    task_id: Any,
+    new_end: _date_type | None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Deterministic downstream impact of moving ``task_id``'s finish to
+    ``new_end``: which dependent tasks must be pushed, to when, by how much.
+
+    Computed by the schedule engine (never the LLM) so the human reviewing the
+    timeline proposal sees the exact cascade -- "do the downstream dates need to
+    be pushed?" -- answered consistently. Returns (cascade_rows, human_note) or
+    (None, None) when nothing is affected. Best-effort: never raises.
+    """
+    if new_end is None or task_id is None:
+        return None, None
+    try:
+        from project_db.ai.task_graph import build_task_graph
+
+        graph = build_task_graph(session, project_id)
+        impacts = graph.cascade_if_end_changes(task_id, new_end)
+    except Exception:
+        return None, None
+    if not impacts:
+        return None, None
+    rows = [
+        {
+            "task_id": str(i.task_id),
+            "title": i.title,
+            "old_start": i.old_start.isoformat() if i.old_start else None,
+            "old_end": i.old_end.isoformat() if i.old_end else None,
+            "new_start": i.new_start.isoformat(),
+            "new_end": i.new_end.isoformat() if i.new_end else None,
+            "days_pushed": i.days_pushed,
+        }
+        for i in impacts
+    ]
+    note = "Accepting this date shift pushes downstream: " + "; ".join(
+        f"{i.title} +{i.days_pushed}d (-> {i.new_start.isoformat()})" for i in impacts
+    )
+    return rows, note
+
+
 def _maybe_create_proposal(
     session: Session,
     batch: FieldNoteBatch,
@@ -1220,6 +1263,16 @@ def _maybe_create_proposal(
         if bound_note:
             pv_dates["parent_window_warning"] = bound_note
             batch.warnings.append(bound_note)
+        # Deterministic downstream cascade: if this finish date moves, which
+        # dependent tasks must be pushed?  Surfaced on the proposal so the human
+        # sees the schedule impact before accepting (advisor-not-actor: we show
+        # it, we do not auto-shift the downstream tasks).
+        cascade_rows, cascade_note = _cascade_for_date_shift(
+            session, project_id, matched_task_id, end
+        )
+        if cascade_rows:
+            pv_dates["cascade"] = cascade_rows
+            batch.warnings.append(cascade_note)
         proposed_value = json.dumps(pv_dates)
         _supersede_prior(session, "Task", matched_task_id, "timeline")
         p = Proposal(

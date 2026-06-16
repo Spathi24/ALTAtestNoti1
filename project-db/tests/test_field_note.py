@@ -45,6 +45,7 @@ from project_db.db.models import (
     Proposal,
     ProposalStatus,
     Task,
+    TaskDependency,
 )
 from project_db.db.models import (
     NoteChannel as DBNoteChannel,
@@ -998,6 +999,95 @@ class TestFieldNoteSubtaskWindow:
         batch = ingest_field_note(session, ex, project.canonical_id, "Sub A mid-July")
         assert len(batch.proposals) == 1
         assert not any("outside parent" in w for w in batch.warnings)
+
+
+class TestFieldNoteCascade:
+    """A date_shift on a task with dependents surfaces the deterministic
+    downstream cascade (the answer to 'do the downstream dates need to push?')."""
+
+    def _shift_mock(self, end):
+        return MockFieldNoteExtractor(
+            responses=[
+                {
+                    "signals": [
+                        {
+                            "classification": "date_shift",
+                            "quoted_excerpt": "slipped to the 18th",
+                            "task_index": 0,
+                            "proposed_status": None,
+                            "proposed_start_date": None,
+                            "proposed_end_date": end,
+                            "new_task_title": None,
+                            "workers": None,
+                            "hours_worked": None,
+                            "confidence": 0.8,
+                            "reasoning": "note says so",
+                        }
+                    ]
+                }
+            ]
+        )
+
+    def test_cascade_attached_to_timeline_proposal(self, session, project):
+        # Predecessor is the only ACTIVE task -> deterministically index 0.
+        a = Task(
+            title="Plumbing rough-in",
+            status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id,
+            start_date=date(2026, 6, 9),
+            end_date=date(2026, 6, 13),
+        )
+        a.monday_status_label = "Working on it"
+        session.add(a)
+        session.commit()
+        b = Task(
+            title="Drywall installation",
+            status=TaskStatus.TODO,
+            project_id=project.canonical_id,
+            start_date=date(2026, 6, 14),
+            end_date=date(2026, 6, 18),
+        )
+        session.add(b)
+        session.commit()
+        session.add(
+            TaskDependency(predecessor_task_id=a.canonical_id, successor_task_id=b.canonical_id)
+        )
+        session.commit()
+
+        ex = self._shift_mock("2026-06-18")  # A's finish 6/13 -> 6/18 (+5)
+        batch = ingest_field_note(
+            session, ex, project.canonical_id, "plumbing rough-in slipped, finishing the 18th"
+        )
+        session.commit()
+
+        assert len(batch.proposals) == 1
+        p = batch.proposals[0]
+        assert p.entity_id == a.canonical_id  # shifted the right task
+        pv = json.loads(p.proposed_value)
+        assert "cascade" in pv
+        row = next(c for c in pv["cascade"] if c["title"] == "Drywall installation")
+        # B starts 6/14, must move to A's new end 6/18 -> +4 days.
+        assert row["days_pushed"] == 4
+        assert row["new_start"] == "2026-06-18"
+        assert any("pushes downstream" in w for w in batch.warnings)
+
+    def test_no_cascade_when_no_dependents(self, session, project):
+        a = Task(
+            title="Solo task",
+            status=TaskStatus.IN_PROGRESS,
+            project_id=project.canonical_id,
+            start_date=date(2026, 6, 9),
+            end_date=date(2026, 6, 13),
+        )
+        a.monday_status_label = "Working on it"
+        session.add(a)
+        session.commit()
+        batch = ingest_field_note(
+            session, self._shift_mock("2026-06-18"), project.canonical_id, "solo task slipped"
+        )
+        session.commit()
+        pv = json.loads(batch.proposals[0].proposed_value)
+        assert "cascade" not in pv
 
 
 # ---------------------------------------------------------------------------
