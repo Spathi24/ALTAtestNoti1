@@ -9,6 +9,39 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-16 -- The Monday task graph: dependencies, schedule engine, Gantt
+
+A deep audit (`docs/MONDAY_AUDIT.md`) found the Monday integration was
+discarding the task **dependency graph**: the connector fetched Monday's
+"Dependent On" links and threw them away, the `Task` model had no field for
+them, and the LLM `/ask` path got a flat, project-mixed task list with no
+parents and no dependencies (which is why asking about a task gave poor
+answers -- the model was blindfolded, not stupid). The hierarchy itself was
+fine (129 subitems correctly parented). Fixed across four phases (1-3 shipped):
+
+- **Phase 1 -- graph foundation.** New `TaskDependency` edge table + migration;
+  the serializer keeps `linked_item_ids`; sync resolves dependencies by Monday
+  id (fallback: in-project title match on the column's display names) and
+  rebuilds edges idempotently. Verified live: Rockland's 11 "Dependent On"
+  columns became 16 real predecessor->successor edges (bathroom -> plumbing ->
+  drywall -> plaster).
+- **Phase 2 -- the LLM sees the graph.** `ai/task_graph.py`: a deterministic
+  schedule engine (predecessors/successors, blocking deps, schedule conflicts,
+  and a finish-to-start **cascade** -- "if this slips 3 days, these downstream
+  tasks must move to these dates"). The cascade is computed by code, never the
+  LLM (consistency #1). `/ask` now injects the referenced project's real task
+  tree; field-note date shifts surface the downstream cascade on the proposal.
+- **Phase 3 -- visualize it.** `/projects/{id}/gantt`: a deterministic
+  server-rendered SVG (no JS, no build) -- indented hierarchy, status-coloured
+  bars by date, dependency arrows, today marker, theme-adaptive (light/dark).
+
+Honest limit: cascades/arrows need dated dependents, and most Rockland subitems
+are undated in Monday, so the engine maps the structure everywhere but does the
+date math only where dates exist -- and now flags that gap. **Remaining:**
+Phase 4 (dependency write-back). **1001 tests** (was 992).
+
+---
+
 ## 2026-06-15 -- The field-note (active-adaptation) pipeline: notes -> proposals -> Monday
 
 The big build the whole project was pointed at (STRATEGY's "active adaptation",

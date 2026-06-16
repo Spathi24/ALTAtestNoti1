@@ -148,32 +148,40 @@ prompt (`proposals.py:368-383`, parent-window bounding — this part is good).
 
 ## 4. Remediation plan (phased)
 
-**Phase 1 — Graph foundation (data layer).**
+**Phase 1 — Graph foundation (data layer). ✅ DONE (commit 4e6d605).**
 1. `TaskDependency` edge table (`predecessor_task_id`, `successor_task_id`,
-   `source`, unique pair) + idempotent SQLite migration.
-2. Stop dropping edges: retain `linked_item_ids` for `dependency` (and
-   `board_relation`) in `_column_values_json`.
-3. At sync, resolve Monday item IDs -> canonical Task IDs via `ExternalId` and
-   upsert `TaskDependency` rows. Fall back to in-project title match on
-   `display_value` for columns where only names are returned.
-4. Tests + a live re-sync that reproduces the 11 Rockland edges as real rows.
+   `source`, unique pair) + idempotent SQLite migration. ✅
+2. Stop dropping edges: retain `linked_item_ids` in `_column_values_json`. ✅
+3. At sync, `resolve_dependency_predecessors` resolves Monday item IDs ->
+   canonical Task IDs, falling back to in-project title match on
+   `display_value`; `rebuild_dependency_edges` rebuilds idempotently. ✅
+4. 16 tests; verified on the LIVE DB — the 11 Rockland "Dependent On" columns
+   materialised as 16 real predecessor->successor edges. ✅ (Fixes D1.)
 
-**Phase 2 — Make the LLM see the graph.**
-5. One `build_task_tree_block(tasks, deps)` renderer: hierarchy-indented,
-   each task annotated `[blocked by: ...] [blocks: ...]`, status + dates.
-   Reused by `/ask`, proposals, and field notes.
-6. Fix `/ask`: when a question names a project/task, load that project's
-   structured tree (hierarchy + deps + dates) into context, not the flat
-   overview.
+**Phase 2 — Make the LLM see the graph. ✅ DONE (commits f725bdc, fa81d95, eddb1a4).**
+5. `ai/task_graph.py`: deterministic engine + renderers (`render_project_tree`,
+   `describe_task_neighborhood`, `render_cascade`) + schedule analysis
+   (blocking predecessors, conflicts, **cascade_if_end_changes**). ✅
+6. `/ask` injects the project's task tree (hierarchy + deps) when a project is
+   referenced (fixes D2/D3). Field-note date shifts now carry the deterministic
+   downstream **cascade** ("accepting this pushes Drywall +4d"). ✅
 
-**Phase 3 — Visualize it.**
-7. Deterministic Gantt/tree view on the project page (dates + hierarchy +
-   dependency arrows). No LLM; recomputed free, like the briefing.
+**Phase 3 — Visualize it. ✅ DONE (commit 401079e).**
+7. `web/gantt.py` + `/projects/{id}/gantt`: deterministic server-rendered SVG
+   (no LLM, no JS) — indented hierarchy, status-coloured bars by date,
+   dependency arrows, today marker, theme-adaptive. Verified live on Rockland.
+   ✅ (Fixes D4.)
 
-**Phase 4 — Close the write loop.**
-8. `update_dependency_column` mutation + a `dependency` proposal type so the
-   LLM can *suggest* edges (human-approved) — the brief's "build the graph
-   over time" idea, advisor-not-actor (A1).
+**Phase 4 — Close the write loop. ⏳ REMAINING.**
+8. `update_dependency_column` / `change_column_value` for the dependency column
+   (write side — D5) + a `dependency` proposal type so the LLM can *suggest*
+   edges (human-approved) — the brief's "build the graph over time" idea,
+   advisor-not-actor (A1). Not yet built.
 
-Phases 1-2 are the substance (they fix D1-D3). Phase 3 is the visibility you
-asked for. Phase 4 lets the system improve the board instead of only reading it.
+**Status 2026-06-16:** Phases 1-3 shipped (D1-D4 fixed). The dependency graph
+is captured, the LLM sees the hierarchy + dependencies, date shifts surface the
+cascade, and the Gantt makes it visible. **Remaining:** Phase 4 (dependency
+write-back, D5). Known data limit — cascades/arrows need dated dependents;
+Rockland's dependent subitems are mostly undated, so the engine maps the
+structure everywhere but computes date math only where dates exist (it now
+flags that gap rather than hiding it).
