@@ -44,6 +44,7 @@ from project_db.db.models import (
     ProjectStatus,
     SourceSystem,
     Task,
+    TaskDependency,
     TaskStatus,
     User,
 )
@@ -339,9 +340,115 @@ def _column_values_json(column_values: list[dict[str, Any]]) -> str:
                 "from": cv.get("from"),
                 "to": cv.get("to"),
                 "display_value": cv.get("display_value"),
+                # Graph edges (dependency / board_relation). Previously dropped,
+                # which discarded the task dependency graph -- keep them so the
+                # dependency-capture pass can resolve predecessors by id.
+                "linked_item_ids": cv.get("linked_item_ids") or [],
             }
         )
     return json.dumps(keep, default=str, separators=(",", ":"))
+
+
+def resolve_dependency_predecessors(
+    column_values: list[dict[str, Any]],
+    *,
+    task_id_by_monday_id: dict[str, Any],
+    task_id_by_title: dict[str, Any],
+) -> list[Any]:
+    """Resolve the predecessor canonical task ids from an item's dependency
+    column(s).
+
+    Monday's "Dependent On" column on the current item lists the tasks it waits
+    on (its predecessors). We resolve each, preferring the structured
+    ``linked_item_ids`` (Monday item id -> canonical task via
+    ``task_id_by_monday_id``) and falling back to matching the comma-joined
+    ``display_value`` names against in-project task titles
+    (``task_id_by_title``; ambiguous titles are excluded by the caller).
+
+    Pure + order-preserving + de-duplicated. Returns canonical task ids.
+    """
+    preds: list[Any] = []
+    seen: set[Any] = set()
+    for cv in column_values or []:
+        if cv.get("type") != "dependency":
+            continue
+        resolved_any = False
+        for mid in cv.get("linked_item_ids") or []:
+            tid = task_id_by_monday_id.get(str(mid))
+            if tid is not None and tid not in seen:
+                preds.append(tid)
+                seen.add(tid)
+                resolved_any = True
+        # Fall back to names only when ids were absent or none resolved.
+        if not resolved_any:
+            disp = (cv.get("display_value") or "").strip()
+            if not disp:
+                continue
+            for name in (n.strip() for n in disp.split(",")):
+                tid = task_id_by_title.get(name.lower()) if name else None
+                if tid is not None and tid not in seen:
+                    preds.append(tid)
+                    seen.add(tid)
+    return preds
+
+
+def rebuild_dependency_edges(
+    session: Any,
+    synced: list[tuple[str, Any, str, list[dict[str, Any]]]],
+) -> int:
+    """Idempotently rebuild the MONDAY dependency edges for synced tasks.
+
+    ``synced`` is a list of ``(monday_id, canonical_task_id, title,
+    column_values)`` for every task on a board/project. Clears the existing
+    MONDAY inbound edges for those tasks, then inserts the current predecessor
+    set -- so a dependency added OR removed in Monday is reflected on re-sync.
+    Returns the number of edges inserted.
+    """
+    if not synced:
+        return 0
+    task_id_by_monday_id = {mid: tid for mid, tid, _title, _cvs in synced}
+    # Title map for the name fallback; drop ambiguous (duplicate) titles so we
+    # never guess the wrong predecessor.
+    title_counts: dict[str, int] = {}
+    for _mid, _tid, title, _cvs in synced:
+        key = title.strip().lower()
+        title_counts[key] = title_counts.get(key, 0) + 1
+    task_id_by_title = {
+        title.strip().lower(): tid
+        for _mid, tid, title, _cvs in synced
+        if title.strip() and title_counts[title.strip().lower()] == 1
+    }
+
+    synced_task_ids = [tid for _mid, tid, _title, _cvs in synced]
+    session.query(TaskDependency).filter(
+        TaskDependency.successor_task_id.in_(synced_task_ids),
+        TaskDependency.source == SourceSystem.MONDAY,
+    ).delete(synchronize_session=False)
+
+    seen_edges: set[tuple[Any, Any]] = set()
+    inserted = 0
+    for _mid, successor_id, _title, column_values in synced:
+        predecessors = resolve_dependency_predecessors(
+            column_values,
+            task_id_by_monday_id=task_id_by_monday_id,
+            task_id_by_title=task_id_by_title,
+        )
+        for predecessor_id in predecessors:
+            if predecessor_id == successor_id:
+                continue  # never self-link
+            edge = (predecessor_id, successor_id)
+            if edge in seen_edges:
+                continue
+            seen_edges.add(edge)
+            session.add(
+                TaskDependency(
+                    predecessor_task_id=predecessor_id,
+                    successor_task_id=successor_id,
+                    source=SourceSystem.MONDAY,
+                )
+            )
+            inserted += 1
+    return inserted
 
 
 class MondayConnector(BaseConnector):
@@ -756,17 +863,29 @@ class MondayConnector(BaseConnector):
         items = self._apply_portfolio_mirror_overlay(board, items)
 
         extractor = ColumnExtractor(column_defs)
+        # (monday_id, canonical_task_id, title, column_values) for every task
+        # synced on this board -- the dependency pass needs the full set so it
+        # can resolve predecessors (which may be subitems) by id or by title.
+        synced: list[tuple[str, Any, str, list[dict[str, Any]]]] = []
         for item in items:
             if item.get("state") == "deleted":
                 continue
             try:
                 fields = extractor.extract(item.get("column_values") or [])
                 parent_task_id = self._upsert_task(board, item, fields, project_id)
+                synced.append(
+                    (
+                        str(item["id"]),
+                        parent_task_id,
+                        item.get("name") or "",
+                        item.get("column_values") or [],
+                    )
+                )
                 for subitem in item.get("subitems") or []:
                     if subitem.get("state") == "deleted":
                         continue
                     sub_fields = extractor.extract(subitem.get("column_values") or [])
-                    self._upsert_task(
+                    sub_task_id = self._upsert_task(
                         board,
                         subitem,
                         sub_fields,
@@ -774,10 +893,32 @@ class MondayConnector(BaseConnector):
                         parent_task_id=parent_task_id,
                         parent_group_title=(item.get("group") or {}).get("title", ""),
                     )
+                    synced.append(
+                        (
+                            str(subitem["id"]),
+                            sub_task_id,
+                            subitem.get("name") or "",
+                            subitem.get("column_values") or [],
+                        )
+                    )
             except Exception as exc:
                 self._record_failure(
                     f"task item {item.get('id')} on board {board['name']!r}: {exc}"
                 )
+
+        try:
+            self._sync_task_dependencies(synced)
+        except Exception as exc:
+            self._record_failure(f"dependency sync on board {board['name']!r}: {exc}")
+
+    def _sync_task_dependencies(
+        self,
+        synced: list[tuple[str, Any, str, list[dict[str, Any]]]],
+    ) -> None:
+        """Rebuild the Monday dependency edges for the tasks just synced."""
+        n = rebuild_dependency_edges(self.session, synced)
+        if n:
+            logger.info("Synced %d task dependency edge(s)", n)
 
     # ------------------------------------------------------------------
     # Portfolio mirror overlay (thin wrappers around module-level helpers

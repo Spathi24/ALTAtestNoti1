@@ -267,6 +267,28 @@ SQLITE_WORKER_COLUMNS: dict[str, str] = {
 }
 
 
+SQLITE_TASK_DEPENDENCY_DDL = """
+CREATE TABLE task_dependency (
+    id TEXT PRIMARY KEY,
+    predecessor_task_id TEXT NOT NULL,
+    successor_task_id TEXT NOT NULL,
+    source VARCHAR NOT NULL DEFAULT 'MONDAY',
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (predecessor_task_id) REFERENCES task(canonical_id),
+    FOREIGN KEY (successor_task_id) REFERENCES task(canonical_id)
+)
+"""
+
+SQLITE_TASK_DEPENDENCY_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_dependency_edge "
+    "ON task_dependency (predecessor_task_id, successor_task_id)",
+    "CREATE INDEX IF NOT EXISTS ix_task_dependency_predecessor "
+    "ON task_dependency (predecessor_task_id)",
+    "CREATE INDEX IF NOT EXISTS ix_task_dependency_successor "
+    "ON task_dependency (successor_task_id)",
+)
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -320,6 +342,9 @@ def ensure_sqlite_schema(engine) -> None:
             _add_missing_columns(conn, inspector, "worker", SQLITE_WORKER_COLUMNS)
         _create_table_if_missing(conn, tables, "email_ingest", SQLITE_EMAIL_INGEST_DDL)
         for _idx_ddl in SQLITE_EMAIL_INGEST_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(conn, tables, "task_dependency", SQLITE_TASK_DEPENDENCY_DDL)
+        for _idx_ddl in SQLITE_TASK_DEPENDENCY_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
         # Post-DDL columns on field_note (email_ingest_id added after initial DDL).

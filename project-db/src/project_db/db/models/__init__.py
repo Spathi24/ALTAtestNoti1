@@ -40,6 +40,7 @@ from project_db.db.models.work import (
     Project,
     ProjectStatus,
     Task,
+    TaskDependency,
     TaskStatus,
 )
 from project_db.db.models.workers import EmailIngest, Worker
@@ -80,6 +81,7 @@ __all__ = [
     "RoadmapTask",
     "SourceSystem",
     "Task",
+    "TaskDependency",
     "TaskStatus",
     "User",
     "Vendor",

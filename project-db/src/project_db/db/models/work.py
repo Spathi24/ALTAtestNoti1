@@ -1,14 +1,27 @@
-"""Delivery-side entities: Project, Task, DailyLog."""
+"""Delivery-side entities: Project, Task, TaskDependency, DailyLog."""
 
 from __future__ import annotations
 
 import enum
+import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
+from project_db.db.models.canonical import SourceSystem
 
 
 class ProjectStatus(str, enum.Enum):
@@ -91,6 +104,48 @@ class Task(Base, CanonicalMixin):
         ForeignKey("task.canonical_id"),
         nullable=True,
     )
+
+
+class TaskDependency(Base):
+    """A directed edge in the task dependency graph (finish-to-start).
+
+    The predecessor must finish before the successor can proceed. This mirrors
+    Monday's "Dependent On" column: that column on task S lists the tasks S
+    waits on, so each listed predecessor P yields one edge
+    (predecessor=P, successor=S). Read it as "P blocks S" / "S is blocked by P".
+
+    Kept as a separate edge table (not a column on Task) because dependencies
+    are many-to-many and we want to traverse the graph in both directions.
+    """
+
+    __tablename__ = "task_dependency"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    predecessor_task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("task.canonical_id"),
+        nullable=False,
+        index=True,
+    )
+    successor_task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("task.canonical_id"),
+        nullable=False,
+        index=True,
+    )
+    source = Column(SAEnum(SourceSystem), nullable=False, default=SourceSystem.MONDAY)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "predecessor_task_id",
+            "successor_task_id",
+            name="uq_task_dependency_edge",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TaskDependency {self.predecessor_task_id} -> {self.successor_task_id}>"
 
 
 class DailyLog(Base, CanonicalMixin):
