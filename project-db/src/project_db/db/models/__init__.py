@@ -32,6 +32,16 @@ from project_db.db.models.obligations import (
     OBLIGATION_KINDS,
     ContractObligation,
 )
+from project_db.db.models.project_log import (
+    EMPLOYEE_MATCH_METHODS,
+    PROJECT_LOG_CLASSIFICATION_METHODS,
+    PROJECT_LOG_INGESTION_REASONS,
+    PROJECT_LOG_INGESTION_STATUSES,
+    WORKER_ALIAS_SOURCES,
+    ProjectLogEntry,
+    ProjectLogSubmission,
+    WorkerAlias,
+)
 from project_db.db.models.proposals import Proposal, ProposalStatus
 from project_db.db.models.rag import DocumentChunk
 from project_db.db.models.roadmap import (
@@ -51,6 +61,7 @@ from project_db.db.models.work import (
 from project_db.db.models.workers import EmailIngest, Worker
 
 __all__ = [
+    "EMPLOYEE_MATCH_METHODS",
     "FINANCIAL_DIRECTIONS",
     "FINANCIAL_DOC_ROLES",
     "FINANCIAL_RECORD_KINDS",
@@ -60,7 +71,11 @@ __all__ = [
     "LINE_ITEM_STATUSES",
     "OBLIGATION_DIRECTIONS",
     "OBLIGATION_KINDS",
+    "PROJECT_LOG_CLASSIFICATION_METHODS",
+    "PROJECT_LOG_INGESTION_REASONS",
+    "PROJECT_LOG_INGESTION_STATUSES",
     "ROADMAP_PHASE_ORDER",
+    "WORKER_ALIAS_SOURCES",
     "Client",
     "ContractObligation",
     "DailyLog",
@@ -82,6 +97,8 @@ __all__ = [
     "NoteClass",
     "Organization",
     "Project",
+    "ProjectLogEntry",
+    "ProjectLogSubmission",
     "ProjectStatus",
     "Property",
     "Proposal",
@@ -96,4 +113,5 @@ __all__ = [
     "User",
     "Vendor",
     "Worker",
+    "WorkerAlias",
 ]

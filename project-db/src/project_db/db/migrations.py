@@ -337,6 +337,103 @@ SQLITE_TASK_DEPENDENCY_INDEXES = (
 )
 
 
+SQLITE_PROJECT_LOG_SUBMISSION_DDL = """
+CREATE TABLE project_log_submission (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    email_ingest_id TEXT,
+    site_name_raw VARCHAR,
+    site_name_resolved VARCHAR,
+    source_email_message_id VARCHAR,
+    source_attachment_filename VARCHAR,
+    source_attachment_hash VARCHAR,
+    source_image_uri VARCHAR,
+    drive_file_id VARCHAR,
+    received_at DATETIME,
+    processed_at DATETIME,
+    document_type VARCHAR NOT NULL DEFAULT 'project_log',
+    classification_method VARCHAR,
+    classification_confidence FLOAT,
+    ingestion_status VARCHAR NOT NULL DEFAULT 'parsed',
+    ingestion_reason TEXT,
+    extractor_version VARCHAR,
+    raw_extraction_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (email_ingest_id) REFERENCES email_ingest(canonical_id)
+)
+"""
+
+SQLITE_PROJECT_LOG_SUBMISSION_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_project_log_submission_project_id "
+    "ON project_log_submission (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_project_log_submission_attachment_hash "
+    "ON project_log_submission (source_attachment_hash)",
+)
+
+SQLITE_PROJECT_LOG_ENTRY_DDL = """
+CREATE TABLE project_log_entry (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    submission_id TEXT NOT NULL,
+    project_id TEXT,
+    site_name_raw VARCHAR,
+    site_name_resolved VARCHAR,
+    work_date DATE,
+    employee_name_raw VARCHAR,
+    employee_id TEXT,
+    employee_match_confidence FLOAT,
+    employee_match_method VARCHAR NOT NULL DEFAULT 'unresolved',
+    time_arrived VARCHAR,
+    time_left VARCHAR,
+    lunch_hours NUMERIC(5, 2),
+    total_hours_reported NUMERIC(6, 2),
+    total_hours_computed NUMERIC(6, 2),
+    hours_mismatch BOOLEAN NOT NULL DEFAULT 0,
+    supervisor_signature_present BOOLEAN NOT NULL DEFAULT 0,
+    row_index INTEGER,
+    confidence FLOAT,
+    missing_fields_json TEXT,
+    source_bbox_json TEXT,
+    source_meta_json TEXT,
+    FOREIGN KEY (submission_id) REFERENCES project_log_submission(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (employee_id) REFERENCES worker(canonical_id)
+)
+"""
+
+SQLITE_PROJECT_LOG_ENTRY_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_project_log_entry_submission_id "
+    "ON project_log_entry (submission_id)",
+    "CREATE INDEX IF NOT EXISTS ix_project_log_entry_project_id ON project_log_entry (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_project_log_entry_employee_id "
+    "ON project_log_entry (employee_id)",
+)
+
+SQLITE_WORKER_ALIAS_DDL = """
+CREATE TABLE worker_alias (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    worker_id TEXT NOT NULL,
+    alias_text VARCHAR NOT NULL,
+    source VARCHAR NOT NULL DEFAULT 'project_log',
+    confidence FLOAT,
+    FOREIGN KEY (worker_id) REFERENCES worker(canonical_id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_WORKER_ALIAS_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_worker_alias_worker_id ON worker_alias (worker_id)",
+    "CREATE INDEX IF NOT EXISTS ix_worker_alias_alias_text ON worker_alias (alias_text)",
+)
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -402,6 +499,18 @@ def ensure_sqlite_schema(engine) -> None:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "task_dependency", SQLITE_TASK_DEPENDENCY_DDL)
         for _idx_ddl in SQLITE_TASK_DEPENDENCY_INDEXES:
+            conn.execute(text(_idx_ddl))
+        # Project Log tables (need worker + email_ingest + project to exist first).
+        _create_table_if_missing(conn, tables, "worker_alias", SQLITE_WORKER_ALIAS_DDL)
+        for _idx_ddl in SQLITE_WORKER_ALIAS_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(
+            conn, tables, "project_log_submission", SQLITE_PROJECT_LOG_SUBMISSION_DDL
+        )
+        for _idx_ddl in SQLITE_PROJECT_LOG_SUBMISSION_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(conn, tables, "project_log_entry", SQLITE_PROJECT_LOG_ENTRY_DDL)
+        for _idx_ddl in SQLITE_PROJECT_LOG_ENTRY_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
         # Post-DDL columns on field_note (email_ingest_id added after initial DDL).
