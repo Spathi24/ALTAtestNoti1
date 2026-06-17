@@ -184,17 +184,64 @@ class TestPopulateLLMDocument:
         assert rows["Plumbing"].amount_verified is True
         assert rows["Mystery"].amount_verified is False
 
-    def test_reconcile_ok_and_fail(self, db_session):
+    def test_reconcile_ok_writes_rows(self, db_session):
         project = _seed_project(db_session)
         doc, dt = _make_doc(db_session, project, "Q.pdf", _QUOTE_TEXT)
         ex = MockFinancialLineExtractor({doc.name: _quote_response(stated=10000.0)})
         res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
         assert res.reconcile_ok is True  # 5000+3000+2000 == 10000
+        assert res.ingestion_status == "parsed"
+        assert res.rows_written == 3
 
-        doc2, dt2 = _make_doc(db_session, project, "Q2.pdf", _QUOTE_TEXT)
-        ex2 = MockFinancialLineExtractor({doc2.name: _quote_response(stated=12000.0)})
-        res2 = populate_ledger_llm_for_document(db_session, doc2, dt2, ex2, company_name="Alta")
-        assert res2.reconcile_ok is False  # lines sum 10000, stated 12000
+    def test_reconcile_fail_quarantined_no_rows(self, db_session):
+        """TRUST GATE: an extraction that doesn't reconcile is quarantined, not
+        written -- LLM over/under-extraction must never pollute the margins."""
+        project = _seed_project(db_session)
+        doc, dt = _make_doc(db_session, project, "Q2.pdf", _QUOTE_TEXT)
+        ex = MockFinancialLineExtractor({doc.name: _quote_response(stated=12000.0)})
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.reconcile_ok is False  # lines sum 10000, stated 12000
+        assert res.ingestion_status == "quarantined"
+        assert res.ingestion_reason == "reconcile_fail"
+        assert res.rows_written == 0
+        assert (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+            == 0
+        )
+
+    def test_no_stated_total_quarantined(self, db_session):
+        """Can't verify without a stated total -> quarantine, don't write."""
+        project = _seed_project(db_session)
+        doc, dt = _make_doc(db_session, project, "Q3.pdf", _QUOTE_TEXT)
+        ex = MockFinancialLineExtractor({doc.name: _quote_response(stated=None)})
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.reconcile_ok is None
+        assert res.ingestion_status == "quarantined"
+        assert res.ingestion_reason == "no_stated_total"
+        assert res.rows_written == 0
+
+    def test_quarantine_clears_prior_rows(self, db_session):
+        """A re-run that now fails reconcile must remove the previously-written rows."""
+        project = _seed_project(db_session)
+        doc, dt = _make_doc(db_session, project, "Q.pdf", _QUOTE_TEXT)
+        ok = MockFinancialLineExtractor({doc.name: _quote_response(stated=10000.0)})
+        populate_ledger_llm_for_document(db_session, doc, dt, ok, company_name="Alta")
+        assert (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+            == 3
+        )
+        bad = MockFinancialLineExtractor({doc.name: _quote_response(stated=99999.0)})
+        populate_ledger_llm_for_document(db_session, doc, dt, bad, company_name="Alta")
+        assert (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+            == 0
+        )
 
     def test_non_revenue_skipped(self, db_session):
         project = _seed_project(db_session)

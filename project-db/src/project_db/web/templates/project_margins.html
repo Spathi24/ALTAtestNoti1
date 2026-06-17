@@ -5,9 +5,10 @@
 <hgroup>
   <h2>{{ d.project }} &mdash; Division Margins</h2>
   <p><small>
-    Deterministic grid parser — no LLM.
-    Revenue = own-authored quote spreadsheets (<code>fill-ledger</code>).
-    Cost side pending the cost extractor, so margin shows once costs land.
+    Revenue from quote documents — deterministic grid for spreadsheets
+    (<code>fill-ledger</code>) + LLM for PDF/unstructured quotes
+    (<code>fill-ledger-llm</code>), each reconciled to its document's stated
+    total before counting. Cost side pending, so margin shows once costs land.
     <a href="/projects/{{ d.project_id }}/ledger-health">why is this empty? &rarr;</a> &middot;
     <a href="/projects/{{ d.project_id }}">&larr; back to project</a>
   </small></p>

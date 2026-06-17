@@ -403,16 +403,34 @@ def populate_ledger_llm_for_document(
         tol = max(_RECONCILE_ABS, (abs(stated) * _RECONCILE_PCT))
         result.reconcile_ok = abs(div_total - stated) <= tol
 
-    # Idempotent swap: replace only this document's LLM rows.
+    # Always clear this document's prior LLM rows first (idempotent + cleans up
+    # a previous bad extraction).
     session.query(FinancialLineItem).filter(
         FinancialLineItem.document_id == document.canonical_id,
         FinancialLineItem.source == "llm",
     ).delete(synchronize_session="fetch")
-    session.add_all(items)
 
-    result.rows_written = len(items)
-    result.ingestion_status = "parsed"
-    result.ingestion_reason = None
+    # TRUST GATE: commit LLM rows ONLY when they reconcile to the document's own
+    # stated total. LLM over/under-extraction on complex quotes is real -- a live
+    # smoke run had a quote extract $338,550 of lines against a $149,580 stated
+    # total. So an unreconciled (or unverifiable, no-stated-total) extraction is
+    # QUARANTINED for human review (surfaced in ledger-health), never written as
+    # "truth" into the margins. This is stricter than the deterministic grid path
+    # on purpose: the grid's reconcile-fails are small real doc discrepancies; an
+    # LLM's are extraction errors that could be 2x off.
+    if result.reconcile_ok is True:
+        session.add_all(items)
+        result.rows_written = len(items)
+        result.ingestion_status = "parsed"
+        result.ingestion_reason = None
+    else:
+        result.rows_written = 0
+        result.ingestion_status = "quarantined"
+        result.ingestion_reason = "reconcile_fail" if stated is not None else "no_stated_total"
+        result.warnings.append(
+            f"extracted lines sum to {div_total} vs stated {stated}; "
+            "quarantined (not written to ledger)"
+        )
     return result
 
 

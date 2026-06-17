@@ -9,6 +9,35 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- LLM division extractor for PDF quotes (+ a trust gate the live run earned)
+
+To take division margins beyond the one project with spreadsheet quotes, added
+`ai/financial_llm_extractor.py`: the LLM reads a quote PDF's already-extracted
+text and returns per-scope line items; deterministic code maps each to a CSI
+division, verifies the amount against the source text, sums, and reconciles to
+the document's stated total. CLI: `fill-ledger-llm <project|--all> [--limit]`.
+12 mock tests; rows carry `source="llm"` and show in the same margins UI.
+
+A small **live smoke run** (3 real 1455 St. Mathieu quotes, authorized) earned
+its keep immediately:
+- LYGC Quote 1: lines summed to $79,000 = stated $79,000 -> reconciled, written.
+- Geller R1: $338,550 of lines vs $149,580 stated -> over-extraction.
+- Geller House: $162,677 vs $306,498 stated -> under-extraction.
+
+So the LLM over/under-extracts on complex multi-section quotes. Added a **trust
+gate**: an LLM extraction is written to the ledger ONLY if it reconciles to the
+document's own stated total (within 1% / $1); otherwise it's quarantined (no
+rows) for review. Stricter than the deterministic grid path on purpose -- a
+grid reconcile-fail is a small real doc discrepancy; an LLM one is an extraction
+error that can be 2x off. Result: 1455's margins now shows a trustworthy $79,000
+across 6 trades (Finishes $44k, Plumbing $10k, ...) from a PDF, while the two
+unreliable Geller extractions are held back rather than inflating the number.
+
+1290 tests. Next: the eval gold-set (Geller $159,120 etc.) + a tighter prompt to
+raise the reconcile pass-rate, THEN the budgeted `fill-ledger-llm --all` run.
+
+---
+
 ## 2026-06-17 -- Financial layer: SURFACED in the web UI (it was invisible)
 
 The Phase 1a-1d engine was real but you couldn't see it in the browser, for
