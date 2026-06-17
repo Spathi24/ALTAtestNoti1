@@ -30,17 +30,18 @@ def _extract_unit(name: str | None) -> str | None:
     """Infer the scope unit from the document filename.
 
     Examples:
-      '923 ACCEPTED QUOTE'     -> '923'
-      '927 QUOTE (NOT STARTED)' -> '927'
-      'exterior quote'          -> 'exterior'
-      '923-927 ACCEPTED QUOTE'  -> None  (multi-unit / whole-project doc)
+      '923 ACCEPTED QUOTE'        -> '923'
+      '_927 QUOTE  (NOT STARTED)' -> '927'  (leading underscore from Drive)
+      'exterior quote'             -> 'exterior'
+      '923-927 ACCEPTED QUOTE'    -> None   (multi-unit / whole-project doc)
     """
     if not name:
         return None
     # A range like "923-927" means the doc covers the whole project.
     if re.search(r"\b\d{3,4}-\d{3,4}\b", name):
         return None
-    m = re.match(r"^\s*(\d{3,4})\b", name)
+    # Strip leading underscores and whitespace (Drive sometimes prefixes filenames).
+    m = re.match(r"^[\s_]*(\d{3,4})\b", name)
     if m:
         return m.group(1)
     if re.search(r"\bexterior\b", name, re.I):
@@ -173,12 +174,7 @@ def populate_ledger_for_document(
         result.skipped = True
         return result
 
-    # 3. Wipe existing rows for this document (idempotent rebuild).
-    session.query(FinancialLineItem).filter(
-        FinancialLineItem.document_id == document.canonical_id
-    ).delete(synchronize_session="fetch")
-
-    # 4. Doc-level context derived from the file name / metadata.
+    # 3. Doc-level context derived from the file name / metadata.
     unit = _extract_unit(document.name)
     status = _extract_status(document.name)
     currency = _extract_currency(text)
@@ -186,11 +182,17 @@ def populate_ledger_for_document(
         document.modified_at_source.date() if document.modified_at_source else None
     )
 
-    # 5. Write a FinancialLineItem for every parsed row.
+    # 4. Build new item objects BEFORE touching the DB.
+    #    This explicit ordering means: if building fails, no rows are deleted.
     #    Own-authored quote sheets are ALWAYS revenue (our client quote).
     #    Supplier cost data arrives via the LLM populator (Phase 3).
-    for row in grid.rows:
-        item = FinancialLineItem(
+    #
+    #    amount_verified=True: the amount VALUE is present in the extracted
+    #    source text (consistent with FinancialRecord semantics in HANDOFF §2.4).
+    #    It does NOT mean the amount is financially validated in the real world —
+    #    that judgement lives in the reconcile_ok cross-check + human review.
+    new_items = [
+        FinancialLineItem(
             project_id=document.project_id,
             document_id=document.canonical_id,
             unit=unit,
@@ -206,17 +208,25 @@ def populate_ledger_for_document(
             doc_date=doc_date,
             source="grid",
             quoted_excerpt=f"{row.description}: {row.amount}",
-            amount_verified=True,  # grid amounts are literally in the source text
+            amount_verified=True,
             confidence=1.0,
             extractor_version=extractor_version,
             source_meta_json=json.dumps(
                 {"kind": row.kind, "masterformat_hint": row.masterformat_hint}
             ),
         )
-        session.add(item)
+        for row in grid.rows
+    ]
+
+    # 5. Atomic swap: delete old rows, add new ones.
+    #    Parse succeeded before we reach here, so this is safe.
+    session.query(FinancialLineItem).filter(
+        FinancialLineItem.document_id == document.canonical_id
+    ).delete(synchronize_session="fetch")
+    session.add_all(new_items)
 
     # 6. Cross-check: section subtotals should equal the stated Pre-Tax total.
-    result.rows_written = len(grid.rows)
+    result.rows_written = len(new_items)
     result.grand_total = grid.grand_total
     result.division_total = grid.division_total
     if grid.grand_total is not None:

@@ -687,6 +687,59 @@ def cmd_fill_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_division_margins(args: argparse.Namespace) -> int:
+    """Per-(unit, division) margin pivot from the FinancialLineItem ledger (Phase 2).
+
+    Groups ledger rows by (unit, CSI division), sums each side, and flags
+    where cost data is absent. Revenue-only rows are expected at this stage --
+    cost data arrives once the job-cost extractor is built (Phase 1c).
+    No LLM. Run fill-ledger first to populate the quote/revenue side.
+    """
+    from project_db.ai.views import _resolve_project, report_division_margins
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        data = report_division_margins(s, args.project)
+        if "error" in data:
+            print(f"FAIL: {data['error']}", file=sys.stderr)
+            return 2
+
+        print(f"Project: {data['project']}  ({data['project_id']})")
+        print()
+        if data["total_quoted_revenue"] is not None:
+            print(f"  Total quoted revenue:  ${data['total_quoted_revenue']:>12,.2f}")
+        if data["total_actual_cost"] is not None:
+            print(f"  Total actual cost:     ${data['total_actual_cost']:>12,.2f}")
+        if data["gross_margin"] is not None:
+            print(f"  Gross margin:          ${data['gross_margin']:>12,.2f}")
+        print(f"  Note: {data['coverage_note']}")
+        print()
+        print(
+            f"  {'Unit':<10}  {'Div':<6}  {'Division':<32}  "
+            f"{'Revenue':>12}  {'Cost':>12}  {'Margin':>12}  Flag"
+        )
+        print("  " + "-" * 100)
+        for row in data["divisions"]:
+            unit = row["unit"] or "(all)"
+            rev = f"${row['quoted_revenue']:,.2f}" if row["quoted_revenue"] is not None else "-"
+            cost = f"${row['actual_total_cost']:,.2f}" if row["actual_total_cost"] is not None else "-"
+            margin = f"${row['gross_margin']:,.2f}" if row["gross_margin"] is not None else "-"
+            print(
+                f"  {unit:<10}  {row['division_code']:<6}  {row['division_name']:<32}  "
+                f"{rev:>12}  {cost:>12}  {margin:>12}  {row['status_flag']}"
+            )
+        print()
+    return 0
+
+
 def _cmd_extract_financials_structured(args: argparse.Namespace) -> int:
     """Structured (OpenAI, classify-then-extract) financial extraction path."""
     from project_db.ai.doc_extraction import (
@@ -2612,6 +2665,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fl.add_argument("project", help="Project canonical UUID or name fragment")
     fl.set_defaults(func=cmd_fill_ledger)
+
+    dm = sub.add_parser(
+        "division-margins",
+        help="Per-(unit, division) margin pivot from the FinancialLineItem ledger "
+        "(Phase 2). Run fill-ledger first. No LLM.",
+    )
+    dm.add_argument("project", help="Project canonical UUID or name fragment")
+    dm.set_defaults(func=cmd_division_margins)
 
     ed = sub.add_parser(
         "embed-documents",

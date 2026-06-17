@@ -174,8 +174,13 @@ never invent the missing side. The confirmed/quoted toggle
   reconcile fail ($49k vs $50k, correctly flagged). 22 new tests.
 - **Phase 1c — `extras` + `job_cost` extractors:** own column maps → same
   ledger (job_cost is hard — §8).
-- **Phase 2 — `report_division_margins`** (pivot, gross/true, both-sides guard)
-  + CLI + web panel.
+- **Phase 2 — `report_division_margins`. ✅ DONE.**
+  `ai/views.py::report_division_margins`: pivots the ledger by `(unit, division_code)`,
+  applies the double-count rule (section-total wins over line-item sum), flags
+  `revenue_only | cost_only | ok | unknown_division` per row, carries `source_docs`
+  and `gross_margin_pct`. `division-margins <project>` CLI. Verified on real Rockland:
+  $242,020.56 total quoted revenue, 18 divisions correctly flagged `revenue_only`.
+  13 new tests. Web panel is deferred (Phase 5 cutover).
 - **Phase 3 — LLM populator** for unstructured supplier PDFs + `unknown` sheets.
 - **Phase 4 — status/date layering** (filename status, expiry, modifiedTime
   supersession) + the pipeline-vs-actuals split.

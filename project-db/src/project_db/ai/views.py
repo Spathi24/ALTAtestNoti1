@@ -1898,6 +1898,225 @@ def report_attention_briefing(
     }
 
 
+def report_division_margins(session: Session, project_ref: str) -> dict[str, Any]:
+    """Per-(unit, division) margin pivot from the FinancialLineItem ledger.
+
+    Revenue side = own-authored quote rows populated by ``fill-ledger``.
+    Cost side    = actual-spend rows (future LLM/job-cost extractor).
+
+    Where only one side is populated the flag column says so explicitly —
+    this is by design; the ledger is sparse until cost data arrives.
+
+    Double-count rule: for each ``(unit, division_code, side)`` group,
+    the division-total row wins over re-summing its material+labour line items;
+    markup/contingency/tax are always included (they are not duplicates).
+
+    Returns ``{"error": "..."}`` when the project_ref doesn't resolve.
+
+    Output shape::
+
+        {
+          "project": "<name>",
+          "project_id": "<uuid>",
+          "total_quoted_revenue": <float|None>,
+          "total_actual_cost":    <float|None>,
+          "gross_margin":         <float|None>,
+          "coverage_note":        "<str>",
+          "divisions": [
+            {
+              "unit":                "<str|None>",
+              "division_code":       "<str>",
+              "division_name":       "<str>",
+              "quoted_revenue":      <float|None>,
+              "actual_material_cost":<float|None>,
+              "actual_labour_cost":  <float|None>,
+              "actual_total_cost":   <float|None>,
+              "gross_margin":        <float|None>,
+              "gross_margin_pct":    <float|None>,
+              "status_flag":         "<flag>",
+              "source_docs":         [<str>, ...],
+              "warnings":            [<str>, ...],
+            },
+            ...
+          ],
+        }
+
+    ``status_flag`` values:
+        ``ok``               both sides present
+        ``revenue_only``     quote exists, no cost data yet
+        ``cost_only``        cost exists, no revenue (unexpected at this stage)
+        ``unknown_division`` division_code == '99'
+    """
+    from collections import defaultdict
+
+    from project_db.db.models.finance import FinancialLineItem
+
+    project = _resolve_project(session, project_ref)
+    if project is None:
+        return {"error": f"No project matched ref={project_ref!r}"}
+
+    rows: list[FinancialLineItem] = (
+        session.query(FinancialLineItem)
+        .filter(FinancialLineItem.project_id == project.canonical_id)
+        .all()
+    )
+    if not rows:
+        return {
+            "project": project.name,
+            "project_id": str(project.canonical_id),
+            "total_quoted_revenue": None,
+            "total_actual_cost": None,
+            "gross_margin": None,
+            "coverage_note": (
+                "No ledger rows — run 'fill-ledger' to populate quote data."
+            ),
+            "divisions": [],
+        }
+
+    # --- document name lookup for source_docs ---
+    _doc_ids = {r.document_id for r in rows if r.document_id}
+    doc_names: dict = {}
+    if _doc_ids:
+        for d in session.query(Document).filter(Document.canonical_id.in_(_doc_ids)).all():
+            doc_names[d.canonical_id] = d.name or str(d.canonical_id)
+
+    # --- double-count deduplication per (unit, division_code, side) ----------
+    # Standalone amount types are included unconditionally; total rows win over
+    # line items within the same (unit, division_code, side) bucket.
+    _STANDALONE = {"markup", "contingency", "tax", "deposit", "other"}
+    _buckets: dict = defaultdict(lambda: {"total": [], "items": [], "standalone": []})
+    for r in rows:
+        key = (r.unit, r.division_code, r.side)
+        if r.amount_type in _STANDALONE:
+            _buckets[key]["standalone"].append(r)
+        elif r.amount_type == "total":
+            _buckets[key]["total"].append(r)
+        else:
+            _buckets[key]["items"].append(r)
+
+    effective: list[FinancialLineItem] = []
+    for g in _buckets.values():
+        effective.extend(g["total"] if g["total"] else g["items"])
+        effective.extend(g["standalone"])
+
+    # --- pivot by (unit, division_code) --------------------------------------
+    _Decimal = Decimal
+    _zero = _Decimal(0)
+
+    pivot: dict = defaultdict(
+        lambda: {
+            "revenue_rows": [],
+            "cost_material": _zero,
+            "cost_labour": _zero,
+            "cost_other": _zero,
+            "doc_ids": set(),
+            "warnings": [],
+        }
+    )
+    for r in effective:
+        key = (r.unit, r.division_code)
+        bucket = pivot[key]
+        bucket["doc_ids"].add(r.document_id)
+        amount = _Decimal(str(r.amount or 0))
+        if r.side == "revenue":
+            bucket["revenue_rows"].append(amount)
+        elif r.side == "cost":
+            if r.amount_type == "material":
+                bucket["cost_material"] += amount
+            elif r.amount_type == "labour":
+                bucket["cost_labour"] += amount
+            else:
+                bucket["cost_other"] += amount
+
+    # --- build output rows ---------------------------------------------------
+    from project_db.ai.financial_divisions import division_by_code
+
+    division_rows: list[dict] = []
+    for (unit, div_code), bucket in sorted(pivot.items(), key=lambda kv: (kv[0][0] or "", kv[0][1])):
+        div = division_by_code(div_code)
+        rev_amounts: list[_Decimal] = bucket["revenue_rows"]
+        quoted_revenue: _Decimal | None = sum(rev_amounts, _zero) if rev_amounts else None
+        mat = bucket["cost_material"] or None
+        lab = bucket["cost_labour"] or None
+        oth = bucket["cost_other"] or None
+        actual_cost: _Decimal | None = None
+        if mat is not None or lab is not None or oth is not None:
+            actual_cost = (mat or _zero) + (lab or _zero) + (oth or _zero)
+
+        # Gross margin: only when both sides are present.
+        gross_margin: _Decimal | None = None
+        gross_margin_pct: float | None = None
+        if quoted_revenue is not None and actual_cost is not None:
+            gross_margin = quoted_revenue - actual_cost
+            if quoted_revenue != _zero:
+                gross_margin_pct = round(float(gross_margin / quoted_revenue * 100), 1)
+
+        # Status flag.
+        if div_code == "99":
+            flag = "unknown_division"
+        elif quoted_revenue is not None and actual_cost is not None:
+            flag = "ok"
+        elif quoted_revenue is not None:
+            flag = "revenue_only"
+        elif actual_cost is not None:
+            flag = "cost_only"
+        else:
+            flag = "unknown_division"
+
+        source_docs = sorted(
+            {doc_names.get(did, str(did)) for did in bucket["doc_ids"] if did},
+        )
+
+        division_rows.append(
+            {
+                "unit": unit,
+                "division_code": div_code,
+                "division_name": div.name,
+                "quoted_revenue": float(quoted_revenue) if quoted_revenue is not None else None,
+                "actual_material_cost": float(mat) if mat is not None else None,
+                "actual_labour_cost": float(lab) if lab is not None else None,
+                "actual_total_cost": float(actual_cost) if actual_cost is not None else None,
+                "gross_margin": float(gross_margin) if gross_margin is not None else None,
+                "gross_margin_pct": gross_margin_pct,
+                "status_flag": flag,
+                "source_docs": source_docs,
+                "warnings": bucket["warnings"],
+            }
+        )
+
+    total_revenue = sum(
+        (r["quoted_revenue"] for r in division_rows if r["quoted_revenue"] is not None),
+        0.0,
+    ) or None
+    total_cost = sum(
+        (r["actual_total_cost"] for r in division_rows if r["actual_total_cost"] is not None),
+        0.0,
+    ) or None
+    gross_total = (
+        (total_revenue or 0.0) - (total_cost or 0.0)
+        if total_revenue is not None and total_cost is not None
+        else None
+    )
+
+    revenue_only_count = sum(1 for r in division_rows if r["status_flag"] == "revenue_only")
+    coverage_note = (
+        f"{revenue_only_count} division(s) have revenue-only data — "
+        "cost data pending job-cost extractor (Phase 1c)."
+        if revenue_only_count
+        else "Both sides populated."
+    )
+
+    return {
+        "project": project.name,
+        "project_id": str(project.canonical_id),
+        "total_quoted_revenue": total_revenue,
+        "total_actual_cost": total_cost,
+        "gross_margin": gross_total,
+        "coverage_note": coverage_note,
+        "divisions": division_rows,
+    }
+
+
 REPORT_REGISTRY: dict[str, Any] = {
     "active_projects": report_active_projects,
     "deal_pipeline_value": report_deal_pipeline_value,
@@ -1909,4 +2128,5 @@ REPORT_REGISTRY: dict[str, Any] = {
     "missing_documents": report_missing_documents,
     "budget_vs_contract": report_budget_vs_contract,
     "project_financials": report_project_financials,
+    "division_margins": report_division_margins,
 }

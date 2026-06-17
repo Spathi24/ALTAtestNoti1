@@ -137,6 +137,15 @@ class TestExtractUnit:
     def test_four_digit_civic(self):
         assert _extract_unit("5768 ACCEPTED QUOTE") == "5768"
 
+    def test_leading_underscore_from_drive(self):
+        # Drive sometimes adds a leading underscore to filenames.
+        assert _extract_unit("_927 QUOTE  (NOT STARTED)") == "927"
+        assert _extract_unit("_923 ACCEPTED QUOTE") == "923"
+
+    def test_range_is_project_level(self):
+        assert _extract_unit("923-927 ACCEPTED QUOTE") is None
+        assert _extract_unit("5768-5770 QUOTE") is None
+
 
 class TestExtractStatus:
     def test_accepted(self):
