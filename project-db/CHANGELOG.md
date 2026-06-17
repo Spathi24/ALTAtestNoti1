@@ -9,6 +9,36 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-16 -- Financial redesign: division-keyed line-item ledger (skeleton)
+
+Began re-architecting the financial layer after grounding the diagnosis in BOTH
+the real Rockland documents (via Drive) and our actual code. The owner's boss
+models profit per trade/division per unit; the current `FinancialRecord` layer
+can only produce one project-wide net. Verified root cause (correcting an
+external analysis that blamed text-flattening -- our XLSX/Sheets extraction
+preserves the grid as TSV/CSV): granularity dies because (1) the extraction
+prompt says "prefer the grand total over enumerating line items", (2) the
+report collapses each (doc,direction) to one representative amount, (3) there's
+no controlled division vocabulary, no `unit`, no material/labour split, no
+proposed-vs-accepted status.
+
+Design + intentions captured in **`docs/FINANCIAL_REDESIGN.md`** (authoritative).
+Skeleton shipped:
+- `ai/financial_divisions.py`: a controlled CSI-MasterFormat division vocabulary
+  (residential subset, EN/FR aliases) + a deterministic, fail-safe classifier
+  (explicit MasterFormat code/hint wins, else bilingual keyword, else
+  `99 Unclassified`).
+- `FinancialLineItem` model + migration + indexes: the normalized ledger row
+  `(unit, division, side, amount_type, status, doc, date, evidence)`. Coexists
+  with `FinancialRecord` -- no big-bang migration; cutover after parity.
+
+Next: deterministic grid parser for our own quote/extras sheets (no LLM) →
+`report_division_margins` (per-(unit,division), gross vs true margin, both-sides
+guard) → LLM populator for unstructured supplier PDFs → status/date layering →
+cutover. 1033 tests.
+
+---
+
 ## 2026-06-16 -- The Monday task graph: dependencies, schedule engine, Gantt
 
 A deep audit (`docs/MONDAY_AUDIT.md`) found the Monday integration was

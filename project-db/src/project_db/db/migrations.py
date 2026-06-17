@@ -125,6 +125,46 @@ SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
     "is_rollup": "BOOLEAN",
 }
 
+SQLITE_FINANCIAL_LINE_ITEM_DDL = """
+CREATE TABLE financial_line_item (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    document_id TEXT,
+    unit VARCHAR,
+    division_code VARCHAR NOT NULL DEFAULT '99',
+    division_name VARCHAR,
+    side VARCHAR NOT NULL DEFAULT 'unknown',
+    amount_type VARCHAR NOT NULL DEFAULT 'total',
+    status VARCHAR NOT NULL DEFAULT 'unknown',
+    doc_role VARCHAR,
+    description TEXT,
+    amount NUMERIC(14, 2),
+    currency VARCHAR,
+    doc_date DATE,
+    quote_expiry DATE,
+    source VARCHAR,
+    quoted_excerpt TEXT,
+    confidence FLOAT,
+    amount_verified BOOLEAN,
+    extractor_version VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_FINANCIAL_LINE_ITEM_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_financial_line_item_project_id "
+    "ON financial_line_item (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_financial_line_item_document_id "
+    "ON financial_line_item (document_id)",
+    "CREATE INDEX IF NOT EXISTS ix_financial_line_item_unit_division "
+    "ON financial_line_item (project_id, unit, division_code)",
+)
+
 SQLITE_CONTRACT_OBLIGATION_DDL = """
 CREATE TABLE contract_obligation (
     canonical_id TEXT PRIMARY KEY,
@@ -329,6 +369,11 @@ def ensure_sqlite_schema(engine) -> None:
             "document_financial_status",
             SQLITE_DOCUMENT_FINANCIAL_STATUS_DDL,
         )
+        _create_table_if_missing(
+            conn, tables, "financial_line_item", SQLITE_FINANCIAL_LINE_ITEM_DDL
+        )
+        for _idx_ddl in SQLITE_FINANCIAL_LINE_ITEM_INDEXES:
+            conn.execute(text(_idx_ddl))
         _create_table_if_missing(
             conn, tables, "contract_obligation", SQLITE_CONTRACT_OBLIGATION_DDL
         )

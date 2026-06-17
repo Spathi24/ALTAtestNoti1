@@ -59,6 +59,28 @@ FINANCIAL_DOC_ROLES = {
 # reconciliation report to avoid double-counting a line item AND its total.
 FINANCIAL_RECORD_KINDS = {"total", "line_item", "tax", "deposit", "other"}
 
+# --- FinancialLineItem vocabularies (the division-keyed redesign) -----------
+# See docs/FINANCIAL_REDESIGN.md.  Same validated-with-fallback discipline:
+# unknown values coerce to the catch-all + warn, never crash.
+# Which side of the margin equation a row sits on.
+LINE_ITEM_SIDES = {"revenue", "cost", "unknown"}
+# What the amount represents -- captures the Material/Labour/Total columns of a
+# client quote AND the markup/contingency rows pulled out for "true" margin.
+LINE_ITEM_AMOUNT_TYPES = {
+    "material",
+    "labour",
+    "total",
+    "markup",
+    "contingency",
+    "tax",
+    "deposit",
+    "other",
+}
+# Lifecycle status, promoted from the filename marker + modifiedTime tiebreak.
+LINE_ITEM_STATUSES = {"accepted", "proposed", "actual", "superseded", "unknown"}
+# Which populator produced the row: deterministic grid parse vs LLM extraction.
+LINE_ITEM_SOURCES = {"grid", "llm"}
+
 
 class InvoiceStatus(str, enum.Enum):
     DRAFT = "DRAFT"
@@ -154,6 +176,61 @@ class FinancialRecord(Base, CanonicalMixin):
     # Which extraction prompt produced this (mirrors Proposal.prompt_version).
     prompt_version = Column(String, nullable=True)
     # Raw LLM item -- keep everything; promote to columns only what we query.
+    source_meta_json = Column(Text, nullable=True)
+
+
+class FinancialLineItem(Base, CanonicalMixin):
+    """One amount on the division-keyed line-item ledger (the redesign).
+
+    Differs from ``FinancialRecord`` in shape, not philosophy: it keeps
+    LINE ITEMS (not collapsed totals), tags each to a controlled CSI
+    ``division_code`` and a ``unit`` (923 / 921 / 927 / exterior), splits
+    material vs labour vs markup via ``amount_type``, and carries a
+    proposed-vs-accepted ``status``.  Reconciliation pivots by
+    ``(unit, division_code)``: margin = revenue rows - cost rows.
+
+    Coexists with ``FinancialRecord`` during transition (see
+    docs/FINANCIAL_REDESIGN.md §3); the legacy aggregate-net report is retired
+    only once this ledger reaches parity on Rockland.  Classification columns
+    are validated-with-fallback strings (unknown -> catch-all + warn), never
+    rejected -- the schema must outlive document-convention drift.
+    """
+
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=True,
+    )
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # Sub-scope within the project (923 / 921 / 927 / exterior); None = whole.
+    unit = Column(String, nullable=True)
+
+    # Controlled CSI division (ai/financial_divisions.py); denormalized name.
+    division_code = Column(String, nullable=False, default="99")
+    division_name = Column(String, nullable=True)
+
+    side = Column(String, nullable=False, default="unknown")  # revenue/cost/unknown
+    amount_type = Column(String, nullable=False, default="total")  # material/labour/...
+    status = Column(String, nullable=False, default="unknown")  # accepted/proposed/...
+
+    doc_role = Column(String, nullable=True)  # quote/estimate/invoice/change_order
+    description = Column(Text, nullable=True)
+
+    amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(String, nullable=True)
+    doc_date = Column(Date, nullable=True)
+    quote_expiry = Column(Date, nullable=True)  # "Valid Until" -- re-price if past
+
+    source = Column(String, nullable=True)  # grid / llm -- which populator
+    quoted_excerpt = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=True)
+    amount_verified = Column(Boolean, nullable=True)
+    extractor_version = Column(String, nullable=True)
     source_meta_json = Column(Text, nullable=True)
 
 

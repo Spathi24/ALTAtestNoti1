@@ -230,6 +230,17 @@ don't rely on it for ASCII-art).
 
 ## 2. THE FINANCIAL LAYER (the big new thing — read this fully)
 
+> **⚠ BEING REDESIGNED (2026-06-16).** This section describes the *current*
+> `FinancialRecord` aggregate-net layer. It is being replaced by a
+> **division-keyed line-item ledger** (`FinancialLineItem`) that reconciles
+> profit per `(unit, CSI division)` instead of one project-wide net — the model
+> the owner's boss actually uses. The skeleton (CSI division vocabulary +
+> `FinancialLineItem` model + migration) has landed; the grid parser, the
+> `report_division_margins` report, and cutover are the next phases. **Read
+> `docs/FINANCIAL_REDESIGN.md` first** — it is the authoritative intent. The
+> current layer below stays live until the new ledger reaches parity on
+> Rockland (no big-bang migration).
+
 This is ~all the recent work and is not in README/CHANGELOG yet. Everything
 lives in **`ai/financials.py`** (extraction + helpers) and
 **`ai/views.py::report_project_financials`** (the aggregation chokepoint), with

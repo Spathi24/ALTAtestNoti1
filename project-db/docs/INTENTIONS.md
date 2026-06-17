@@ -36,6 +36,16 @@
 > is the Rockland adoption trial, not more building.** Open brief item: the
 > deterministic "chaos report" (board-hygiene one-pager). See CHANGELOG
 > 2026-06-15 + HANDOFF top block.
+>
+> **STATUS 2026-06-16: the financial layer is being REDESIGNED.** Moving from
+> the `FinancialRecord` aggregate-net model to a division-keyed line-item
+> ledger (`FinancialLineItem`) that reconciles profit per `(unit, CSI
+> division)` — the model the owner's boss actually uses. Skeleton landed (CSI
+> division vocabulary + model + migration); grid parser → `report_division_
+> margins` → cutover are next. **`docs/FINANCIAL_REDESIGN.md` is the
+> authoritative intent** — read it before touching the financial layer. The
+> Monday task-graph rework (dependencies + schedule cascade + Gantt + write-
+> back, phases 1-4) also shipped this stretch — see `docs/MONDAY_AUDIT.md`.
 
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
