@@ -9,6 +9,39 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- Financial layer: SURFACED in the web UI (it was invisible)
+
+The Phase 1a-1d engine was real but you couldn't see it in the browser, for
+three concrete reasons we just fixed:
+
+1. **The Margins page was orphaned.** `/projects/<id>/margins` rendered fine but
+   NOTHING in the nav linked to it -- you'd have to type the URL. Added
+   "Margins (by trade)" + "Ledger health" links to the project nav.
+2. **The ledger was empty for 21 of 22 projects.** `fill-ledger` had only ever
+   run on Rockland. Added `fill-ledger --all` (portfolio-wide) and ran it. The
+   honest result: still only Rockland gets rows, because the deterministic
+   parser reads own-authored quote *spreadsheets* (Material/Labour/Total grids)
+   and every other project's quotes are PDFs or single-column estimates. The
+   `--audit` view names exactly which doc needs which extractor (e.g. 1455 St.
+   Mathieu: 14 docs, all unsupported_pdf_quote / simple_estimate, incl. the
+   $159k Geller PDF).
+3. **Phase 1d had no web page.** Added `/projects/<id>/ledger-health` +
+   template -- the per-document audit (parsed / reconcile-fail / unsupported /
+   safe-skip with recommended actions). This is the page that answers "why is
+   this project's margin empty?" The margins empty-state links straight to it.
+
+Live-verified: Rockland margins render $278,106 quoted revenue by division;
+ledger-health shows the two clean quotes ($126,480.91 + $66,539.65, $0.00 diff),
+two reconcile-fails, and the unsupported PDFs. 7 web tests (test_web_margins.py).
+1278 tests total.
+
+What this does NOT yet do: portfolio-wide margins. That needs PDF/LLM and
+simple-estimate extraction feeding the division ledger (the schema already has
+`source="llm"` for it) -- the next real build, and the clear unlock now that the
+gap is visible.
+
+---
+
 ## 2026-06-17 -- Project Log image ingestion (labour/time sheets) -- MVP
 
 A new ingestion path, separate from field notes and financials: daily ALTA

@@ -6,8 +6,9 @@
   <h2>{{ d.project }} &mdash; Division Margins</h2>
   <p><small>
     Deterministic grid parser — no LLM.
-    Revenue = own-authored quote sheets (<code>fill-ledger</code>).
-    Cost data pending job-cost extractor (Phase 1c).
+    Revenue = own-authored quote spreadsheets (<code>fill-ledger</code>).
+    Cost side pending the cost extractor, so margin shows once costs land.
+    <a href="/projects/{{ d.project_id }}/ledger-health">why is this empty? &rarr;</a> &middot;
     <a href="/projects/{{ d.project_id }}">&larr; back to project</a>
   </small></p>
 </hgroup>
@@ -111,9 +112,14 @@
 
 {% else %}
 <article>
-  <p>No ledger rows yet. Run:
-     <code>project_db fill-ledger "{{ d.project }}"</code>
-     (requires <code>extract-content</code> first).</p>
+  <p><strong>No division ledger for this project yet.</strong> The deterministic
+     parser reads own-authored quote <em>spreadsheets</em> (Material / Labour /
+     Total grids). This project's quotes are likely PDFs or single-column
+     estimates the grid parser can't read yet — see
+     <a href="/projects/{{ d.project_id }}/ledger-health">Ledger health</a> for
+     the per-document breakdown of what's there and what each doc needs.</p>
+  <p><small>Once populated: <code>project_db fill-ledger --all</code>
+     (after <code>extract-content</code>).</small></p>
 </article>
 {% endif %}
 

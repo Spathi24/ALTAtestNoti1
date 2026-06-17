@@ -672,12 +672,39 @@ def cmd_fill_ledger(args: argparse.Namespace) -> int:
     """
     from project_db.ai.financial_grid_populator import populate_ledger_for_project
     from project_db.ai.views import _resolve_project, report_ledger_health
+    from project_db.db.models import Project
 
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
 
     with session_scope() as s:
+        # Portfolio-wide population: fill every project's ledger in one pass.
+        if getattr(args, "all", False):
+            projects = s.query(Project).order_by(Project.name).all()
+            print(f"Populating FinancialLineItem ledger for {len(projects)} project(s) (no LLM)...")
+            grand_rows = 0
+            filled_projects = 0
+            for proj in projects:
+                batch = populate_ledger_for_project(s, proj.canonical_id)
+                if batch.total_rows:
+                    filled_projects += 1
+                    grand_rows += batch.total_rows
+                    print(
+                        f"  {proj.name!r:<40} {batch.total_rows:>4} rows "
+                        f"from {len(batch.parsed_docs)} sheet(s)"
+                    )
+            print()
+            print(
+                f"Done: {grand_rows} ledger rows across {filled_projects} "
+                f"project(s) with quote data ({len(projects) - filled_projects} had none)."
+            )
+            return 0
+
+        if not args.project:
+            print("FAIL: give a project name/UUID, or use --all", file=sys.stderr)
+            return 2
+
         project = _resolve_project(s, args.project)
         if project is None:
             print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
@@ -2813,7 +2840,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Populate the FinancialLineItem ledger from own-authored quote-sheet "
         "grids (Phase 1b, no LLM). Idempotent -- re-run after extract-content.",
     )
-    fl.add_argument("project", help="Project canonical UUID or name fragment")
+    fl.add_argument(
+        "project",
+        nargs="?",
+        help="Project canonical UUID or name fragment (omit when using --all)",
+    )
+    fl.add_argument(
+        "--all",
+        action="store_true",
+        help="Populate the ledger for EVERY project in one pass (portfolio-wide).",
+    )
     fl.add_argument(
         "--audit",
         action="store_true",

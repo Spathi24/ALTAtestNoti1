@@ -52,6 +52,17 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             raise HTTPException(status_code=404, detail="Project not found")
         return templates.TemplateResponse(request, "project_margins.html", {"d": data})
 
+    @router.get("/projects/{project_id}/ledger-health", response_class=HTMLResponse)
+    def project_ledger_health_show(
+        project_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        data = ui_views.project_ledger_health(session, project_id)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return templates.TemplateResponse(request, "project_ledger_health.html", {"d": data})
+
     @router.get("/projects/{project_id}/gantt", response_class=HTMLResponse)
     def project_gantt_show(
         project_id: str,

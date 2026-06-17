@@ -61,6 +61,23 @@ def project_division_margins(session: Session, project_id: str) -> dict[str, Any
     return rep
 
 
+def project_ledger_health(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Phase 1d ledger-health audit for one project (read-only).
+
+    Thin pass-through to ``report_ledger_health`` -- the per-document view of
+    what the deterministic parser counted, skipped, or couldn't read, with a
+    recommended action. This is the page that explains WHY a project's margins
+    are sparse (e.g. its quotes are PDFs the grid parser can't read yet).
+    Returns None when the project doesn't resolve (route renders a 404).
+    """
+    from project_db.ai.views import report_ledger_health
+
+    rep = report_ledger_health(session, project_id)
+    if isinstance(rep, dict) and rep.get("error"):
+        return None
+    return rep
+
+
 def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     """Portfolio attention briefing for the landing page.
 

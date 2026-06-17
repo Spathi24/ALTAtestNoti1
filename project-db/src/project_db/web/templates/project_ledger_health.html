@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project }} - Ledger Health{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.project }} &mdash; Ledger Health</h2>
+  <p><small>
+    What the deterministic grid parser counted, skipped, or couldn't read (no LLM).
+    This explains why the margins are what they are.
+    <a href="/projects/{{ d.project_id }}/margins">view margins &rarr;</a> &middot;
+    <a href="/projects/{{ d.project_id }}">&larr; back to project</a>
+  </small></p>
+</hgroup>
+
+<!-- Summary KPIs -->
+<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  <div class="kpi">
+    <h3>Documents</h3>
+    <div class="kpi-number">{{ d.document_count }}</div>
+  </div>
+  <div class="kpi">
+    <h3>Parsed</h3>
+    <div class="kpi-number pos">{{ d.parsed_count }}</div>
+  </div>
+  <div class="kpi">
+    <h3>Ledger rows</h3>
+    <div class="kpi-number">{{ d.rows_written }}</div>
+  </div>
+  <div class="kpi">
+    <h3>Needs review</h3>
+    <div class="kpi-number {{ 'neg' if d.needs_review_count else '' }}">{{ d.needs_review_count }}</div>
+  </div>
+  <div class="kpi">
+    <h3>Unsupported</h3>
+    <div class="kpi-number {{ 'neg' if d.unsupported_count else '' }}">{{ d.unsupported_count }}</div>
+  </div>
+</div>
+
+{% if d.documents %}
+<table>
+  <thead>
+    <tr>
+      <th>Document</th>
+      <th>Type</th>
+      <th>Status</th>
+      <th style="text-align:right">Rows</th>
+      <th style="text-align:right">Stated</th>
+      <th style="text-align:right">Div total</th>
+      <th style="text-align:right">Diff</th>
+      <th>Recommended action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in d.documents %}
+    <tr>
+      <td><small>{{ row.document }}</small></td>
+      <td><code>{{ row.classified_type }}</code></td>
+      <td>
+        {% if row.ingestion_status == "parsed" %}
+          <span class="pill pill-accepted">parsed</span>
+        {% else %}
+          <span class="pill pill-warn">{{ row.ingestion_status }}</span>
+        {% endif %}
+      </td>
+      <td style="text-align:right">{{ row.rows_written }}</td>
+      <td style="text-align:right">
+        {% if row.stated_total is not none %}${{ "{:,.2f}".format(row.stated_total) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.division_total is not none %}${{ "{:,.2f}".format(row.division_total) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.difference is not none %}
+          <span class="{{ 'neg' if row.difference|abs > 0.005 else 'pos' }}">${{ "{:,.2f}".format(row.difference) }}</span>
+        {% else %}&mdash;{% endif %}
+      </td>
+      <td>
+        {% if row.recommended_action == "ok" %}
+          <span class="pill pill-accepted">ok</span>
+        {% elif row.recommended_action in ("review_reconcile_fail", "review_parse_error") %}
+          <span class="pill pill-warn">{{ row.recommended_action }}</span>
+        {% elif row.recommended_action == "safe_nonfinancial_skip" %}
+          <span class="pill">safe skip</span>
+        {% else %}
+          <span class="pill pill-warn">{{ row.recommended_action }}</span>
+        {% endif %}
+        {% if row.ingestion_reason %}<small> ({{ row.ingestion_reason }})</small>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p><small>
+  <strong>What the actions mean:</strong>
+  <code>ok</code> parsed + reconciled &middot;
+  <code>review_reconcile_fail</code> totals don't match — check the source &middot;
+  <code>unsupported_pdf_quote</code> PDF/Word quote — needs the LLM extractor &middot;
+  <code>unsupported_simple_estimate</code> single-column estimate — needs that parser &middot;
+  <code>unsupported_job_cost</code> cost sheet — deferred &middot;
+  <code>empty_extraction</code> re-run extract-content &middot;
+  <code>safe skip</code> photo / notes — correctly ignored.
+</small></p>
+
+{% else %}
+<article>
+  <p>No text-bearing documents found for this project. Run
+     <code>project_db extract-content "{{ d.project }}"</code> first.</p>
+</article>
+{% endif %}
+
+<details style="margin-top:1rem">
+  <summary>Raw JSON</summary>
+  <pre><code>{{ d | tojson(indent=2) }}</code></pre>
+</details>
+{% endblock %}

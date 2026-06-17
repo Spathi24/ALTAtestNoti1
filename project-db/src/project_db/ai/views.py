@@ -2115,7 +2115,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     revenue_only_count = sum(1 for r in division_rows if r["status_flag"] == "revenue_only")
     coverage_note = (
         f"{revenue_only_count} division(s) have revenue-only data — "
-        "cost data pending job-cost extractor (Phase 1c)."
+        "cost side pending the actual-spend extractor."
         if revenue_only_count
         else "Both sides populated."
     )
