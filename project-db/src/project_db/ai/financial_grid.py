@@ -53,6 +53,38 @@ _QUOTE_MARKERS = ("accepted quote", "estimate", "quote")
 # docs/FINANCIAL_REDESIGN.md. ``unknown`` is left for the LLM populator.
 FINANCIAL_SHEET_TYPES = {"quote", "extras", "job_cost", "order_quantities", "unknown"}
 
+# Regex matching the '### SheetName' headers emitted by extract_xlsx.
+_SHEET_BLOCK_RE = re.compile(r"^### (.+)$", re.MULTILINE)
+
+
+def split_workbook_sheets(text: str) -> list[tuple[str | None, str]]:
+    """Split xlsx-extracted text into (sheet_name, sheet_text) pairs.
+
+    The xlsx extractor prefixes each worksheet block with '### SheetName'.
+    If no such markers are found (PDF, DOCX, CSV, or true single-sheet xlsx),
+    returns [(None, text)] so callers treat the whole text as one sheet.
+
+    The '(further sheets omitted)' pseudo-header terminates the split — no
+    content after that truncation marker is processed.
+    """
+    if not text:
+        return [(None, "")]
+    markers = list(_SHEET_BLOCK_RE.finditer(text))
+    if not markers:
+        return [(None, text)]
+
+    sheets: list[tuple[str | None, str]] = []
+    for i, m in enumerate(markers):
+        sheet_name = m.group(1).strip()
+        if sheet_name.startswith("("):    # "(further sheets omitted -- workbook too large)"
+            break
+        start = m.end()
+        end = markers[i + 1].start() if i + 1 < len(markers) else len(text)
+        sheet_text = text[start:end].strip()
+        sheets.append((sheet_name, sheet_text))
+
+    return sheets or [(None, text)]
+
 
 def classify_financial_sheet(name: str | None, text: str | None) -> str:
     """Route a financial sheet to its layout type, deterministically.

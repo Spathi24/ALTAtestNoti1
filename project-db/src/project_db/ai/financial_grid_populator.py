@@ -8,11 +8,21 @@ classifies each (quote → grid parser; extras → extras parser; everything els
 Idempotent per document: existing rows for a document are deleted and replaced
 on every call. Returns a ProjectLedgerResult with per-document outcomes.
 
+Multi-sheet routing (Phase 1c hardening):
+  For xlsx workbooks the extracted text contains '### SheetName' blocks for
+  each worksheet.  populate_ledger_for_document splits on those markers and
+  classifies each sheet independently, so a mixed workbook (e.g. Overview +
+  Measurements + ESTIMATE) correctly skips non-financial sheets and parses
+  only the ESTIMATE worksheet.  Deduplication rule: if multiple sheets in the
+  same workbook have the same type (e.g. 'ESTIMATE' + 'Copy of ESTIMATE'),
+  only the FIRST sheet of that type is parsed — subsequent sheets of the same
+  type are skipped to prevent double-counting within a single document.
+
 Phase 1c-MVP adds:
   - ingestion_status / ingestion_reason on DocLedgerResult
   - classification_method + source_doc_type on every written row
   - extras sheet routing → parse_extras_sheet + write side=revenue rows
-  - job_cost / order_quantities / unknown → skipped (ingestion_status="skipped")
+  - job_cost / order_quantities / unknown → skipped (ingestion_status=skipped)
 """
 
 from __future__ import annotations
@@ -22,7 +32,11 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from project_db.ai.financial_grid import classify_financial_sheet, parse_financial_grid
+from project_db.ai.financial_grid import (
+    classify_financial_sheet,
+    parse_financial_grid,
+    split_workbook_sheets,
+)
 from project_db.db.models.docs import Document, DocumentText
 from project_db.db.models.finance import FinancialLineItem
 
@@ -163,28 +177,30 @@ class ProjectLedgerResult:
 
 
 # ---------------------------------------------------------------------------
-# Quote-sheet persister (stable, Phase 1b)
+# Per-sheet item collectors (return items; do NOT write to DB)
 # ---------------------------------------------------------------------------
 
 
-def _write_quote_rows(
-    session,
+def _collect_quote_rows(
     document: Document,
     text: str,
     *,
     extractor_version: str,
-    result: DocLedgerResult,
-) -> None:
-    """Parse a quote grid and write FinancialLineItem rows. Mutates ``result``."""
-    from project_db.ai.financial_grid import parse_financial_grid
+) -> tuple[list[FinancialLineItem], DocLedgerResult]:
+    """Parse a quote grid and return (items, result). No DB writes."""
+    result = DocLedgerResult(
+        doc_id=str(document.canonical_id),
+        doc_name=document.name or "",
+        sheet_type="quote",
+        ingestion_status="skipped",
+        ingestion_reason="no_header",
+    )
 
     grid = parse_financial_grid(text)
     result.warnings.extend(grid.warnings)
 
     if not grid.header_found:
-        result.ingestion_status = "skipped"
-        result.ingestion_reason = "no_header"
-        return
+        return [], result
 
     unit = _extract_unit(document.name)
     status = _extract_status(document.name)
@@ -193,7 +209,7 @@ def _write_quote_rows(
         document.modified_at_source.date() if document.modified_at_source else None
     )
 
-    new_items = [
+    items = [
         FinancialLineItem(
             project_id=document.project_id,
             document_id=document.canonical_id,
@@ -213,7 +229,6 @@ def _write_quote_rows(
             amount_verified=True,
             confidence=1.0,
             extractor_version=extractor_version,
-            # Phase 1c-MVP classification provenance
             classification_method="deterministic",
             classification_confidence=1.0,
             source_doc_type="quote",
@@ -225,39 +240,29 @@ def _write_quote_rows(
         for row in grid.rows
     ]
 
-    # Atomic swap: parse first, then delete, then insert.
-    session.query(FinancialLineItem).filter(
-        FinancialLineItem.document_id == document.canonical_id
-    ).delete(synchronize_session="fetch")
-    session.add_all(new_items)
-
-    result.rows_written = len(new_items)
+    result.rows_written = len(items)
     result.grand_total = grid.grand_total
     result.division_total = grid.division_total
     if grid.grand_total is not None:
         result.reconcile_ok = grid.division_total == grid.grand_total
 
-    if result.rows_written == 0:
+    if items:
+        result.ingestion_status = "parsed"
+        result.ingestion_reason = None
+    else:
         result.ingestion_status = "skipped"
         result.ingestion_reason = "no_money"
-    else:
-        result.ingestion_status = "parsed"
+
+    return items, result
 
 
-# ---------------------------------------------------------------------------
-# Extras-sheet persister (Phase 1c-MVP)
-# ---------------------------------------------------------------------------
-
-
-def _write_extras_rows(
-    session,
+def _collect_extras_rows(
     document: Document,
     text: str,
     *,
     extractor_version: str,
-    result: DocLedgerResult,
-) -> None:
-    """Parse an EXTRAS/change-order sheet and write FinancialLineItem rows.
+) -> tuple[list[FinancialLineItem], DocLedgerResult]:
+    """Parse an EXTRAS/change-order sheet and return (items, result). No DB writes.
 
     All extras rows are side=revenue (client-facing change orders).
     Rejected/cancelled rows are excluded by the parser.
@@ -266,18 +271,24 @@ def _write_extras_rows(
     """
     from project_db.ai.extras_grid import parse_extras_sheet
 
+    result = DocLedgerResult(
+        doc_id=str(document.canonical_id),
+        doc_name=document.name or "",
+        sheet_type="extras",
+        ingestion_status="skipped",
+        ingestion_reason="no_header",
+    )
+
     extras = parse_extras_sheet(text)
     result.warnings.extend(extras.warnings)
 
     if not extras.header_found:
-        result.ingestion_status = "skipped"
-        result.ingestion_reason = "no_header"
-        return
+        return [], result
 
     if not extras.rows:
         result.ingestion_status = "skipped"
         result.ingestion_reason = "no_money"
-        return
+        return [], result
 
     unit = _extract_unit(document.name)
     currency = _extract_currency(text)
@@ -285,7 +296,7 @@ def _write_extras_rows(
         document.modified_at_source.date() if document.modified_at_source else None
     )
 
-    new_items = [
+    items = [
         FinancialLineItem(
             project_id=document.project_id,
             document_id=document.canonical_id,
@@ -294,7 +305,7 @@ def _write_extras_rows(
             division_name=row.division_name,
             side="revenue",
             amount_type="adjustment",
-            status=row.status,  # accepted | proposed | unknown
+            status=row.status,
             doc_role="change_order",
             description=f"CO#{row.co_number}: {row.description}" if row.co_number else row.description,
             amount=row.total,
@@ -305,7 +316,6 @@ def _write_extras_rows(
             amount_verified=True,
             confidence=1.0,
             extractor_version=extractor_version,
-            # Phase 1c-MVP classification provenance
             classification_method="deterministic",
             classification_confidence=1.0,
             source_doc_type="extras",
@@ -321,17 +331,13 @@ def _write_extras_rows(
         for row in extras.rows
     ]
 
-    session.query(FinancialLineItem).filter(
-        FinancialLineItem.document_id == document.canonical_id
-    ).delete(synchronize_session="fetch")
-    session.add_all(new_items)
-
-    result.rows_written = len(new_items)
+    result.rows_written = len(items)
     result.ingestion_status = "parsed"
-    # For extras, grand_total = accepted_total (the client-confirmed scope delta)
+    result.ingestion_reason = None
     result.grand_total = extras.accepted_total if extras.accepted_total else None
     result.division_total = sum((r.total for r in extras.rows), Decimal(0)) or None
-    # No pre-tax / after-tax reconciliation line in extras sheets → reconcile_ok stays None
+
+    return items, result
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +354,14 @@ def populate_ledger_for_document(
 ) -> DocLedgerResult:
     """Parse one document and upsert its FinancialLineItem rows.
 
-    Routes by sheet type (classify_financial_sheet):
+    Multi-sheet routing:
+      For xlsx workbooks (extracted text contains '### SheetName' headers),
+      each worksheet is classified independently.  Only the FIRST sheet of
+      each parseable type (quote / extras) is processed — subsequent duplicate-
+      type sheets are skipped to prevent double-counting within the document
+      (e.g. 'ESTIMATE' + 'Copy of ESTIMATE' in the same workbook).
+
+    Sheet type routing:
       quote            → deterministic grid parser (Phase 1b, stable)
       extras           → deterministic extras parser (Phase 1c-MVP)
       job_cost         → skipped (ingestion_status=skipped, reason=unsupported_type)
@@ -356,38 +369,97 @@ def populate_ledger_for_document(
       unknown          → skipped
 
     Idempotent: deletes existing rows for this document before writing new ones.
-    Never raises — unexpected exceptions are captured and returned as
-    ingestion_status=failed.
+    One atomic delete+insert per document (all parseable sheets batched together).
+    Never raises — unexpected exceptions are captured as ingestion_status=failed.
     """
     text = doc_text.extracted_text or ""
-    sheet_type = classify_financial_sheet(document.name, text)
+
+    # Split multi-sheet xlsx workbooks on '### SheetName' markers.
+    # Single-sheet or non-xlsx documents return [(None, text)].
+    raw_sheets = split_workbook_sheets(text)
+
+    if len(raw_sheets) == 1 and raw_sheets[0][0] is None:
+        # Non-xlsx document or true single sheet: classify by document name.
+        classify_pairs: list[tuple[str | None, str]] = [(document.name, raw_sheets[0][1])]
+    else:
+        # Multi-sheet xlsx: classify each sheet by its own sheet name.
+        classify_pairs = list(raw_sheets)
+
+    # Classify each sheet; collect first-of-type for parseable types.
+    seen_types: set[str] = set()
+    canonical_sheets: list[tuple[str | None, str, str]] = []   # (name, type, text)
+    all_sheet_types: list[str] = []
+
+    for classify_name, sheet_text in classify_pairs:
+        sheet_type = classify_financial_sheet(classify_name, sheet_text)
+        all_sheet_types.append(sheet_type)
+        if sheet_type in ("quote", "extras") and sheet_type not in seen_types:
+            seen_types.add(sheet_type)
+            canonical_sheets.append((classify_name, sheet_type, sheet_text))
+
+    # Determine the primary reported sheet type for the DocLedgerResult.
+    # If we found parseable sheets, use the first one; otherwise use the most
+    # common non-unknown type in the workbook (for informative skipped reasons).
+    if canonical_sheets:
+        primary_type = canonical_sheets[0][1]
+    else:
+        counts: dict[str, int] = {}
+        for t in all_sheet_types:
+            counts[t] = counts.get(t, 0) + 1
+        order = ["job_cost", "order_quantities", "extras", "quote", "unknown"]
+        primary_type = next((t for t in order if t in counts), "unknown")
 
     result = DocLedgerResult(
         doc_id=str(document.canonical_id),
         doc_name=document.name or "",
-        sheet_type=sheet_type,
+        sheet_type=primary_type,
         ingestion_status="skipped",
         ingestion_reason="unsupported_type",
     )
 
+    if not canonical_sheets:
+        return result
+
     try:
-        if sheet_type == "quote":
-            _write_quote_rows(
-                session,
-                document,
-                text,
-                extractor_version=extractor_version,
-                result=result,
-            )
-        elif sheet_type == "extras":
-            _write_extras_rows(
-                session,
-                document,
-                text,
-                extractor_version=EXTRACTOR_VERSION_EXTRAS,
-                result=result,
-            )
-        # job_cost, order_quantities, unknown → remain skipped/unsupported_type
+        all_new_items: list[FinancialLineItem] = []
+
+        for _sheet_name, sheet_type, sheet_text in canonical_sheets:
+            if sheet_type == "quote":
+                items, sheet_res = _collect_quote_rows(
+                    document, sheet_text, extractor_version=extractor_version
+                )
+            elif sheet_type == "extras":
+                items, sheet_res = _collect_extras_rows(
+                    document, sheet_text, extractor_version=EXTRACTOR_VERSION_EXTRAS
+                )
+            else:
+                continue
+
+            result.warnings.extend(sheet_res.warnings)
+
+            if not sheet_res.skipped:
+                all_new_items.extend(items)
+                result.rows_written += sheet_res.rows_written
+                if result.ingestion_status != "parsed":
+                    # Carry reconciliation info from the first successfully parsed sheet.
+                    result.ingestion_status = "parsed"
+                    result.ingestion_reason = None
+                    result.grand_total = sheet_res.grand_total
+                    result.division_total = sheet_res.division_total
+                    result.reconcile_ok = sheet_res.reconcile_ok
+            else:
+                # Propagate skip reason only if nothing has succeeded yet.
+                if result.ingestion_status != "parsed":
+                    result.ingestion_status = sheet_res.ingestion_status
+                    result.ingestion_reason = sheet_res.ingestion_reason
+
+        # One atomic swap for all sheets of this document.
+        session.query(FinancialLineItem).filter(
+            FinancialLineItem.document_id == document.canonical_id
+        ).delete(synchronize_session="fetch")
+        if all_new_items:
+            session.add_all(all_new_items)
+
     except Exception as exc:  # noqa: BLE001
         result.ingestion_status = "failed"
         result.ingestion_reason = "parse_error"
