@@ -2316,6 +2316,136 @@ def report_ledger_health(session: Session, project_ref: str) -> dict[str, Any]:
     }
 
 
+def report_project_log_hours(session: Session, project_ref: str) -> dict[str, Any]:
+    """Deterministic labour rollup from ProjectLogEntry rows (no LLM).
+
+    Groups hours by employee -- resolved Workers are grouped by worker; unresolved
+    handwritten names are grouped by their raw text (so the report is useful both
+    before and after name resolution). Also lists each submission's status so a
+    PM can see what was parsed/quarantined/skipped.
+
+    Returns ``{"error": "..."}`` when the project_ref doesn't resolve.
+    """
+    from collections import defaultdict
+
+    from project_db.db.models.project_log import ProjectLogEntry, ProjectLogSubmission
+
+    project = _resolve_project(session, project_ref)
+    if project is None:
+        return {"error": f"No project matched ref={project_ref!r}"}
+
+    entries: list[ProjectLogEntry] = (
+        session.query(ProjectLogEntry)
+        .filter(ProjectLogEntry.project_id == project.canonical_id)
+        .all()
+    )
+    submissions: list[ProjectLogSubmission] = (
+        session.query(ProjectLogSubmission)
+        .filter(ProjectLogSubmission.project_id == project.canonical_id)
+        .all()
+    )
+
+    _zero = Decimal(0)
+    groups: dict[tuple, dict[str, Any]] = defaultdict(
+        lambda: {
+            "employee_id": None,
+            "name": None,
+            "resolved": False,
+            "entries": 0,
+            "dates": set(),
+            "reported": _zero,
+            "has_reported": False,
+            "computed": _zero,
+            "has_computed": False,
+            "mismatches": 0,
+        }
+    )
+
+    total_reported = _zero
+    total_computed = _zero
+    mismatch_count = 0
+    unresolved_entries = 0
+
+    for e in entries:
+        if e.employee_id is not None:
+            key = ("worker", str(e.employee_id))
+        else:
+            key = ("raw", (e.employee_name_raw or "(unnamed)").strip().lower())
+        g = groups[key]
+        g["entries"] += 1
+        if e.employee_id is not None:
+            g["employee_id"] = str(e.employee_id)
+            g["resolved"] = True
+        if g["name"] is None:
+            g["name"] = e.employee_name_raw or "(unnamed)"
+        if e.work_date is not None:
+            g["dates"].add(e.work_date)
+        if e.total_hours_reported is not None:
+            amt = Decimal(str(e.total_hours_reported))
+            g["reported"] += amt
+            g["has_reported"] = True
+            total_reported += amt
+        if e.total_hours_computed is not None:
+            amt = Decimal(str(e.total_hours_computed))
+            g["computed"] += amt
+            g["has_computed"] = True
+            total_computed += amt
+        if e.hours_mismatch:
+            g["mismatches"] += 1
+            mismatch_count += 1
+        if e.employee_id is None:
+            unresolved_entries += 1
+
+    employees: list[dict[str, Any]] = []
+    for g in groups.values():
+        dates = sorted(g["dates"])
+        employees.append(
+            {
+                "employee_id": g["employee_id"],
+                "name": g["name"],
+                "resolved": g["resolved"],
+                "entries": g["entries"],
+                "days": len(dates),
+                "reported_hours": float(g["reported"]) if g["has_reported"] else None,
+                "computed_hours": float(g["computed"]) if g["has_computed"] else None,
+                "mismatches": g["mismatches"],
+                "first_seen": dates[0].isoformat() if dates else None,
+                "last_seen": dates[-1].isoformat() if dates else None,
+            }
+        )
+    # Most hours first; unresolved/None hours sink to the bottom.
+    employees.sort(key=lambda r: (r["reported_hours"] is None, -(r["reported_hours"] or 0.0)))
+
+    submission_rows = sorted(
+        (
+            {
+                "document": s.source_attachment_filename or str(s.canonical_id),
+                "status": s.ingestion_status,
+                "reason": s.ingestion_reason,
+                "site_raw": s.site_name_raw,
+                "site_resolved": s.site_name_resolved,
+                "received_at": s.received_at.isoformat() if s.received_at else None,
+                "classification_confidence": s.classification_confidence,
+            }
+            for s in submissions
+        ),
+        key=lambda d: d["received_at"] or "",
+    )
+
+    return {
+        "project": project.name,
+        "project_id": str(project.canonical_id),
+        "submission_count": len(submissions),
+        "entry_count": len(entries),
+        "total_reported_hours": float(total_reported) if entries else None,
+        "total_computed_hours": float(total_computed) if entries else None,
+        "mismatch_count": mismatch_count,
+        "unresolved_entry_count": unresolved_entries,
+        "employees": employees,
+        "submissions": submission_rows,
+    }
+
+
 REPORT_REGISTRY: dict[str, Any] = {
     "active_projects": report_active_projects,
     "deal_pipeline_value": report_deal_pipeline_value,

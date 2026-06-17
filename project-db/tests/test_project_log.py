@@ -518,3 +518,66 @@ class TestEmailBatch:
             db_session, ex, ["/tmp/photo.jpg"], source_email_message_id="msg1"
         )
         assert batch.any_project_log is False
+
+
+# ---------------------------------------------------------------------------
+# report_project_log_hours
+# ---------------------------------------------------------------------------
+
+
+class TestReportHours:
+    def test_empty_project(self, db_session):
+        from project_db.ai.views import report_project_log_hours
+
+        _seed_project(db_session)
+        rep = report_project_log_hours(db_session, "923-927 Rockland")
+        assert rep["entry_count"] == 0
+        assert rep["employees"] == []
+
+    def test_bad_ref(self, db_session):
+        from project_db.ai.views import report_project_log_hours
+
+        assert "error" in report_project_log_hours(db_session, "nope xyz")
+
+    def test_grouping_and_totals(self, db_session):
+        from project_db.ai.views import report_project_log_hours
+
+        _seed_project(db_session)
+        # Worker "Sam" exists (exact); "Mike" stays unresolved.
+        w = Worker(canonical_id=uuid.uuid4(), display_name="Sam", active=True)
+        db_session.add(w)
+        db_session.flush()
+        ex = MockProjectLogExtractor([_pl_response(), _pl_response()])
+        # Two sheets, distinct filenames -> two submissions, 4 entries total.
+        ingest_project_log(db_session, ex, image_path="/tmp/d1.jpg", source_email_message_id="m1")
+        ingest_project_log(db_session, ex, image_path="/tmp/d2.jpg", source_email_message_id="m2")
+        rep = report_project_log_hours(db_session, "923-927 Rockland")
+        assert rep["submission_count"] == 2
+        assert rep["entry_count"] == 4
+        names = {e["name"]: e for e in rep["employees"]}
+        # Sam resolved (grouped by worker across both sheets): 2 entries.
+        assert names["Sam"]["resolved"] is True
+        assert names["Sam"]["entries"] == 2
+        # Mike unresolved but grouped by raw name across both sheets: 2 entries.
+        assert names["Mike"]["resolved"] is False
+        assert names["Mike"]["entries"] == 2
+        # Sam computes 8h x2 = 16; reported 9h x2 = 18 (mismatch each).
+        assert names["Sam"]["reported_hours"] == pytest.approx(18.0)
+        assert names["Sam"]["mismatches"] == 2
+        assert rep["mismatch_count"] == 2
+        assert rep["unresolved_entry_count"] == 2
+        # Days collapse to one distinct work_date.
+        assert names["Sam"]["days"] == 1
+
+    def test_submissions_listed_with_status(self, db_session):
+        from project_db.ai.views import report_project_log_hours
+
+        _seed_project(db_session)
+        ex = MockProjectLogExtractor([_pl_response()])
+        ingest_project_log(
+            db_session, ex, image_path="/tmp/sheet.jpg", source_email_message_id="m1"
+        )
+        rep = report_project_log_hours(db_session, "923-927 Rockland")
+        assert len(rep["submissions"]) == 1
+        assert rep["submissions"][0]["status"] == "parsed"
+        assert rep["submissions"][0]["document"] == "sheet.jpg"

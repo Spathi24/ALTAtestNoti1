@@ -786,6 +786,70 @@ def cmd_division_margins(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_project_logs(args: argparse.Namespace) -> int:
+    """Show captured Project Log labour hours (by employee) + submission status.
+
+    Deterministic rollup over ProjectLogEntry / ProjectLogSubmission. No LLM.
+    """
+    from project_db.ai.views import _resolve_project, report_project_log_hours
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        data = report_project_log_hours(s, args.project)
+        if "error" in data:
+            print(f"FAIL: {data['error']}", file=sys.stderr)
+            return 2
+
+        print(f"Project: {data['project']}  ({data['project_id']})")
+        print(
+            f"  {data['submission_count']} sheet(s)  |  {data['entry_count']} time-log row(s)  "
+            f"|  mismatches: {data['mismatch_count']}  "
+            f"|  unresolved names: {data['unresolved_entry_count']}"
+        )
+        if data["total_reported_hours"] is not None:
+            print(
+                f"  Total hours -- reported: {data['total_reported_hours']:.2f}  "
+                f"computed: {data['total_computed_hours']:.2f}"
+            )
+        print()
+        if data["employees"]:
+            print(
+                f"  {'Employee':<24}  {'Res':<3}  {'Days':>4}  {'Rows':>4}  "
+                f"{'Reported':>9}  {'Computed':>9}  {'Mism':>4}  First..Last"
+            )
+            print("  " + "-" * 92)
+            for r in data["employees"]:
+                rep = f"{r['reported_hours']:.2f}" if r["reported_hours"] is not None else "-"
+                comp = f"{r['computed_hours']:.2f}" if r["computed_hours"] is not None else "-"
+                span = f"{r['first_seen']}..{r['last_seen']}" if r["first_seen"] else "-"
+                print(
+                    f"  {(r['name'] or '?')[:24]:<24}  {'yes' if r['resolved'] else 'no ':<3}  "
+                    f"{r['days']:>4}  {r['entries']:>4}  {rep:>9}  {comp:>9}  "
+                    f"{r['mismatches']:>4}  {span}"
+                )
+        else:
+            print("  (no time-log rows yet -- send an ALTA PROJECT LOG sheet to the mailbox)")
+        print()
+        if data["submissions"]:
+            print("  Submitted sheets:")
+            for sub_row in data["submissions"]:
+                site = sub_row["site_resolved"] or sub_row["site_raw"] or "?"
+                reason = f" ({sub_row['reason']})" if sub_row["reason"] else ""
+                print(
+                    f"    [{sub_row['status']}{reason}]  {sub_row['document']}  "
+                    f"site={site}  {sub_row['received_at'] or ''}"
+                )
+    return 0
+
+
 def _cmd_extract_financials_structured(args: argparse.Namespace) -> int:
     """Structured (OpenAI, classify-then-extract) financial extraction path."""
     from project_db.ai.doc_extraction import (
@@ -1818,6 +1882,21 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
 
+    # Project-log route (best-effort): an attachment that is an ALTA PROJECT LOG
+    # is classified + extracted here instead of going through field notes.
+    # Disable with --no-project-logs.  Same OPENAI_API_KEY as the field-note one.
+    project_log_extractor = None
+    if not getattr(args, "no_project_logs", False):
+        from project_db.ai.project_log_extraction import (
+            OpenAIProjectLogExtractor,
+            ProjectLogExtractorError,
+        )
+
+        try:
+            project_log_extractor = OpenAIProjectLogExtractor()
+        except ProjectLogExtractorError as exc:
+            print(f"[poll-mail] project-log route disabled: {exc}", file=sys.stderr)
+
     try:
         mailbox = os.environ.get("GMAIL_MAILBOX_ADDRESS", "")
         poller = GmailPoller(mailbox_address=mailbox or None)
@@ -1827,6 +1906,9 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
         return 2
 
     print(f"[poll-mail] mailbox: {mailbox or '(all unprocessed)'}")
+    print(
+        "[poll-mail] project-log route: " + ("ON" if project_log_extractor is not None else "OFF")
+    )
     print("[poll-mail] polling...")
 
     from project_db.ai.embeddings import get_optional_embedding_provider
@@ -1834,7 +1916,13 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
     embed_provider = get_optional_embedding_provider()
 
     with session_scope() as s:
-        batch = poll_mailbox(s, extractor, poller, embedding_provider=embed_provider)
+        batch = poll_mailbox(
+            s,
+            extractor,
+            poller,
+            embedding_provider=embed_provider,
+            project_log_extractor=project_log_extractor,
+        )
 
     print(
         f"[poll-mail] done: {batch.total_seen} seen, "
@@ -1849,6 +1937,13 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
     if total_proposals:
         print(f"  -> {total_proposals} proposal(s) created (PENDING review)")
         print("  Review with: project_db proposals list --status pending")
+    pl_entries = sum(b.total_entries for b in batch.project_log_batches)
+    if batch.project_log_batches:
+        print(
+            f"  -> {len(batch.project_log_batches)} project-log sheet email(s), "
+            f"{pl_entries} time-log row(s) captured"
+        )
+        print("  Review with: project_db project-logs <project>")
     return 0 if batch.ok else 1
 
 
@@ -2794,7 +2889,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Poll the Gmail fieldnotes mailbox; ingest new notes as PENDING Proposals. "
         "Safe to re-run (Message-ID dedup). Needs OPENAI_API_KEY + gmail-auth done.",
     )
+    poll.add_argument(
+        "--no-project-logs",
+        action="store_true",
+        help="Disable the project-log image route (process every attachment as a "
+        "field note). By default ALTA PROJECT LOG sheets are classified separately.",
+    )
     poll.set_defaults(func=cmd_poll_mail)
+
+    pl = sub.add_parser(
+        "project-logs",
+        help="Show captured Project Log labour hours for a project (by employee) "
+        "plus each submitted sheet's status. No LLM.",
+    )
+    pl.add_argument("project", help="Project canonical UUID or name fragment")
+    pl.set_defaults(func=cmd_project_logs)
 
     retry = sub.add_parser(
         "retry-quarantined",
