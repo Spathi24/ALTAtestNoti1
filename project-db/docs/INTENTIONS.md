@@ -46,6 +46,26 @@
 > authoritative intent** — read it before touching the financial layer. The
 > Monday task-graph rework (dependencies + schedule cascade + Gantt + write-
 > back, phases 1-4) also shipped this stretch — see `docs/MONDAY_AUDIT.md`.
+>
+> **STATUS 2026-06-17: financial layer Phase 1a through 1c-hardening DONE.**
+> The extras parser (`extras_grid.py`, extras-v1), classification metadata on
+> all rows, `ingestion_status`/`ingestion_reason` on `DocLedgerResult`, and
+> multi-sheet workbook routing (`split_workbook_sheets`) are all live. The
+> populator now classifies each xlsx worksheet independently, deduplicates
+> same-type sheets (first wins), and commits one atomic batch per document.
+> An extras→quote fallback handles mislabeled documents (e.g. "EXTRAS+ROOF"
+> with a quote grid body). Real-corpus verification on Rockland: 4 docs parsed,
+> 133 rows, $278k total quoted revenue; St-Laurent correctly writes 0 rows
+> (empty PDFs, unsupported simple-estimate format, meeting notes — all safely
+> skipped). 1170 tests. **The financial layer is now safe and routing-correct.**
+> What is NOT yet solved: cost-side truth, simple estimates (single-column
+> format), PDF/Word extraction, version survivorship, status/date layering,
+> PM-facing review workflow, FinancialRecord cutover. **Next is Phase 1d:
+> Ledger Health / Review Surface** — an audit layer that makes the parser's
+> decisions visible and lets a PM understand what was counted and why. See
+> `FINANCIAL_REDESIGN.md §9` for the full Phase 1d spec. Do NOT build more
+> parsers (job_cost, Word/PDF, LLM ingestion) until Phase 1d exists and an
+> eval harness (§8) is in place.
 
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
@@ -475,33 +495,76 @@ question). Small, high-adoption-leverage.
 
 ---
 
-## Sequencing (updated 2026-06-12 — the field-note MVP leads)
+## Sequencing (updated 2026-06-17)
 
 **Done (2026-06-09):** §1 Commitments/Money-at-Risk (structured + live), §2
 Value-caught tally, §3 money one-liner. **Decided (2026-06-12):** both Honest
 Tensions (pilot = the one-PM trial; mission = active adaptation).
+**Done (2026-06-15):** §0 field-note MVP — all three wins (text/email/photo),
+composite task scoring, Monday write-back. 958 → 1170 tests.
+**Done (2026-06-17):** financial layer Phase 1a–1c-hardening — extras parser,
+multi-sheet routing, ingestion metadata, extras→quote fallback. Rockland corpus:
+4 docs / 133 rows / $278k revenue; St-Laurent: 0 rows (all skips are correct).
 
 **Now, in order:**
-1. **§0 field-note MVP per `FIELD_NOTES_BRIEF.md`** — Win 1 (channel-agnostic
-   core) → Win 2 (email intake) → Win 3 (photos). Each win ships complete
-   (code + tests + live demo path) before the next starts. The **chaos
-   report** (1 hour, deterministic) can land anytime. This IS the adoption
-   trial — the Rockland PM's reaction after Win 1, not more features, drives
-   what comes next.
-2. **§8 eval harness, split honestly:** the *field-note* gold set is built
-   into the MVP (freeze the first ~5 real notes + labels, per the brief). The
-   *financial-extraction* gold set (1455 Geller $159,120; 6554 PSA $1.5M
-   should-capture; 5768 $8k settlement) is **still owed** — required before
-   the next financial prompt/model change, lower urgency now that the whole
-   portfolio was re-extracted on the current model and spot-audited
-   (2026-06-10 clean-slate rebuild).
-3. **Financial trust = §6 (dedup) + §7 (acquisition model) + §9 (bootstrap the
-   confirmed default).** Root-caused, not fires (the money-line already
-   refuses to present inflated totals as truth). Sequence behind the MVP wins;
-   pull forward only if financial trust blocks the pilot PM's confidence.
-4. **§3 usability wins** + UX/robustness backlog — opportunistic.
-5. **§5 acquisition intelligence** — separate app, shared data; when the lead
-   feed is stable AND the ops brain is in daily PM use.
+
+1. **Rockland adoption trial (the one-PM test).** No new features until the
+   Rockland PM has used the field-note + margin system and given feedback.
+   Building beyond the three wins before feedback = borrowing against this
+   decision.
+
+2. **Financial Phase 1d — Ledger Health / Review Surface
+   (`FINANCIAL_REDESIGN.md §9`).** `fill-ledger --audit` / `report_ledger_health`:
+   per-document table of classified_type / ingestion_status / ingestion_reason /
+   rows_written / reconcile_ok / recommended_action. Makes the parser's
+   decisions visible so a PM can understand what was counted and why.
+   Build trigger: when a PM asks "why is this quote missing?"
+   **Prerequisite to any further financial parser work.**
+
+3. **§8 eval harness for financial extraction.** Gold set (1455 Geller $159,120;
+   6554 PSA $1.5M should-capture; 5768 $8k settlement). Required BEFORE any
+   financial prompt/model change or new extractor (job_cost, Word/PDF, LLM).
+
+4. **Financial Phase 2 — status/date layering (`FINANCIAL_REDESIGN.md §6`).**
+   Proposed-vs-accepted filter on `report_division_margins`. Filename status
+   already extracted; report modes (`--confirmed`, `--pipeline`) are next.
+   Also: quote version survivorship (accepted > proposed, newer date wins).
+
+5. **Financial Phase 3 — simple_estimate_grid.py.** Single-column
+   `Description | Notes | Total Amount` layout (used by Common Area.xlsx
+   ESTIMATE). Only build once Phase 1d audit confirms these docs matter and
+   the eval harness can catch regressions.
+
+6. **Financial Phase 4 — job_cost actual-spend parser.** ONLY reads the
+   `Phase | Cost | Supplier | Date` block; ignores budget summaries, receivable
+   projections, "Jair quoted" values. Requires: Phase 1d (audit), eval harness,
+   and a clear business case that cost-side coverage matters to a PM's decision.
+   The most dangerous parser to rush — see `FINANCIAL_REDESIGN.md §10`.
+
+7. **Financial Phase 5 — PDF/Word/LLM ingestion.** Gated behind eval harness.
+   LLM classifies/maps; deterministic code validates; ledger writes only
+   validated facts. No prompt/model change without the gold set.
+
+8. **Financial Phase 6 — FinancialRecord cutover.** Point the UI/briefing money
+   story at `report_division_margins`; retire `FinancialRecord` aggregate-net
+   path once parity is proven. No big-bang migration.
+
+9. **§6 cross-document quote dedup.** Root-caused (entity resolution + version
+   survivorship). Pull forward if financial trust blocks adoption.
+
+10. **§3 usability wins** + UX/robustness backlog — opportunistic alongside above.
+
+11. **§5 acquisition intelligence** — separate app, shared data; when the lead
+    feed is stable AND the ops brain is in daily PM use.
+
+**Standing rules for the financial layer:**
+- No new parser (job_cost, Word, LLM) without Phase 1d audit + §8 eval harness.
+- No cost-side rows until `job_cost` actual-spend region detection is built and
+  validated against known spend amounts.
+- No LLM financial ingestion without eval. LLM can classify/map; deterministic
+  code validates and computes; ledger writes only validated facts.
+- Dedup rule is still "first sheet wins" (safety heuristic); do not treat it as
+  survivorship logic until Phase 2 status layering lands.
 
 The test for all of it (rule N8): *does a PM/owner open ALTA sooner, and can you
 point at dollars it saved?* If an idea fails that, it doesn't ship.
