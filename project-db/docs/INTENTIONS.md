@@ -67,6 +67,17 @@
 > parsers (job_cost, Word/PDF, LLM ingestion) until Phase 1d exists and an
 > eval harness (§8) is in place.
 
+> **STATUS 2026-06-17 (b): Project Log image ingestion QUEUED behind Phase 1d.**
+> A new adoption-driven feature — daily ALTA Project Log labour/time sheets
+> emailed in as images/PDF, classified separately from field notes, extracted
+> into structured `ProjectLogSubmission` / `ProjectLogEntry` rows (reusing the
+> existing `Worker` roster for employee linkage), validated deterministically,
+> written to the canonical DB, then mirrored to a Drive CSV/Excel that the
+> scanner skips. ~70% of the plumbing already exists (email_intake, the vision
+> chain in field_note_extraction, Worker, dedup). Full spec:
+> `docs/PROJECT_LOG_INGESTION.md`. Decided 2026-06-17: build it **after** Phase
+> 1d. It is NOT a field note and NOT a financial document.
+
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,
 usable, and informative, not just clever. Every intention below is judged by
