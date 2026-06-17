@@ -89,18 +89,53 @@ validated-with-fallback strings (never crash), exactly like `FinancialRecord`.
 row when present; else sum material+labour line items; never both. (Same idea as
 `_representative_amount`, but scoped per-division instead of per-document.)
 
-## 4. Two populators, one ledger
+## 4. Classify → route → extract → one ledger
 
-- **Deterministic grid parser** (`ai/financial_grid.py`, NO LLM) for OUR
-  structured sheets (ACCEPTED QUOTE / EXTRAS / JOB COST): read the CSV/TSV cell
-  grid, detect the header (`Description | Material | Labour | Total`), read
-  amounts by **column position**, classify each row `division_header` (subtotal
-  in Total) vs `line_item` (material/labour), map the Master-Format column to a
-  division. This is the highest-value, highest-certainty path.
+**There is NOT one parser.** The corpus has structurally different documents —
+verified against the real St-Laurent / Rockland data:
+
+| Type | Real example | Layout | Extractor |
+|---|---|---|---|
+| `quote` | 923 ACCEPTED QUOTE, 927 QUOTE | `Description | MasterFormat | Material | Labour | Total`, ESTIMATE banner | **grid parser (built)** |
+| `extras` | EXTRAS ACCEPTED | change-order table (`CO# | Item | Cost/Unit | Applied | Total | Status`) | future |
+| `job_cost` | JOB COSTING (5768) | "MATERIAL SPENDING" `Phase | Cost | Supplier`, + budget/prediction/**receivable** side-blocks | future (hard — see §8) |
+| `order_quantities` | Door Order sheet | procurement qty table, no money | skip/ignore |
+| `unknown` | Contractors + Material | mixed | LLM populator |
+
+So routing is mandatory and comes FIRST: `classify_financial_sheet(name, text)`
+(deterministic — filename + the top-of-sheet banner) picks the type; only
+`quote` is handed to the grid parser today. **This is load-bearing**: applying
+the quote parser blindly to JOB COSTING scraped 22 garbage rows (it pulled a
+`$322,500 "Receivable total"` projection as a line item). The grid parser now
+also self-guards (its header check requires the quote's `Total Amount` column),
+so a mis-route degrades to "no rows", never garbage.
+
+- **Deterministic grid parser** (`ai/financial_grid.py`, NO LLM): reads the
+  CSV **or TSV** cell grid (delimiter sniffed — Google-Sheet export is comma,
+  xlsx export via `extract_xlsx` is tab), finds the header below the metadata
+  block, reads amounts by **column position**, classifies each row
+  `division_total` (section subtotal) vs `line_item` (material/labour, inherits
+  its section's division), maps the MasterFormat column to a CSI division.
+  Reconciles the real 923 quote to **$66,539.65** to the penny.
 - **LLM classify-then-extract** (extend `ai/doc_extraction.py`) ONLY for
   unstructured third-party PDFs (supplier quotes/invoices, e.g. Superior
-  Windows): one job — classify division(s), side, doc_role, line total, with an
-  evidence quote (N2). Reuses the existing structured-output discipline.
+  Windows) and `unknown` sheets: classify division(s), side, doc_role, line
+  total, with an evidence quote (N2). Reuses the existing structured-output
+  discipline.
+- The `extras` and `job_cost` layouts get their own deterministic extractors
+  later (own column maps), all writing the SAME `FinancialLineItem` ledger.
+
+### Tooling stance (deliberate)
+
+The architecture above (classify → route → canonical schema → validate) is the
+right one. But we **keep it in-house** and add NO new dependencies — per
+STRATEGY's "no new tech until SQL limits bite", and because we already have the
+equivalents: **SQLite** (consolidated store — not DuckDB), **openpyxl** (xlsx —
+covers all 26 in the corpus; not calamine/pyxlsb/pandas), **pymupdf** (PDF),
+the **string-vocab-with-fallback + pytest + the one report chokepoint**
+(validation — not Great Expectations / dbt / Pydantic), and
+**`FuzzyFieldMatcher`** (supplier dedup — not rapidfuzz). Azure Document
+Intelligence is a new paid cloud connector, explicitly deferred.
 
 ## 5. Reconciliation — `report_division_margins`
 
@@ -122,13 +157,22 @@ never invent the missing side. The confirmed/quoted toggle
 
 ## 7. Phased plan
 
-- **Phase 0 — skeleton (IN PROGRESS):** `financial_divisions.py` (vocab +
-  classifier) + `FinancialLineItem` model + migration + tests. ← here
-- **Phase 1 — deterministic grid parser** for our own quote/extras/job-cost
-  sheets → ledger rows; tested on the real 923 quote ($66,539.65 to the penny).
+- **Phase 0 — skeleton. ✅ DONE.** `financial_divisions.py` (CSI vocab +
+  classifier) + `FinancialLineItem` model + migration + tests.
+- **Phase 1a — sheet classifier + quote grid parser. ✅ DONE.**
+  `financial_grid.py`: `classify_financial_sheet` (quote/extras/job_cost/
+  order_quantities/unknown) + the delimiter-sniffing quote parser. Verified on
+  real data — 923 quote reconciles to $66,539.65; JOB COSTING routes to
+  `job_cost` and the parser declines it (no garbage). Pure (text → rows); NOT
+  yet wired to a persister.
+- **Phase 1b — persister + CLI:** map parsed rows → `FinancialLineItem`
+  (assign side/unit/status from doc context) for `quote` sheets; a CLI to run it
+  over a project. Cross-check the emitted ledger reconciles to the stated total.
+- **Phase 1c — `extras` + `job_cost` extractors:** own column maps → same
+  ledger (job_cost is hard — §8).
 - **Phase 2 — `report_division_margins`** (pivot, gross/true, both-sides guard)
-  + a CLI + a web panel.
-- **Phase 3 — LLM populator** for unstructured supplier PDFs (Superior Windows).
+  + CLI + web panel.
+- **Phase 3 — LLM populator** for unstructured supplier PDFs + `unknown` sheets.
 - **Phase 4 — status/date layering** (filename status, expiry, modifiedTime
   supersession) + the pipeline-vs-actuals split.
 - **Phase 5 — cutover:** point the UI/briefing money story at the new report;
@@ -142,3 +186,11 @@ never invent the missing side. The confirmed/quoted toggle
 - gross vs true margin is a real decision — report **both**, don't pick silently.
 - Per-unit, not per-project, division keying is load-bearing (windows cost ⇒
   exterior).
+- **`job_cost` / "MATERIAL SPENDING" sheets are genuinely hard** and must not be
+  parsed naively. JOB COSTING (5768) interleaves actual spend (`Phase | Cost |
+  Supplier`) with budget columns, per-unit predictions, and **receivables**
+  ($322k "Receivable total", $78k–$117k "Jair quoted") — these are projections,
+  NOT costs. A correct extractor reads ONLY the actual-spend block; until that's
+  built, these route to `job_cost` and are left for a dedicated extractor /
+  human, never scraped. (This is exactly the regression that justified
+  classify-first.)
