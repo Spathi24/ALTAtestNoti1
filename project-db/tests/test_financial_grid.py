@@ -194,3 +194,40 @@ class TestFallback:
         r = parse_financial_grid("")
         assert r.header_found is False
         assert r.warnings
+
+
+class TestDivisionAccentAndPlural:
+    """classify_division must survive Quebec-French accents and plurals -- the
+    alias list is unaccented and was inconsistent about plurals, silently
+    dropping 'béton' / 'tuiles' to div 99 before the fix."""
+
+    def test_accented_french_descriptions(self):
+        from project_db.ai.financial_divisions import classify_division
+
+        assert classify_division("béton de fondation").code == "03"  # concrete
+        assert classify_division("fenêtre à remplacer").code == "08"  # window
+        assert classify_division("électricité additionnelle").code == "26"
+        assert classify_division("réparation de plomberie").code == "22"
+
+    def test_unaccented_still_matches(self):
+        # Folding accents must be a no-op for already-ASCII text.
+        from project_db.ai.financial_divisions import classify_division
+
+        assert classify_division("concrete slab").code == "03"
+        assert classify_division("electrical panel").code == "26"
+
+    def test_french_and_english_plurals(self):
+        from project_db.ai.financial_divisions import classify_division
+
+        # 'tuiles' (FR plural of tile) was the concrete miss that motivated this.
+        assert classify_division("tuiles").code == "09"
+        assert classify_division("Remplacement de tuiles").code == "09"
+        assert classify_division("doors").code == "08"
+        assert classify_division("beams").code == "05"
+
+    def test_no_false_positive_from_optional_s(self):
+        from project_db.ai.financial_divisions import classify_division
+
+        # The optional trailing 's' must not invent matches for non-trade text.
+        assert classify_division("Miscellaneous work").code == "99"
+        assert classify_division("general note").code in {"01", "99"}

@@ -84,10 +84,10 @@ LINE_ITEM_SOURCES = {"grid", "llm", "grid/extras"}
 # How the row's document was classified before ingestion.
 LINE_ITEM_CLASSIFICATION_METHODS = {
     "deterministic",  # exact header/marker match
-    "fuzzy",          # normalised keyword match
-    "llm_assisted",   # LLM returned a bounded classification JSON
-    "manual",         # human-overridden
-    "unknown",        # classification was not attempted / not stored
+    "fuzzy",  # normalised keyword match
+    "llm_assisted",  # LLM returned a bounded classification JSON
+    "manual",  # human-overridden
+    "unknown",  # classification was not attempted / not stored
 }
 # Source document type (matches classify_financial_sheet output).
 LINE_ITEM_SOURCE_DOC_TYPES = {"quote", "extras", "job_cost", "order_quantities", "unknown"}
@@ -246,7 +246,7 @@ class FinancialLineItem(Base, CanonicalMixin):
 
     # Classification provenance (Phase 1c-MVP) --------------------------------
     # How was this document classified before ingestion?
-    classification_method = Column(String, nullable=True)   # deterministic | fuzzy | ...
+    classification_method = Column(String, nullable=True)  # deterministic | fuzzy | ...
     # Classifier confidence [0, 1]. None = not computed (pre-MVP rows).
     classification_confidence = Column(Float, nullable=True)
     # Which document type the classifier assigned (matches classify_financial_sheet).

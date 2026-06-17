@@ -1967,9 +1967,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
             "total_quoted_revenue": None,
             "total_actual_cost": None,
             "gross_margin": None,
-            "coverage_note": (
-                "No ledger rows — run 'fill-ledger' to populate quote data."
-            ),
+            "coverage_note": ("No ledger rows — run 'fill-ledger' to populate quote data."),
             "divisions": [],
         }
 
@@ -1983,7 +1981,15 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     # --- double-count deduplication per (unit, division_code, side) ----------
     # Standalone amount types are included unconditionally; total rows win over
     # line items within the same (unit, division_code, side) bucket.
-    _STANDALONE = {"markup", "contingency", "tax", "deposit", "other"}
+    #
+    # ``adjustment`` (extras / change-order) is STANDALONE on purpose: an extra
+    # is scope agreed AFTER the base quote, so its amount is ADDITIVE to the
+    # quote's division total -- it is never a re-statement of the same money.
+    # Treating it as a line item would let a quote division-total suppress the
+    # extra (it lost the total-vs-items contest), silently dropping real revenue
+    # whenever the extras doc shared the quote's unit + division. See
+    # ai/extras_grid.py module docstring ("BOTH counted").
+    _STANDALONE = {"markup", "contingency", "tax", "deposit", "adjustment", "other"}
     _buckets: dict = defaultdict(lambda: {"total": [], "items": [], "standalone": []})
     for r in rows:
         key = (r.unit, r.division_code, r.side)
@@ -2032,7 +2038,9 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     from project_db.ai.financial_divisions import division_by_code
 
     division_rows: list[dict] = []
-    for (unit, div_code), bucket in sorted(pivot.items(), key=lambda kv: (kv[0][0] or "", kv[0][1])):
+    for (unit, div_code), bucket in sorted(
+        pivot.items(), key=lambda kv: (kv[0][0] or "", kv[0][1])
+    ):
         div = division_by_code(div_code)
         rev_amounts: list[_Decimal] = bucket["revenue_rows"]
         quoted_revenue: _Decimal | None = sum(rev_amounts, _zero) if rev_amounts else None
@@ -2084,14 +2092,20 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
             }
         )
 
-    total_revenue = sum(
-        (r["quoted_revenue"] for r in division_rows if r["quoted_revenue"] is not None),
-        0.0,
-    ) or None
-    total_cost = sum(
-        (r["actual_total_cost"] for r in division_rows if r["actual_total_cost"] is not None),
-        0.0,
-    ) or None
+    total_revenue = (
+        sum(
+            (r["quoted_revenue"] for r in division_rows if r["quoted_revenue"] is not None),
+            0.0,
+        )
+        or None
+    )
+    total_cost = (
+        sum(
+            (r["actual_total_cost"] for r in division_rows if r["actual_total_cost"] is not None),
+            0.0,
+        )
+        or None
+    )
     gross_total = (
         (total_revenue or 0.0) - (total_cost or 0.0)
         if total_revenue is not None and total_cost is not None

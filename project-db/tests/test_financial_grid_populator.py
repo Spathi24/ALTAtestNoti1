@@ -18,7 +18,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_db.ai.financial_grid_populator import (
-    DocLedgerResult,
     ProjectLedgerResult,
     _extract_currency,
     _extract_status,
@@ -192,9 +191,11 @@ class TestPopulateLedgerForDocument:
         assert result.grand_total == Decimal("1650.00")
         assert result.division_total == result.grand_total
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         assert len(rows) == result.rows_written
 
     def test_rows_carry_correct_metadata(self, db_session):
@@ -202,9 +203,11 @@ class TestPopulateLedgerForDocument:
         doc, dt = _make_doc(db_session, project, "923 ACCEPTED QUOTE", _QUOTE_TEXT)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         for row in rows:
             assert row.project_id == project.canonical_id
             assert row.side == "revenue"
@@ -221,9 +224,11 @@ class TestPopulateLedgerForDocument:
         doc, dt = _make_doc(db_session, project, "923 ACCEPTED QUOTE", _QUOTE_TEXT)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         codes = {row.division_code for row in rows}
         assert "02" in codes  # Demolition section
         assert "22" in codes  # Plumbing section
@@ -234,9 +239,11 @@ class TestPopulateLedgerForDocument:
         doc, dt = _make_doc(db_session, project, "927 QUOTE (NOT STARTED)", _QUOTE_TEXT)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         assert all(r.status == "proposed" for r in rows)
 
     def test_non_quote_sheet_skipped(self, db_session):
@@ -248,9 +255,11 @@ class TestPopulateLedgerForDocument:
         assert result.skipped
         assert result.sheet_type == "job_cost"
         assert result.rows_written == 0
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == 0
 
     def test_idempotent_double_run(self, db_session):
@@ -264,9 +273,11 @@ class TestPopulateLedgerForDocument:
 
         assert r1.rows_written == r2.rows_written
         # Only one set of rows in the DB (no duplicates).
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == r1.rows_written
 
     def test_no_grand_total_reconcile_is_none(self, db_session):

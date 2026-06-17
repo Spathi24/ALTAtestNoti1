@@ -84,7 +84,7 @@ def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount
 
 class TestReportDivisionMarginsBasic:
     def test_no_rows_returns_empty(self, db_session):
-        project, _ = _setup(db_session)
+        _project, _ = _setup(db_session)
         result = report_division_margins(db_session, "923 Test")
         assert result["divisions"] == []
         assert "fill-ledger" in result["coverage_note"]
@@ -95,8 +95,16 @@ class TestReportDivisionMarginsBasic:
 
     def test_revenue_only_flag(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="total", amount=1000)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -109,10 +117,26 @@ class TestReportDivisionMarginsBasic:
 
     def test_ok_flag_when_both_sides(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="22", side="revenue",
-                 amount_type="total", amount=500)
-        _add_row(db_session, project, doc, unit="923", div_code="22", side="cost",
-                 amount_type="total", amount=300)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="revenue",
+            amount_type="total",
+            amount=500,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="total",
+            amount=300,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -125,8 +149,16 @@ class TestReportDivisionMarginsBasic:
 
     def test_cost_only_flag(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="26", side="cost",
-                 amount_type="total", amount=800)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="26",
+            side="cost",
+            amount_type="total",
+            amount=800,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -137,8 +169,16 @@ class TestReportDivisionMarginsBasic:
 
     def test_unknown_division_flag(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit=None, div_code="99", side="revenue",
-                 amount_type="total", amount=200)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit=None,
+            div_code="99",
+            side="revenue",
+            amount_type="total",
+            amount=200,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -151,13 +191,37 @@ class TestDoubleCountRule:
         """If a division-total row exists, don't also sum the line items."""
         project, doc = _setup(db_session)
         # Section total
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="total", amount=1000)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
         # Line items (should be IGNORED because the total row is present)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="material", amount=400)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="labour", amount=600)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="material",
+            amount=400,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="labour",
+            amount=600,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -167,10 +231,26 @@ class TestDoubleCountRule:
 
     def test_line_items_used_when_no_total(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="09", side="revenue",
-                 amount_type="material", amount=300)
-        _add_row(db_session, project, doc, unit="923", div_code="09", side="revenue",
-                 amount_type="labour", amount=200)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="09",
+            side="revenue",
+            amount_type="material",
+            amount=300,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="09",
+            side="revenue",
+            amount_type="labour",
+            amount=200,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -181,8 +261,16 @@ class TestDoubleCountRule:
         """Markup/contingency rows are standalone -- always included."""
         project, doc = _setup(db_session)
         # A section total
-        _add_row(db_session, project, doc, unit="923", div_code="01", side="revenue",
-                 amount_type="markup", amount=500)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="01",
+            side="revenue",
+            amount_type="markup",
+            amount=500,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -193,10 +281,26 @@ class TestDoubleCountRule:
 class TestProjectTotals:
     def test_total_quoted_revenue(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="total", amount=1000)
-        _add_row(db_session, project, doc, unit="923", div_code="22", side="revenue",
-                 amount_type="total", amount=500)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="revenue",
+            amount_type="total",
+            amount=500,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -206,10 +310,26 @@ class TestProjectTotals:
 
     def test_gross_margin_when_both_sides(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="total", amount=1000)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="cost",
-                 amount_type="total", amount=700)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="cost",
+            amount_type="total",
+            amount=700,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -217,8 +337,16 @@ class TestProjectTotals:
 
     def test_source_docs_included(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="total", amount=1000)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
@@ -227,10 +355,116 @@ class TestProjectTotals:
 
     def test_coverage_note_mentions_revenue_only_count(self, db_session):
         project, doc = _setup(db_session)
-        _add_row(db_session, project, doc, unit="923", div_code="02", side="revenue",
-                 amount_type="total", amount=1000)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
         db_session.flush()
 
         result = report_division_margins(db_session, "923 Test")
         assert "1 division" in result["coverage_note"]
         assert "revenue-only" in result["coverage_note"]
+
+
+class TestExtrasAdditiveToQuoteTotal:
+    """An extras/change-order 'adjustment' row is scope agreed AFTER the base
+    quote, so it must be ADDED to the quote's division total -- never suppressed
+    by the total-vs-line-item dedup.  Regression: when the extras doc shared the
+    quote's unit + division, the adjustment lost the dedup contest and the money
+    silently vanished from the margin report (total showed $500 not $800)."""
+
+    def test_adjustment_added_to_quote_total_same_division(self, db_session):
+        project, doc = _setup(db_session)
+        # Base quote: Plumbing division total $500.
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="revenue",
+            amount_type="total",
+            amount=500,
+        )
+        # Extras: a $300 plumbing-fixture adjustment, SAME unit + division.
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="revenue",
+            amount_type="adjustment",
+            amount=300,
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        assert len(result["divisions"]) == 1
+        row = result["divisions"][0]
+        # Must be 500 + 300 = 800, NOT 500 (extras dropped) or 1000 (line items
+        # double-counted).
+        assert row["quoted_revenue"] == pytest.approx(800.0)
+        assert result["total_quoted_revenue"] == pytest.approx(800.0)
+
+    def test_multiple_adjustments_all_counted(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="09",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="09",
+            side="revenue",
+            amount_type="adjustment",
+            amount=150,
+        )
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="09",
+            side="revenue",
+            amount_type="adjustment",
+            amount=250,
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["quoted_revenue"] == pytest.approx(1400.0)
+
+    def test_adjustment_without_quote_total_still_counted(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="26",
+            side="revenue",
+            amount_type="adjustment",
+            amount=400,
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["quoted_revenue"] == pytest.approx(400.0)

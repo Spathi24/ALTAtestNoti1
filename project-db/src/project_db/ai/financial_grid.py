@@ -76,7 +76,11 @@ def split_workbook_sheets(text: str) -> list[tuple[str | None, str]]:
     sheets: list[tuple[str | None, str]] = []
     for i, m in enumerate(markers):
         sheet_name = m.group(1).strip()
-        if sheet_name.startswith("("):    # "(further sheets omitted -- workbook too large)"
+        # Stop at the extractor's truncation pseudo-header
+        # ("(further sheets omitted -- workbook too large)").  Match the marker
+        # text, not a leading "(" -- a real worksheet may legitimately be named
+        # "(2024) Budget" and must not be mistaken for the truncation sentinel.
+        if "sheets omitted" in sheet_name.lower():
             break
         start = m.end()
         end = markers[i + 1].start() if i + 1 < len(markers) else len(text)

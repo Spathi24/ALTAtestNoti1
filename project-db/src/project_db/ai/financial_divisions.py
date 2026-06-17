@@ -13,7 +13,15 @@ docs/FINANCIAL_REDESIGN.md §2.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
+
+
+def _strip_accents(s: str) -> str:
+    """Fold diacritics so accented Quebec-French descriptions match the
+    unaccented aliases below ('béton' -> 'beton', 'fenêtre' -> 'fenetre').
+    No-op for already-ASCII text, so English matching is unchanged."""
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
 
 @dataclass(frozen=True)
@@ -316,12 +324,15 @@ _CODE_LOOKUP[UNCLASSIFIED.code] = UNCLASSIFIED
 # All divisions including the catch-all, for validation/lookup.
 ALL_DIVISION_CODES: frozenset[str] = frozenset([d.code for d in DIVISIONS] + [UNCLASSIFIED.code])
 
-# Precompiled whole-word alias matchers, in DIVISIONS order.
+# Precompiled whole-word alias matchers, in DIVISIONS order.  A trailing "s" is
+# optional so a singular alias also matches its plural ('tuile' -> 'tuiles',
+# 'door' -> 'doors') -- the alias list was inconsistent about listing plurals,
+# which silently dropped French plurals like 'tuiles'/'fenetres' to div 99.
 _ALIAS_PATTERNS: list[tuple[Division, re.Pattern[str]]] = []
 for _d in DIVISIONS:
     if _d.aliases:
         _pat = re.compile(
-            r"\b(" + "|".join(re.escape(a) for a in _d.aliases) + r")\b", re.IGNORECASE
+            r"\b(" + "|".join(re.escape(a) for a in _d.aliases) + r")s?\b", re.IGNORECASE
         )
         _ALIAS_PATTERNS.append((_d, _pat))
 
@@ -364,7 +375,8 @@ def classify_division(text: str | None, *, masterformat_hint: str | None = None)
 def _keyword_match(text: str) -> Division | None:
     if not text:
         return None
+    folded = _strip_accents(text)
     for division, pattern in _ALIAS_PATTERNS:
-        if pattern.search(text):
+        if pattern.search(folded):
             return division
     return None

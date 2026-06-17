@@ -29,32 +29,55 @@ from __future__ import annotations
 import csv
 import io
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from project_db.ai.financial_divisions import classify_division
 from project_db.ai.financial_grid import parse_money
 
+
+def _strip_accents(s: str) -> str:
+    """Fold diacritics so Quebec-French status/header cells match unaccented
+    patterns ('Accepté' -> 'accepte', 'État' -> 'etat'). NFD-decompose, then
+    drop combining marks. Idempotent on already-ASCII text (a no-op for EN)."""
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
 # ---------------------------------------------------------------------------
-# Status classification
+# Status classification (bilingual EN/FR -- this is a Quebec dataset).
+# Inputs are accent-folded before matching, so French patterns are written
+# unaccented (e.g. 'accepte' matches 'accepté').  REJECTED is checked first so
+# 'non accepté' is rejected even though it also contains the 'accepte' stem.
 # ---------------------------------------------------------------------------
 
 _ACCEPTED_RE = re.compile(
-    r"\baccepted\b|\bapproved\b|\bdone\b|\bcomplete\b", re.I
+    r"\baccepted\b|\baccepte(e|s|es)?\b"  # accepted / accepté(e)(s)
+    r"|\bapproved\b|\bapprouve(e|s|es)?\b"  # approved / approuvé(e)(s)
+    r"|\bdone\b|\bcomplet\w*\b"  # done / complete(d) / complété(e)
+    r"|\bfait\b|\brealise(e|s|es)?\b"  # fait / réalisé(e)
+    r"|\btermine(e|s|es)?\b",  # terminé(e)(s) -- not EN 'terminated'
+    re.I,
 )
 _PROPOSED_RE = re.compile(
-    r"\bproposed?\b|\bnot\s+started\b|\bpending\b|\bin\s+progress\b|\bquoted\b|\bopen\b",
+    r"\bproposed?\b|\bpropose(e|s|es)?\b"  # proposed / proposé(e)(s)
+    r"|\bnot\s+started\b|\bpending\b|\bin\s+progress\b"
+    r"|\ben\s+cours\b|\ben\s+attente\b"  # in progress / pending (FR)
+    r"|\bquoted\b|\bdevis\b|\bsoumis(e|es)?\b|\bopen\b",  # quoted / devis / soumis
     re.I,
 )
 _REJECTED_RE = re.compile(
-    r"\bnot\s+accepted\b|\brejected\b|\bcancell?ed\b|\bvoided?\b|\bn/?a\b",
+    r"\bnot\s+accepted\b|\bnon\s+accepte(e|s|es)?\b"  # not accepted / non accepté
+    r"|\brejected\b|\brejete(e|s|es)?\b|\brefus\w*\b"  # rejected / rejeté / refusé
+    r"|\bcancell?ed\b|\bannul\w*\b"  # cancelled / annulé
+    r"|\bvoided?\b|\babandonn\w*\b|\bn/?a\b",  # void / abandonné / n/a
     re.I,
 )
 
 
 def _classify_status(raw: str | None) -> str | None:
     """Return 'accepted', 'proposed', or None (= skip row) for an extras status cell."""
-    s = (raw or "").strip()
+    s = _strip_accents((raw or "").strip())
     if not s:
         return "unknown"
     if _REJECTED_RE.search(s):
@@ -71,13 +94,14 @@ def _classify_status(raw: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 # Must find at least one of these to confirm it's an extras/CO sheet.
-_CO_HEADER_MARKERS = ("co", "change order", "change #", "co #", "co#")
+# Header cells are accent-folded + lowercased before matching (Quebec FR).
+_CO_HEADER_MARKERS = ("co", "change order", "change #", "co #", "co#", "no co")
 _TOTAL_HEADER_MARKERS = ("total",)
-_STATUS_HEADER_MARKERS = ("status",)
+_STATUS_HEADER_MARKERS = ("status", "statut", "etat")
 
 
 def _looks_like_extras_header(cells: list[str]) -> bool:
-    joined = " | ".join(c.strip().lower() for c in cells)
+    joined = _strip_accents(" | ".join(c.strip().lower() for c in cells))
     has_co = any(m in joined for m in _CO_HEADER_MARKERS)
     has_total = any(m in joined for m in _TOTAL_HEADER_MARKERS)
     has_status = any(m in joined for m in _STATUS_HEADER_MARKERS)
@@ -87,18 +111,25 @@ def _looks_like_extras_header(cells: list[str]) -> bool:
 def _map_extras_columns(header_cells: list[str]) -> dict[str, int]:
     col: dict[str, int] = {}
     for idx, raw in enumerate(header_cells):
-        name = (raw or "").strip().lower()
+        name = _strip_accents((raw or "").strip().lower())
         if not name:
             continue
-        if "co" == name or "co #" in name or "co#" in name or "change" in name:
+        if "co" == name or "co #" in name or "co#" in name or "no co" in name or "change" in name:
             col.setdefault("co_number", idx)
-        elif "item" in name or "description" in name or "scope" in name or "work" in name:
+        elif (
+            "item" in name
+            or "description" in name
+            or "scope" in name
+            or "work" in name
+            or "travaux" in name  # FR: works
+            or "designation" in name  # FR: désignation
+        ):
             col.setdefault("description", idx)
         elif "total" in name and "cost" not in name:
             col.setdefault("total", idx)
         elif "cost" in name and "unit" in name:
             col.setdefault("cost_per_unit", idx)
-        elif "status" in name:
+        elif "status" in name or "statut" in name or "etat" in name:
             col.setdefault("status", idx)
         elif "applied" in name or "qty" in name or "quantity" in name:
             col.setdefault("applied", idx)
@@ -114,10 +145,10 @@ def _map_extras_columns(header_cells: list[str]) -> dict[str, int]:
 class ExtrasRow:
     """One accepted or proposed change-order line."""
 
-    co_number: str                  # CO identifier (string, may be "1", "CO-3", etc.)
-    description: str                # Item description used for division classification
-    total: Decimal                  # Total amount for this CO (from Total column)
-    status: str                     # accepted | proposed | unknown
+    co_number: str  # CO identifier (string, may be "1", "CO-3", etc.)
+    description: str  # Item description used for division classification
+    total: Decimal  # Total amount for this CO (from Total column)
+    status: str  # accepted | proposed | unknown
     division_code: str
     division_name: str
 
@@ -125,7 +156,7 @@ class ExtrasRow:
 @dataclass
 class ExtrasParseResult:
     rows: list[ExtrasRow] = field(default_factory=list)
-    skipped_rows: int = 0           # rejected/cancelled/no-amount rows
+    skipped_rows: int = 0  # rejected/cancelled/no-amount rows
     header_found: bool = False
     accepted_total: Decimal = Decimal(0)
     proposed_total: Decimal = Decimal(0)

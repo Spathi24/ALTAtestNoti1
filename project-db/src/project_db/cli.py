@@ -730,7 +730,9 @@ def cmd_division_margins(args: argparse.Namespace) -> int:
         for row in data["divisions"]:
             unit = row["unit"] or "unknown_unit"
             rev = f"${row['quoted_revenue']:,.2f}" if row["quoted_revenue"] is not None else "-"
-            cost = f"${row['actual_total_cost']:,.2f}" if row["actual_total_cost"] is not None else "-"
+            cost = (
+                f"${row['actual_total_cost']:,.2f}" if row["actual_total_cost"] is not None else "-"
+            )
             margin = f"${row['gross_margin']:,.2f}" if row["gross_margin"] is not None else "-"
             print(
                 f"  {unit:<10}  {row['division_code']:<6}  {row['division_name']:<32}  "

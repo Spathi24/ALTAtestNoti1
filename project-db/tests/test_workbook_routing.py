@@ -200,8 +200,7 @@ def db_session():
 
 def _seed_project(session):
     org = Organization(canonical_id=uuid.uuid4(), name="Test Org")
-    client = Client(canonical_id=uuid.uuid4(), name="Test Client",
-                    organization_id=org.canonical_id)
+    client = Client(canonical_id=uuid.uuid4(), name="Test Client", organization_id=org.canonical_id)
     project = Project(
         canonical_id=uuid.uuid4(),
         name="Test Project",
@@ -261,9 +260,7 @@ class TestSplitWorkbookSheets:
 
     def test_omitted_marker_terminates_split(self):
         text = (
-            "### Sheet1\nrow1\n"
-            "### (further sheets omitted -- workbook too large)\n"
-            "### Sheet2\nrow2"
+            "### Sheet1\nrow1\n### (further sheets omitted -- workbook too large)\n### Sheet2\nrow2"
         )
         sheets = split_workbook_sheets(text)
         # Only Sheet1 before the omitted marker
@@ -277,6 +274,18 @@ class TestSplitWorkbookSheets:
         assert "EmptySheet" in names
         empty_text = next(t for n, t in sheets if n == "EmptySheet")
         assert empty_text == ""
+
+    def test_paren_named_sheet_is_not_mistaken_for_omitted_marker(self):
+        # A real worksheet may legitimately be named "(2024) Budget"; only the
+        # extractor's "sheets omitted" sentinel should terminate the split.
+        text = (
+            "### (2024) Budget\nrow1\n"
+            "### ESTIMATE\nrow2\n"
+            "### (further sheets omitted -- workbook too large)\njunk"
+        )
+        sheets = split_workbook_sheets(text)
+        names = [s[0] for s in sheets]
+        assert names == ["(2024) Budget", "ESTIMATE"]
 
     def test_ten_sheet_common_area_workbook(self):
         sheets = split_workbook_sheets(_COMMON_AREA_WORKBOOK)
@@ -323,7 +332,9 @@ class TestPerSheetClassification:
     def test_est_minus_sections_is_quote_via_content(self):
         # Name "Est. Minus Sections" alone doesn't match "estimate",
         # but content starts with "ESTIMATE" banner → quote
-        content = "ESTIMATE\n7557 Blvd Gouin\tDate\t2026-06-16\nDescription\tNotes\tTotal Amount (CAD)"
+        content = (
+            "ESTIMATE\n7557 Blvd Gouin\tDate\t2026-06-16\nDescription\tNotes\tTotal Amount (CAD)"
+        )
         assert classify_financial_sheet("Est. Minus Sections", content) == "quote"
 
     def test_extras_sheet_is_extras(self):
@@ -380,9 +391,11 @@ class TestCommonAreaWorkbook:
         doc, dt = _make_doc(db_session, project, "Common Area", _COMMON_AREA_WORKBOOK)
         populate_ledger_for_document(db_session, doc, dt)
 
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == 0
 
 
@@ -425,9 +438,7 @@ class Test5770StLaurentWorkbook:
         finds no Material+Total header → ingestion_status=skipped, no_header.
         """
         project = _seed_project(db_session)
-        doc, dt = _make_doc(
-            db_session, project, "5770 St-Laurent", _5770_STLAURENT_WORKBOOK
-        )
+        doc, dt = _make_doc(db_session, project, "5770 St-Laurent", _5770_STLAURENT_WORKBOOK)
         result = populate_ledger_for_document(db_session, doc, dt)
 
         assert result.sheet_type == "quote"
@@ -437,14 +448,14 @@ class Test5770StLaurentWorkbook:
 
     def test_no_rows_written_for_5770_workbook(self, db_session):
         project = _seed_project(db_session)
-        doc, dt = _make_doc(
-            db_session, project, "5770 St-Laurent", _5770_STLAURENT_WORKBOOK
-        )
+        doc, dt = _make_doc(db_session, project, "5770 St-Laurent", _5770_STLAURENT_WORKBOOK)
         populate_ledger_for_document(db_session, doc, dt)
 
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == 0
 
 
@@ -465,9 +476,11 @@ class TestJobCostingWorkbook:
         doc, dt = _make_doc(db_session, project, "JOB COSTING", _JOB_COSTING_WORKBOOK)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         amounts = {float(r.amount) for r in rows}
         assert 9000.0 not in amounts, "Cancelled CO 1 must not be written"
         assert any(a in amounts for a in (6000.0, 1579.98)), "Paid COs must be written"
@@ -478,9 +491,11 @@ class TestJobCostingWorkbook:
         doc, dt = _make_doc(db_session, project, "JOB COSTING", _JOB_COSTING_WORKBOOK)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         # All rows should be from the EXTRAS sheet (source=grid/extras, doc_role=change_order)
         for r in rows:
             assert r.source == "grid/extras"
@@ -491,15 +506,15 @@ class TestQuoteAndExtrasInOneWorkbook:
     def test_quote_and_extras_both_parsed(self, db_session):
         """A workbook with ESTIMATE + EXTRAS sheets should parse both."""
         project = _seed_project(db_session)
-        doc, dt = _make_doc(
-            db_session, project, "ACCEPTED QUOTE", _QUOTE_AND_EXTRAS_WORKBOOK
-        )
+        doc, dt = _make_doc(db_session, project, "ACCEPTED QUOTE", _QUOTE_AND_EXTRAS_WORKBOOK)
         result = populate_ledger_for_document(db_session, doc, dt)
 
         assert result.ingestion_status == "parsed"
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         sources = {r.source for r in rows}
         assert "grid" in sources, "quote rows expected"
         assert "grid/extras" in sources, "extras rows expected"
@@ -526,18 +541,18 @@ class TestSingleSheetBehaviorUnchanged:
     def test_idempotent_on_multi_sheet_workbook(self, db_session):
         """Running populate twice on the same multi-sheet workbook is idempotent."""
         project = _seed_project(db_session)
-        doc, dt = _make_doc(
-            db_session, project, "ACCEPTED QUOTE", _QUOTE_AND_EXTRAS_WORKBOOK
-        )
+        doc, dt = _make_doc(db_session, project, "ACCEPTED QUOTE", _QUOTE_AND_EXTRAS_WORKBOOK)
         r1 = populate_ledger_for_document(db_session, doc, dt)
         db_session.flush()
         r2 = populate_ledger_for_document(db_session, doc, dt)
         db_session.flush()
 
         assert r1.rows_written == r2.rows_written
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == r2.rows_written
 
 
@@ -550,7 +565,7 @@ class TestSingleSheetBehaviorUnchanged:
 _EXTRAS_NAMED_BUT_QUOTE_BODY = (
     ",EXTRAS+ROOF,,,,"
     "\n7557 Blvd Gouin Est.,,Date,5/5/2026,,"
-    "\n\"Montreal, QC\",,Estimate #,25008,,"
+    '\n"Montreal, QC",,Estimate #,25008,,'
     "\nDescription,Notes/ Master Format values,, Material Amount (CAD),Labour Amount (CAD),Total Amount (CAD)"
     "\nStructural engineer report,,,,,$3200.00"
     "\nRoof replacement (materials),,,,,$11740.00"
@@ -577,9 +592,11 @@ class TestExtrasFallbackToQuote:
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_NAMED_BUT_QUOTE_BODY)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         assert rows
         for r in rows:
             assert r.source == "grid"
@@ -599,8 +616,10 @@ class TestExtrasFallbackToQuote:
 
         assert result.ingestion_status == "parsed"
         assert result.sheet_type == "extras"
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         assert all(r.source == "grid/extras" for r in rows)
         assert all(r.doc_role == "change_order" for r in rows)

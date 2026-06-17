@@ -71,8 +71,7 @@ def db_session():
 def _seed(session):
     """Create org → client → project → document → document_text."""
     org = Organization(canonical_id=uuid.uuid4(), name="Test Org")
-    client = Client(canonical_id=uuid.uuid4(), name="Test Client",
-                    organization_id=org.canonical_id)
+    client = Client(canonical_id=uuid.uuid4(), name="Test Client", organization_id=org.canonical_id)
     project = Project(
         canonical_id=uuid.uuid4(),
         name="923 Rockland E2E",
@@ -107,7 +106,7 @@ def _seed(session):
 class TestE2EFinancialPipeline:
     def test_fill_ledger_then_division_margins(self, db_session):
         """Full pipeline: DocumentText → ledger rows → margin report."""
-        project, doc, dt = _seed(db_session)
+        _project, doc, dt = _seed(db_session)
 
         # Step 1: fill-ledger (populate_ledger_for_document = the inner engine)
         result = populate_ledger_for_document(db_session, doc, dt)
@@ -164,9 +163,11 @@ class TestE2EFinancialPipeline:
         db_session.flush()
 
         # Idempotent: only one set of rows in the DB
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.project_id == project.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.project_id == project.canonical_id)
+            .count()
+        )
         assert count > 0
 
         margins = report_division_margins(db_session, "923 Rockland E2E")
@@ -176,8 +177,9 @@ class TestE2EFinancialPipeline:
     def test_proposed_doc_contributes_to_ledger(self, db_session):
         """A NOT STARTED quote still lands in the ledger (status=proposed)."""
         org = Organization(canonical_id=uuid.uuid4(), name="Test Org 2")
-        client = Client(canonical_id=uuid.uuid4(), name="Test Client 2",
-                        organization_id=org.canonical_id)
+        client = Client(
+            canonical_id=uuid.uuid4(), name="Test Client 2", organization_id=org.canonical_id
+        )
         project = Project(
             canonical_id=uuid.uuid4(),
             name="927 Rockland E2E",
@@ -210,9 +212,11 @@ class TestE2EFinancialPipeline:
         assert not result.skipped
         assert result.rows_written > 0
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.project_id == project.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.project_id == project.canonical_id)
+            .all()
+        )
         assert all(r.status == "proposed" for r in rows)
         assert all(r.unit == "927" for r in rows)
 
@@ -226,8 +230,9 @@ class TestE2EFinancialPipeline:
         from project_db.ai.financial_grid_populator import populate_ledger_for_project
 
         org = Organization(canonical_id=uuid.uuid4(), name="Test Org 3")
-        client = Client(canonical_id=uuid.uuid4(), name="Test Client 3",
-                        organization_id=org.canonical_id)
+        client = Client(
+            canonical_id=uuid.uuid4(), name="Test Client 3", organization_id=org.canonical_id
+        )
         project = Project(
             canonical_id=uuid.uuid4(),
             name="Trashed Doc Project",
@@ -265,7 +270,7 @@ class TestE2EFinancialPipeline:
 
     def test_coverage_note_format(self, db_session):
         """Coverage note counts revenue-only divisions correctly."""
-        project, doc, dt = _seed(db_session)
+        _project, doc, dt = _seed(db_session)
         populate_ledger_for_document(db_session, doc, dt)
 
         margins = report_division_margins(db_session, "923 Rockland E2E")

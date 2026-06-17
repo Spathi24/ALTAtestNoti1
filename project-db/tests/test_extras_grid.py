@@ -8,10 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from project_db.ai.extras_grid import (
-    ExtrasParseResult,
     _classify_status,
     parse_extras_sheet,
 )
@@ -88,6 +85,33 @@ class TestClassifyStatus:
         assert _classify_status("") == "unknown"
         assert _classify_status(None) == "unknown"
 
+    def test_french_accepted(self):
+        # Accent-folded: 'Accepté' / 'Accepte' / 'Approuvé' / 'Terminé' / 'Fait'.
+        assert _classify_status("Accepté") == "accepted"
+        assert _classify_status("Accepte") == "accepted"
+        assert _classify_status("Approuvé") == "accepted"
+        assert _classify_status("Terminé") == "accepted"
+        assert _classify_status("Fait") == "accepted"
+
+    def test_french_proposed(self):
+        assert _classify_status("Proposé") == "proposed"
+        assert _classify_status("En cours") == "proposed"
+        assert _classify_status("En attente") == "proposed"
+        assert _classify_status("Soumis") == "proposed"
+
+    def test_french_rejected_returns_none(self):
+        # CRITICAL: a French rejected CO must NOT be counted as revenue.
+        assert _classify_status("Non accepté") is None
+        assert _classify_status("Refusé") is None
+        assert _classify_status("Annulé") is None
+        assert _classify_status("Abandonné") is None
+
+    def test_french_terminated_not_confused_with_english(self):
+        # 'Terminé' (FR: done) -> accepted; English 'terminated' (cancelled) must
+        # NOT match the French accepted stem.
+        assert _classify_status("Terminé") == "accepted"
+        assert _classify_status("terminated") == "unknown"
+
 
 # ---------------------------------------------------------------------------
 # parse_extras_sheet tests
@@ -148,12 +172,42 @@ class TestParseExtrasSheetBasic:
         assert len(result.accepted_rows()) == 2
         assert result.accepted_total == Decimal("1150.00")
 
+    def test_french_header_detected(self):
+        # 'NO CO | Description des travaux | Prix unitaire | Total | Statut'
+        result = parse_extras_sheet(_FRENCH_EXTRAS_CSV)
+        assert result.header_found, "French extras header (Statut) not recognised"
+
+    def test_french_rows_classified(self):
+        result = parse_extras_sheet(_FRENCH_EXTRAS_CSV)
+        # CO-1 Accepté ($600), CO-2 Proposé ($200), CO-3 Non accepté (skipped).
+        assert len(result.accepted_rows()) == 1
+        assert len(result.proposed_rows()) == 1
+        assert result.accepted_total == Decimal("600.00")
+        assert result.proposed_total == Decimal("200.00")
+        # The rejected French row must be excluded, not counted.
+        assert result.skipped_rows >= 1
+        totals = {str(r.total) for r in result.rows}
+        assert "150.00" not in totals, "rejected French CO wrongly counted"
+
+    def test_accented_french_header_and_status(self):
+        # Fully accented variant (État column, accented status values).
+        csv = (
+            "NO CO,Désignation des travaux,Prix,Total,État\n"
+            'CO-1,Béton de fondation,1000.00,"$1,000.00",Accepté\n'
+            'CO-2,Réparation toiture,500.00,"$500.00",Annulé\n'
+        )
+        result = parse_extras_sheet(csv)
+        assert result.header_found
+        assert len(result.accepted_rows()) == 1
+        assert result.accepted_total == Decimal("1000.00")
+        # CO-1 'Béton' must classify to Concrete (03) despite the accent.
+        assert result.accepted_rows()[0].division_code == "03"
+
 
 class TestExtrasRowDivisionClassification:
     def test_plumbing_item_maps_to_22(self):
         csv = (
-            "CO #,Item,Cost/Unit,Total,Status\n"
-            "1,Plumbing rough-in adjustment,500,500.00,Accepted\n"
+            "CO #,Item,Cost/Unit,Total,Status\n1,Plumbing rough-in adjustment,500,500.00,Accepted\n"
         )
         result = parse_extras_sheet(csv)
         assert result.header_found
@@ -162,8 +216,7 @@ class TestExtrasRowDivisionClassification:
 
     def test_electrical_item_maps_to_26(self):
         csv = (
-            "CO #,Item,Cost/Unit,Total,Status\n"
-            "1,Additional electrical outlet,200,200.00,Accepted\n"
+            "CO #,Item,Cost/Unit,Total,Status\n1,Additional electrical outlet,200,200.00,Accepted\n"
         )
         result = parse_extras_sheet(csv)
         assert result.header_found
@@ -171,20 +224,14 @@ class TestExtrasRowDivisionClassification:
             assert result.rows[0].division_code == "26"
 
     def test_unknown_item_maps_to_99(self):
-        csv = (
-            "CO #,Item,Cost/Unit,Total,Status\n"
-            "1,Miscellaneous work,100,100.00,Accepted\n"
-        )
+        csv = "CO #,Item,Cost/Unit,Total,Status\n1,Miscellaneous work,100,100.00,Accepted\n"
         result = parse_extras_sheet(csv)
         assert result.header_found
         if result.rows:
             assert result.rows[0].division_code == "99"
 
     def test_tile_maps_to_finishes_09(self):
-        csv = (
-            "CO #,Item,Cost/Unit,Total,Status\n"
-            "1,Replace bathroom tile,500,500.00,Accepted\n"
-        )
+        csv = "CO #,Item,Cost/Unit,Total,Status\n1,Replace bathroom tile,500,500.00,Accepted\n"
         result = parse_extras_sheet(csv)
         assert result.header_found
         if result.rows:

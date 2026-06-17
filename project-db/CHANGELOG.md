@@ -9,6 +9,53 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- Financial layer: Phase 1a-1c walk-back audit + bug fixes
+
+Reviewed the whole financial layer built today (Phase 1a grid parser → 1b
+persister → 1c extras + multi-sheet routing) end to end and fixed every real
+bug it surfaced. No new parsers (per the standing rule: nothing new before
+Phase 1d + the eval harness).
+
+Bugs found and fixed (each with a regression test):
+
+- **Extras revenue silently dropped.** `report_division_margins` deduped each
+  `(unit, division, side)` bucket with "total wins over line items", but an
+  extras `adjustment` row fell into the line-item bucket -- so whenever an
+  extras doc shared the base quote's unit + division (e.g. `923 EXTRAS` next to
+  `923 ACCEPTED QUOTE`), the change-order money lost the dedup contest and
+  vanished from the margin total. Reproduced: $500 quote + $300 extra reported
+  as $500. Fix: `adjustment` is now STANDALONE (additive, never a re-statement),
+  matching the `extras_grid.py` "BOTH counted" contract.
+- **French extras not parsed (Quebec dataset).** The extras parser's status
+  header markers and status classifier were English-only: a `Statut` column was
+  not recognised (header → not-found → whole sheet skipped), and `Accepté` /
+  `Non accepté` / `Refusé` all classified as `unknown` -- so a *rejected* French
+  change order would have been counted as revenue. Fix: accent-fold all status/
+  header cells and add bilingual EN/FR patterns (`accepté`, `non accepté`,
+  `refusé`, `annulé`, `en cours`, `soumis`, ...), with `terminé` (done) kept
+  distinct from English `terminated`.
+- **Accented / plural divisions dropped to 99.** `classify_division` matched
+  unaccented aliases against raw text, so `béton`/`fenêtre`/`électricité` missed
+  their division; the alias list was also inconsistent about plurals, dropping
+  `tuiles` (vs `tuile`). Fix: accent-fold the input and make the trailing `s`
+  optional, so singular aliases also match their plural.
+- **Workbook truncation sentinel over-matched.** `split_workbook_sheets` treated
+  any sheet whose name started with `(` as the "(further sheets omitted...)"
+  truncation marker, so a real worksheet named e.g. `(2024) Budget` would
+  truncate the split. Fix: match the marker text (`sheets omitted`), not a
+  leading paren.
+
+Also: **CI was red on `main`.** Today's earlier financial commits landed after
+the 2026-06-16 ruff sweep without running the (now-blocking) linter/formatter --
+8 lint errors (unused imports, stale `# noqa`, unused unpacked vars) and 13
+format-drifted files. Cleaned all of it; `ruff check .` and `ruff format
+--check .` are green again.
+
+1185 tests (was 1170): +15 net across extras (FR), divisions (accent/plural),
+margins (extras additive), and workbook split.
+
+---
+
 ## 2026-06-16 -- Financial redesign: division-keyed line-item ledger (skeleton)
 
 Began re-architecting the financial layer after grounding the diagnosis in BOTH

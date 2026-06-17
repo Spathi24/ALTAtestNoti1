@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine
@@ -100,8 +99,7 @@ def db_session():
 
 def _seed_project(session):
     org = Organization(canonical_id=uuid.uuid4(), name="Test Org")
-    client = Client(canonical_id=uuid.uuid4(), name="Test Client",
-                    organization_id=org.canonical_id)
+    client = Client(canonical_id=uuid.uuid4(), name="Test Client", organization_id=org.canonical_id)
     project = Project(
         canonical_id=uuid.uuid4(),
         name="923 Test Project",
@@ -139,6 +137,7 @@ def _make_doc(session, project, name: str, text: str) -> tuple[Document, Documen
 # Criterion 1: Quote rows remain unchanged
 # ---------------------------------------------------------------------------
 
+
 class TestCriterion1QuoteRowsUnchanged:
     def test_quote_rows_still_written(self, db_session):
         project = _seed_project(db_session)
@@ -155,9 +154,11 @@ class TestCriterion1QuoteRowsUnchanged:
         doc, dt = _make_doc(db_session, project, "923 ACCEPTED QUOTE", _QUOTE_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         assert all(r.side == "revenue" for r in rows)
         assert all(r.doc_role == "quote" for r in rows)
         assert all(r.source == "grid" for r in rows)
@@ -169,6 +170,7 @@ class TestCriterion1QuoteRowsUnchanged:
 # ---------------------------------------------------------------------------
 # Criterion 2: Extras rows inserted into FinancialLineItem
 # ---------------------------------------------------------------------------
+
 
 class TestCriterion2ExtrasInLedger:
     def test_extras_rows_written(self, db_session):
@@ -185,9 +187,11 @@ class TestCriterion2ExtrasInLedger:
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         assert rows, "no rows written"
         for r in rows:
             assert r.side == "revenue"
@@ -202,9 +206,11 @@ class TestCriterion2ExtrasInLedger:
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         # CO4 was "Not Accepted" → must not be in ledger
         amounts = [float(r.amount) for r in rows]
         assert 500.0 not in amounts, "rejected extra (CO4=$500) was wrongly inserted"
@@ -213,6 +219,7 @@ class TestCriterion2ExtrasInLedger:
 # ---------------------------------------------------------------------------
 # Criterion 3: report_division_margins reflects extras
 # ---------------------------------------------------------------------------
+
 
 class TestCriterion3MarginsReflectExtras:
     def test_extras_appear_in_margins(self, db_session):
@@ -248,6 +255,7 @@ class TestCriterion3MarginsReflectExtras:
 # Criterion 4: Budget-only rows do not reduce gross margin
 # ---------------------------------------------------------------------------
 
+
 class TestCriterion4BudgetRowsNotCost:
     def test_jobcost_skipped_not_cost(self, db_session):
         project = _seed_project(db_session)
@@ -258,9 +266,11 @@ class TestCriterion4BudgetRowsNotCost:
         assert result.ingestion_reason == "unsupported_type"
         assert result.rows_written == 0
 
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == 0, "job_cost rows must not land in ledger"
 
     def test_skipped_job_cost_does_not_change_margin(self, db_session):
@@ -281,6 +291,7 @@ class TestCriterion4BudgetRowsNotCost:
 # ---------------------------------------------------------------------------
 # Criterion 5: Quantity-only rows do not reduce gross margin
 # ---------------------------------------------------------------------------
+
 
 class TestCriterion5QuantityRowsNotCost:
     def test_order_quantities_skipped(self, db_session):
@@ -308,6 +319,7 @@ class TestCriterion5QuantityRowsNotCost:
 # Criterion 6: Extras not double-counted with base quote revenue
 # ---------------------------------------------------------------------------
 
+
 class TestCriterion6NoDoubleCount:
     def test_quote_and_extras_different_document_ids(self, db_session):
         project = _seed_project(db_session)
@@ -317,9 +329,11 @@ class TestCriterion6NoDoubleCount:
         populate_ledger_for_document(db_session, quote_doc, quote_dt)
         populate_ledger_for_document(db_session, extras_doc, extras_dt)
 
-        all_rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.project_id == project.canonical_id
-        ).all()
+        all_rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.project_id == project.canonical_id)
+            .all()
+        )
         doc_ids = {str(r.document_id) for r in all_rows}
         assert len(doc_ids) == 2, "rows from both documents must stay separate"
 
@@ -336,12 +350,16 @@ class TestCriterion6NoDoubleCount:
         r2 = populate_ledger_for_document(db_session, quote_doc, quote_dt)
         db_session.flush()
 
-        quote_rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == quote_doc.canonical_id
-        ).count()
-        extras_rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == extras_doc.canonical_id
-        ).count()
+        quote_rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == quote_doc.canonical_id)
+            .count()
+        )
+        extras_rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == extras_doc.canonical_id)
+            .count()
+        )
         assert quote_rows == r2.rows_written
         assert extras_rows > 0  # extras untouched by quote re-run
 
@@ -349,6 +367,7 @@ class TestCriterion6NoDoubleCount:
 # ---------------------------------------------------------------------------
 # Criterion 7: Idempotency
 # ---------------------------------------------------------------------------
+
 
 class TestCriterion7Idempotent:
     def test_extras_idempotent(self, db_session):
@@ -361,9 +380,11 @@ class TestCriterion7Idempotent:
         db_session.flush()
 
         assert r1.rows_written == r2.rows_written
-        count = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).count()
+        count = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+        )
         assert count == r1.rows_written
 
     def test_populate_project_idempotent(self, db_session):
@@ -376,9 +397,11 @@ class TestCriterion7Idempotent:
 
         assert b1.total_rows == b2.total_rows
 
-        total_in_db = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.project_id == project.canonical_id
-        ).count()
+        total_in_db = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.project_id == project.canonical_id)
+            .count()
+        )
         assert total_in_db == b2.total_rows
 
 
@@ -386,15 +409,18 @@ class TestCriterion7Idempotent:
 # Criterion 8: unknown_unit and unknown_division flagged
 # ---------------------------------------------------------------------------
 
+
 class TestCriterion8UnknownFlagged:
     def test_extras_without_unit_prefix_uses_none(self, db_session):
         project = _seed_project(db_session)
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         # "EXTRAS ACCEPTED" has no civic number prefix → unit = None
         for r in rows:
             assert r.unit is None
@@ -411,25 +437,39 @@ class TestCriterion8UnknownFlagged:
 
     def test_unknown_division_rows_go_to_code_99(self, db_session):
         project = _seed_project(db_session)
-        csv = (
-            "CO #,Item,Cost/Unit,Total,Status\n"
-            "1,Miscellaneous work,100,100.00,Accepted\n"
-        )
+        csv = "CO #,Item,Cost/Unit,Total,Status\n1,Miscellaneous work,100,100.00,Accepted\n"
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", csv)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         for r in rows:
             # If item is unclassifiable it lands in 99
-            assert r.division_code in {"99", "09", "22", "02", "26", "06", "07", "08",
-                                        "23", "05", "03", "01", "10-12", "31-32"}
+            assert r.division_code in {
+                "99",
+                "09",
+                "22",
+                "02",
+                "26",
+                "06",
+                "07",
+                "08",
+                "23",
+                "05",
+                "03",
+                "01",
+                "10-12",
+                "31-32",
+            }
 
 
 # ---------------------------------------------------------------------------
 # Criterion 9: Source document provenance preserved
 # ---------------------------------------------------------------------------
+
 
 class TestCriterion9Provenance:
     def test_extras_rows_carry_document_id(self, db_session):
@@ -437,22 +477,27 @@ class TestCriterion9Provenance:
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         for r in rows:
             assert r.document_id == doc.canonical_id
             assert r.project_id == project.canonical_id
 
     def test_source_meta_json_contains_co_number(self, db_session):
         import json
+
         project = _seed_project(db_session)
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         for r in rows:
             assert r.source_meta_json is not None
             meta = json.loads(r.source_meta_json)
@@ -463,9 +508,11 @@ class TestCriterion9Provenance:
         doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_CSV)
         populate_ledger_for_document(db_session, doc, dt)
 
-        rows = db_session.query(FinancialLineItem).filter(
-            FinancialLineItem.document_id == doc.canonical_id
-        ).all()
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
         for r in rows:
             assert r.extractor_version == "extras-v1"
 
@@ -473,6 +520,7 @@ class TestCriterion9Provenance:
 # ---------------------------------------------------------------------------
 # Criterion 10: Old /financials path (FinancialRecord) untouched
 # ---------------------------------------------------------------------------
+
 
 class TestCriterion10FinancialRecordUntouched:
     def test_financial_record_table_empty_after_ledger_fill(self, db_session):
@@ -484,9 +532,11 @@ class TestCriterion10FinancialRecordUntouched:
         populate_ledger_for_document(db_session, extras_doc, extras_dt)
 
         # fill-ledger NEVER writes FinancialRecord
-        fr_count = db_session.query(FinancialRecord).filter(
-            FinancialRecord.project_id == project.canonical_id
-        ).count()
+        fr_count = (
+            db_session.query(FinancialRecord)
+            .filter(FinancialRecord.project_id == project.canonical_id)
+            .count()
+        )
         assert fr_count == 0, "fill-ledger must not touch FinancialRecord"
 
     def test_ingestion_status_on_doc_result(self, db_session):

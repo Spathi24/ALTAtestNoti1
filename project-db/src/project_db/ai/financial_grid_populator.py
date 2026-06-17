@@ -46,13 +46,13 @@ EXTRACTOR_VERSION_EXTRAS = "extras-v1"
 # Ingestion status vocab (per-document outcome; not persisted on individual rows).
 INGESTION_STATUSES = {"parsed", "skipped", "quarantined", "failed"}
 INGESTION_REASONS = {
-    "no_header",           # expected header row not found
-    "unsupported_type",    # sheet type not yet supported (job_cost, order_quantities, unknown)
-    "low_confidence",      # classifier confidence below threshold
-    "validation_failed",   # schema validation failed
-    "no_money",            # header found but no parseable amounts
+    "no_header",  # expected header row not found
+    "unsupported_type",  # sheet type not yet supported (job_cost, order_quantities, unknown)
+    "low_confidence",  # classifier confidence below threshold
+    "validation_failed",  # schema validation failed
+    "no_money",  # header found but no parseable amounts
     "ambiguous_amount_meaning",  # amounts present but meaning unclear (budget vs actual)
-    "parse_error",         # unexpected exception during parsing
+    "parse_error",  # unexpected exception during parsing
 }
 
 # ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ class DocLedgerResult:
     warnings: list[str] = field(default_factory=list)
 
     # Phase 1c-MVP: richer ingestion outcome
-    ingestion_status: str = "parsed"   # parsed | skipped | quarantined | failed
+    ingestion_status: str = "parsed"  # parsed | skipped | quarantined | failed
     ingestion_reason: str | None = None  # why non-parsed (INGESTION_REASONS vocab)
 
     @property
@@ -153,8 +153,7 @@ class ProjectLedgerResult:
         failed_rec = sum(1 for d in parsed if d.reconcile_ok is False)
         skipped = sum(1 for d in self.docs if d.skipped)
         lines = [
-            f"Ledger populated: {self.total_rows} rows "
-            f"from {len(parsed)} sheet(s)",
+            f"Ledger populated: {self.total_rows} rows from {len(parsed)} sheet(s)",
             f"  Reconciled: {reconciled}  "
             f"Reconcile-fail: {failed_rec}  "
             f"Skipped/quarantined: {skipped}",
@@ -205,9 +204,7 @@ def _collect_quote_rows(
     unit = _extract_unit(document.name)
     status = _extract_status(document.name)
     currency = _extract_currency(text)
-    doc_date = (
-        document.modified_at_source.date() if document.modified_at_source else None
-    )
+    doc_date = document.modified_at_source.date() if document.modified_at_source else None
 
     items = [
         FinancialLineItem(
@@ -292,9 +289,7 @@ def _collect_extras_rows(
 
     unit = _extract_unit(document.name)
     currency = _extract_currency(text)
-    doc_date = (
-        document.modified_at_source.date() if document.modified_at_source else None
-    )
+    doc_date = document.modified_at_source.date() if document.modified_at_source else None
 
     items = [
         FinancialLineItem(
@@ -307,7 +302,9 @@ def _collect_extras_rows(
             amount_type="adjustment",
             status=row.status,
             doc_role="change_order",
-            description=f"CO#{row.co_number}: {row.description}" if row.co_number else row.description,
+            description=f"CO#{row.co_number}: {row.description}"
+            if row.co_number
+            else row.description,
             amount=row.total,
             currency=currency,
             doc_date=doc_date,
@@ -387,7 +384,7 @@ def populate_ledger_for_document(
 
     # Classify each sheet; collect first-of-type for parseable types.
     seen_types: set[str] = set()
-    canonical_sheets: list[tuple[str | None, str, str]] = []   # (name, type, text)
+    canonical_sheets: list[tuple[str | None, str, str]] = []  # (name, type, text)
     all_sheet_types: list[str] = []
 
     for classify_name, sheet_text in classify_pairs:
@@ -475,7 +472,7 @@ def populate_ledger_for_document(
         if all_new_items:
             session.add_all(all_new_items)
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         result.ingestion_status = "failed"
         result.ingestion_reason = "parse_error"
         result.warnings.append(f"Unexpected error: {exc}")
