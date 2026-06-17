@@ -659,6 +659,34 @@ def cmd_extract_obligations(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fill_ledger(args: argparse.Namespace) -> int:
+    """Populate FinancialLineItem rows from quote-sheet grids (Phase 1b).
+
+    Reads the stored DocumentText for each financial document in the project,
+    classifies each sheet, and runs the deterministic grid parser on quote
+    sheets. No LLM. Idempotent -- re-run to refresh after extract-content.
+    """
+    from project_db.ai.financial_grid_populator import populate_ledger_for_project
+    from project_db.ai.views import _resolve_project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        project = _resolve_project(s, args.project)
+        if project is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+
+        print(f"Project: {project.name}  ({project.canonical_id})")
+        print("Populating FinancialLineItem ledger from quote grids (no LLM)...")
+        batch = populate_ledger_for_project(s, project.canonical_id)
+        print()
+        print(batch.summary())
+    return 0
+
+
 def _cmd_extract_financials_structured(args: argparse.Namespace) -> int:
     """Structured (OpenAI, classify-then-extract) financial extraction path."""
     from project_db.ai.doc_extraction import (
@@ -2576,6 +2604,14 @@ def build_parser() -> argparse.ArgumentParser:
         "no keyword gate). Needs OPENAI_API_KEY. Recommended.",
     )
     eo.set_defaults(func=cmd_extract_obligations)
+
+    fl = sub.add_parser(
+        "fill-ledger",
+        help="Populate the FinancialLineItem ledger from own-authored quote-sheet "
+        "grids (Phase 1b, no LLM). Idempotent -- re-run after extract-content.",
+    )
+    fl.add_argument("project", help="Project canonical UUID or name fragment")
+    fl.set_defaults(func=cmd_fill_ledger)
 
     ed = sub.add_parser(
         "embed-documents",

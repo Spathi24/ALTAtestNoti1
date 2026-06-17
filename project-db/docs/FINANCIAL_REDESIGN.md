@@ -165,9 +165,13 @@ never invent the missing side. The confirmed/quoted toggle
   real data — 923 quote reconciles to $66,539.65; JOB COSTING routes to
   `job_cost` and the parser declines it (no garbage). Pure (text → rows); NOT
   yet wired to a persister.
-- **Phase 1b — persister + CLI:** map parsed rows → `FinancialLineItem`
-  (assign side/unit/status from doc context) for `quote` sheets; a CLI to run it
-  over a project. Cross-check the emitted ledger reconciles to the stated total.
+- **Phase 1b — persister + CLI. ✅ DONE.**
+  `ai/financial_grid_populator.py`: unit/status/currency extracted from filename;
+  rows written as `FinancialLineItem` (side=revenue, source=grid, amount_verified=True);
+  `fill-ledger <project>` CLI. Idempotent per document. Verified on real Rockland
+  data: 923 ACCEPTED QUOTE -> 63 rows, reconciles to $66,539.65; 927 NOT STARTED
+  -> 56 rows, reconciles to $126,480.91; EXTERIOR NOT STARTED -> 2 rows,
+  reconcile fail ($49k vs $50k, correctly flagged). 22 new tests.
 - **Phase 1c — `extras` + `job_cost` extractors:** own column maps → same
   ledger (job_cost is hard — §8).
 - **Phase 2 — `report_division_margins`** (pivot, gross/true, both-sides guard)
