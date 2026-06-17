@@ -539,3 +539,68 @@ class TestSingleSheetBehaviorUnchanged:
             FinancialLineItem.document_id == doc.canonical_id
         ).count()
         assert count == r2.rows_written
+
+
+# ===========================================================================
+# Part 4: Extras-classifier fallback to quote parser
+# ===========================================================================
+
+# Synthetic "EXTRAS+ROOF" style document: "extras" in the title/header but
+# the body is a canonical tri-column quote grid, not a CO sheet.
+_EXTRAS_NAMED_BUT_QUOTE_BODY = (
+    ",EXTRAS+ROOF,,,,"
+    "\n7557 Blvd Gouin Est.,,Date,5/5/2026,,"
+    "\n\"Montreal, QC\",,Estimate #,25008,,"
+    "\nDescription,Notes/ Master Format values,, Material Amount (CAD),Labour Amount (CAD),Total Amount (CAD)"
+    "\nStructural engineer report,,,,,$3200.00"
+    "\nRoof replacement (materials),,,,,$11740.00"
+    "\nOverhead and Profit 15,,,,,$2541.00"
+    "\n,,,,Pre-Tax total,$17480.00"
+    "\n,,,,After-Tax Total,$20102.00"
+)
+
+
+class TestExtrasFallbackToQuote:
+    def test_mislabeled_extras_quote_body_parsed_as_quote(self, db_session):
+        """'EXTRAS+ROOF' doc with quote-grid body must parse via the fallback path."""
+        project = _seed_project(db_session)
+        doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_NAMED_BUT_QUOTE_BODY)
+        result = populate_ledger_for_document(db_session, doc, dt)
+
+        assert result.ingestion_status == "parsed", result.ingestion_reason
+        assert result.sheet_type == "quote"
+        assert result.rows_written > 0
+
+    def test_mislabeled_extras_rows_have_quote_metadata(self, db_session):
+        """Rows parsed via the extras→quote fallback must carry quote provenance."""
+        project = _seed_project(db_session)
+        doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", _EXTRAS_NAMED_BUT_QUOTE_BODY)
+        populate_ledger_for_document(db_session, doc, dt)
+
+        rows = db_session.query(FinancialLineItem).filter(
+            FinancialLineItem.document_id == doc.canonical_id
+        ).all()
+        assert rows
+        for r in rows:
+            assert r.source == "grid"
+            assert r.source_doc_type == "quote"
+            assert r.doc_role == "quote"
+
+    def test_real_extras_sheet_still_parsed_after_fallback_added(self, db_session):
+        """A genuine CO extras sheet must still parse correctly (fallback not triggered)."""
+        csv = (
+            "CO #,Item,Cost/Unit,Total,Status\n"
+            "1,Plumbing upgrade,300,300.00,Accepted\n"
+            "2,Tile upgrade,500,500.00,Accepted\n"
+        )
+        project = _seed_project(db_session)
+        doc, dt = _make_doc(db_session, project, "EXTRAS ACCEPTED", csv)
+        result = populate_ledger_for_document(db_session, doc, dt)
+
+        assert result.ingestion_status == "parsed"
+        assert result.sheet_type == "extras"
+        rows = db_session.query(FinancialLineItem).filter(
+            FinancialLineItem.document_id == doc.canonical_id
+        ).all()
+        assert all(r.source == "grid/extras" for r in rows)
+        assert all(r.doc_role == "change_order" for r in rows)

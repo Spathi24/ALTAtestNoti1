@@ -432,6 +432,21 @@ def populate_ledger_for_document(
                 items, sheet_res = _collect_extras_rows(
                     document, sheet_text, extractor_version=EXTRACTOR_VERSION_EXTRAS
                 )
+                # Fallback: if extras header not found, try the quote parser.
+                # Handles documents named "EXTRAS+ROOF" / "EXTRAS ACCEPTED" that
+                # are actually formatted as standard quote grids (no CO#/Status
+                # columns). Only falls back when no quote sheet was already parsed
+                # from this workbook.
+                if (
+                    sheet_res.ingestion_status == "skipped"
+                    and sheet_res.ingestion_reason == "no_header"
+                    and "quote" not in seen_types
+                ):
+                    items, sheet_res = _collect_quote_rows(
+                        document, sheet_text, extractor_version=extractor_version
+                    )
+                    if not sheet_res.skipped:
+                        result.sheet_type = "quote"
             else:
                 continue
 
