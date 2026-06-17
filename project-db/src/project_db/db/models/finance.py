@@ -63,9 +63,9 @@ FINANCIAL_RECORD_KINDS = {"total", "line_item", "tax", "deposit", "other"}
 # See docs/FINANCIAL_REDESIGN.md.  Same validated-with-fallback discipline:
 # unknown values coerce to the catch-all + warn, never crash.
 # Which side of the margin equation a row sits on.
-LINE_ITEM_SIDES = {"revenue", "cost", "unknown"}
-# What the amount represents -- captures the Material/Labour/Total columns of a
-# client quote AND the markup/contingency rows pulled out for "true" margin.
+LINE_ITEM_SIDES = {"revenue", "cost", "budget", "quantity", "unknown"}
+# What the amount represents -- captures Material/Labour/Total columns of a
+# client quote, markup rows, and change-order/extras totals.
 LINE_ITEM_AMOUNT_TYPES = {
     "material",
     "labour",
@@ -74,12 +74,23 @@ LINE_ITEM_AMOUNT_TYPES = {
     "contingency",
     "tax",
     "deposit",
+    "adjustment",  # extras / change-order line item
     "other",
 }
 # Lifecycle status, promoted from the filename marker + modifiedTime tiebreak.
 LINE_ITEM_STATUSES = {"accepted", "proposed", "actual", "superseded", "unknown"}
 # Which populator produced the row: deterministic grid parse vs LLM extraction.
-LINE_ITEM_SOURCES = {"grid", "llm"}
+LINE_ITEM_SOURCES = {"grid", "llm", "grid/extras"}
+# How the row's document was classified before ingestion.
+LINE_ITEM_CLASSIFICATION_METHODS = {
+    "deterministic",  # exact header/marker match
+    "fuzzy",          # normalised keyword match
+    "llm_assisted",   # LLM returned a bounded classification JSON
+    "manual",         # human-overridden
+    "unknown",        # classification was not attempted / not stored
+}
+# Source document type (matches classify_financial_sheet output).
+LINE_ITEM_SOURCE_DOC_TYPES = {"quote", "extras", "job_cost", "order_quantities", "unknown"}
 
 
 class InvoiceStatus(str, enum.Enum):
@@ -226,12 +237,22 @@ class FinancialLineItem(Base, CanonicalMixin):
     doc_date = Column(Date, nullable=True)
     quote_expiry = Column(Date, nullable=True)  # "Valid Until" -- re-price if past
 
-    source = Column(String, nullable=True)  # grid / llm -- which populator
+    source = Column(String, nullable=True)  # grid / llm / grid/extras -- which populator
     quoted_excerpt = Column(Text, nullable=True)
     confidence = Column(Float, nullable=True)
     amount_verified = Column(Boolean, nullable=True)
     extractor_version = Column(String, nullable=True)
     source_meta_json = Column(Text, nullable=True)
+
+    # Classification provenance (Phase 1c-MVP) --------------------------------
+    # How was this document classified before ingestion?
+    classification_method = Column(String, nullable=True)   # deterministic | fuzzy | ...
+    # Classifier confidence [0, 1]. None = not computed (pre-MVP rows).
+    classification_confidence = Column(Float, nullable=True)
+    # Which document type the classifier assigned (matches classify_financial_sheet).
+    source_doc_type = Column(String, nullable=True)  # quote | extras | job_cost | ...
+    # Sub-region within a multi-block document (e.g. "material_spending_block").
+    source_region = Column(String, nullable=True)
 
 
 class DocumentFinancialStatus(Base):

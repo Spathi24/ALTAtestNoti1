@@ -156,6 +156,14 @@ CREATE TABLE financial_line_item (
 )
 """
 
+# Columns added to financial_line_item after the initial DDL (Phase 1c-MVP).
+SQLITE_FINANCIAL_LINE_ITEM_COLUMNS: dict[str, str] = {
+    "classification_method": "VARCHAR",
+    "classification_confidence": "FLOAT",
+    "source_doc_type": "VARCHAR",
+    "source_region": "VARCHAR",
+}
+
 SQLITE_FINANCIAL_LINE_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS ix_financial_line_item_project_id "
     "ON financial_line_item (project_id)",
@@ -372,6 +380,10 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(
             conn, tables, "financial_line_item", SQLITE_FINANCIAL_LINE_ITEM_DDL
         )
+        if "financial_line_item" in tables:
+            _add_missing_columns(
+                conn, inspector, "financial_line_item", SQLITE_FINANCIAL_LINE_ITEM_COLUMNS
+            )
         for _idx_ddl in SQLITE_FINANCIAL_LINE_ITEM_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(
