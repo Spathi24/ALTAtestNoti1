@@ -665,9 +665,13 @@ def cmd_fill_ledger(args: argparse.Namespace) -> int:
     Reads the stored DocumentText for each financial document in the project,
     classifies each sheet, and runs the deterministic grid parser on quote
     sheets. No LLM. Idempotent -- re-run to refresh after extract-content.
+
+    With ``--audit`` (Phase 1d), prints a per-document ledger-health table
+    (classification / status / reconcile / recommended action) instead of the
+    short summary.
     """
     from project_db.ai.financial_grid_populator import populate_ledger_for_project
-    from project_db.ai.views import _resolve_project
+    from project_db.ai.views import _resolve_project, report_ledger_health
 
     engine = get_engine()
     Base.metadata.create_all(engine)
@@ -679,11 +683,51 @@ def cmd_fill_ledger(args: argparse.Namespace) -> int:
             print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
             return 2
 
+        if args.audit:
+            return _print_ledger_audit(report_ledger_health(s, args.project))
+
         print(f"Project: {project.name}  ({project.canonical_id})")
         print("Populating FinancialLineItem ledger from quote grids (no LLM)...")
         batch = populate_ledger_for_project(s, project.canonical_id)
         print()
         print(batch.summary())
+    return 0
+
+
+def _print_ledger_audit(data: dict) -> int:
+    """Render the Phase 1d ledger-health report as an ASCII table."""
+    if "error" in data:
+        print(f"FAIL: {data['error']}", file=sys.stderr)
+        return 2
+
+    print(f"Project: {data['project']}  ({data['project_id']})")
+    print(
+        f"  {data['document_count']} doc(s)  |  parsed: {data['parsed_count']}  "
+        f"|  rows: {data['rows_written']}  |  needs-review: {data['needs_review_count']}  "
+        f"|  unsupported: {data['unsupported_count']}"
+    )
+    print()
+    print(
+        f"  {'Document':<42}  {'Type':<9}  {'Status':<10}  {'Rows':>5}  "
+        f"{'Recon':<6}  {'Stated':>11}  {'DivTotal':>11}  {'Diff':>10}  Action"
+    )
+    print("  " + "-" * 130)
+    for d in data["documents"]:
+        name = (d["document"] or "")[:40]
+        recon = {True: "ok", False: "FAIL", None: "-"}[d["reconcile_ok"]]
+        stated = f"${d['stated_total']:,.2f}" if d["stated_total"] is not None else "-"
+        divt = f"${d['division_total']:,.2f}" if d["division_total"] is not None else "-"
+        diff = f"${d['difference']:,.2f}" if d["difference"] is not None else "-"
+        reason = f" ({d['ingestion_reason']})" if d["ingestion_reason"] else ""
+        print(
+            f"  {name:<42}  {d['classified_type']:<9}  {d['ingestion_status']:<10}  "
+            f"{d['rows_written']:>5}  {recon:<6}  {stated:>11}  {divt:>11}  {diff:>10}  "
+            f"{d['recommended_action']}{reason}"
+        )
+    print()
+    if data["action_counts"]:
+        summary = "  ".join(f"{k}={v}" for k, v in sorted(data["action_counts"].items()))
+        print(f"  Actions: {summary}")
     return 0
 
 
@@ -2666,6 +2710,13 @@ def build_parser() -> argparse.ArgumentParser:
         "grids (Phase 1b, no LLM). Idempotent -- re-run after extract-content.",
     )
     fl.add_argument("project", help="Project canonical UUID or name fragment")
+    fl.add_argument(
+        "--audit",
+        action="store_true",
+        help="Phase 1d: print a per-document ledger-health table (what was "
+        "classified/parsed/skipped/failed and why, with a recommended action) "
+        "instead of the short summary. Still refreshes the ledger (idempotent).",
+    )
     fl.set_defaults(func=cmd_fill_ledger)
 
     dm = sub.add_parser(

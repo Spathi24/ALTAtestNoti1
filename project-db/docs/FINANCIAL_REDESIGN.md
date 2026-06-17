@@ -310,7 +310,18 @@ built (Phase 4-5), revisit `classify_financial_sheet` with French naming
 CELL-CONTENT side is already bilingual (status values + division keywords are
 accent-folded EN/FR as of 2026-06-17).
 
-## 9. Phase 1d — Ledger Health / Review Surface
+## 9. Phase 1d — Ledger Health / Review Surface  ✅ BUILT 2026-06-17
+
+**Status: DONE.** `report_ledger_health(session, project_ref)` in `ai/views.py`
++ `fill-ledger --audit <project>` CLI. Validated on real Rockland (31 docs:
+2 ok, 2 review_reconcile_fail, 2 unsupported_pdf_quote, 1
+unsupported_simple_estimate, 1 unsupported_job_cost, 23 safe skips). 17 tests in
+`tests/test_ledger_health.py`. No LLM; idempotently refreshes the ledger while
+auditing. Two codes were added beyond the original list during the build:
+`review_parse_error` (status=failed) and `non_textual_image` reason → a photo
+with empty text is a `safe_nonfinancial_skip`, NOT `empty_extraction` (the
+latter — "re-run extract-content" — is reserved for *textual* docs that came
+out empty; this stopped 20 Rockland photos from being mislabeled).
 
 **Goal.** The parser is now safe, but a PM still cannot trust the numbers
 because they cannot see what was counted, what was skipped, and why.
@@ -344,8 +355,9 @@ I have four quote documents?"
 | `unsupported_simple_estimate` | Quote layout but no Material column — future `simple_estimate_grid.py` |
 | `unsupported_job_cost` | Job-cost sheet — intentionally deferred |
 | `unsupported_pdf_quote` | PDF/Word quote from a subcontractor — needs LLM extractor |
-| `empty_extraction` | DocumentText exists but extracted_text is empty — re-run `extract-content` |
-| `safe_nonfinancial_skip` | Photo, meeting notes, spec sheet — correctly skipped |
+| `empty_extraction` | **Textual** doc (PDF/xlsx/docx) whose extracted_text is empty — re-run `extract-content` |
+| `safe_nonfinancial_skip` | Photo (empty text expected, reason `non_textual_image`), meeting notes, spec sheet, order-quantities — correctly skipped |
+| `review_parse_error` | status=failed — an unexpected exception during parse; check the source doc |
 | `ok` | Parsed, rows written, reconcile passed |
 
 **Implementation path:**

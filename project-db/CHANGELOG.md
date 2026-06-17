@@ -9,6 +9,37 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- Financial Phase 1d: Ledger Health / Review Surface
+
+The parser was safe and routing-correct, but a PM still couldn't *see* what it
+did. Phase 1d adds the audit layer that answers "why is Project X showing only
+$66k when I have four quote documents?"
+
+- `report_ledger_health(session, project_ref)` (`ai/views.py`) + `fill-ledger
+  --audit <project>`: a per-document table — classified_type, ingestion_status,
+  ingestion_reason, rows_written, reconcile_ok, division_total, stated_total,
+  difference, and a deterministic `recommended_action` (no LLM). Sorted
+  attention-first (parse errors → reconcile-fails → unsupported → ok → safe
+  skips) so the actionable rows are on top.
+- recommended_action codes: `ok`, `review_reconcile_fail`, `review_parse_error`,
+  `unsupported_pdf_quote`, `unsupported_simple_estimate`, `unsupported_job_cost`,
+  `empty_extraction`, `safe_nonfinancial_skip`.
+- Real-data accuracy fix found during validation: a photo with empty extracted
+  text is `safe_nonfinancial_skip` (reason `non_textual_image`), NOT
+  `empty_extraction` — "re-run extract-content" only makes sense for *textual*
+  docs that came out empty. This kept 20 Rockland photos from being mislabeled.
+- Validated live on Rockland (31 docs): 2 ok ($66,539.65 + $126,480.91, both
+  reconcile to $0.00), 2 review_reconcile_fail (EXTERIOR +$1,000; EXTRAS
+  -$1,250 — real source discrepancies), 2 unsupported_pdf_quote, 1
+  unsupported_simple_estimate, 1 unsupported_job_cost, 23 safe skips.
+- Idempotent: the audit re-runs the populator (delete+insert), so it also
+  refreshes the ledger. 17 new tests (`tests/test_ledger_health.py`).
+
+1202 tests (was 1185). Phase 1d closes the financial visibility gap; next up is
+the queued **Project Log image ingestion** (`docs/PROJECT_LOG_INGESTION.md`).
+
+---
+
 ## 2026-06-17 -- Financial layer: Phase 1a-1c walk-back audit + bug fixes
 
 Reviewed the whole financial layer built today (Phase 1a grid parser → 1b

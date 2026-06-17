@@ -2131,6 +2131,191 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     }
 
 
+# Document extensions that imply an unstructured (non-grid) financial doc -- a
+# quote/extras-named file with no parseable Material/Total grid is a PDF/Word
+# quote (needs the future LLM extractor), not a single-column simple estimate.
+_PDF_LIKE_EXTS = {".pdf", ".doc", ".docx"}
+
+# Non-textual image formats: empty extracted_text is EXPECTED (a photo), so the
+# action is "safe skip", NOT "re-run extract-content".
+_PHOTO_EXTS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".jfif",
+    ".heic",
+    ".heif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+}
+
+
+def _recommended_action(doc_name: str, result, *, has_text: bool) -> str:
+    """Deterministic Phase-1d action code for one document. NO LLM.
+
+    Maps a ``DocLedgerResult`` (plus whether the document had extracted text and
+    its file extension) to one of the recommended_action codes in
+    ``docs/FINANCIAL_REDESIGN.md §9``. Pure function; never raises.
+    """
+    import os
+
+    if not has_text:
+        return "empty_extraction"
+
+    status = result.ingestion_status
+    if status == "parsed":
+        return "review_reconcile_fail" if result.reconcile_ok is False else "ok"
+    if status == "failed":
+        return "review_parse_error"
+
+    # status == "skipped" / "quarantined"
+    ctype = result.sheet_type
+    reason = result.ingestion_reason
+    ext = os.path.splitext(doc_name or "")[1].lower()
+
+    if ctype in ("quote", "extras") and reason == "no_header":
+        # Financial-looking, but no Material/Total grid was found.
+        return "unsupported_pdf_quote" if ext in _PDF_LIKE_EXTS else "unsupported_simple_estimate"
+    if ctype == "job_cost":
+        return "unsupported_job_cost"
+    # order_quantities, unknown, no_money, or anything else correctly set aside.
+    return "safe_nonfinancial_skip"
+
+
+def report_ledger_health(session: Session, project_ref: str) -> dict[str, Any]:
+    """Phase 1d audit: per-document explanation of what fill-ledger did and why.
+
+    Answers "why is Project X showing only $66k when I have four quote docs?" by
+    replaying the populator over every text-bearing document in the project and
+    reporting, per document: how it was classified, whether rows landed, whether
+    it reconciled, and a deterministic ``recommended_action`` (no LLM).
+
+    Side effect: this re-runs ``populate_ledger_for_document`` (idempotent
+    delete+insert), so it also refreshes the ledger exactly like ``fill-ledger``.
+    Documents whose ``DocumentText.extracted_text`` is empty are reported as
+    ``empty_extraction`` without being parsed.
+
+    Returns ``{"error": "..."}`` when the project_ref doesn't resolve.
+    """
+    from project_db.ai.financial_grid_populator import populate_ledger_for_document
+    from project_db.db.models.docs import DocumentText
+    from project_db.db.models.finance import FinancialLineItem  # noqa: F401 (parity import)
+
+    project = _resolve_project(session, project_ref)
+    if project is None:
+        return {"error": f"No project matched ref={project_ref!r}"}
+
+    pairs = (
+        session.query(Document, DocumentText)
+        .join(DocumentText, DocumentText.document_id == Document.canonical_id)
+        .filter(
+            Document.project_id == project.canonical_id,
+            Document.is_trashed.is_(False),
+        )
+        .all()
+    )
+
+    documents: list[dict[str, Any]] = []
+    for document, doc_text in pairs:
+        has_text = bool((doc_text.extracted_text or "").strip())
+
+        if not has_text:
+            import os
+
+            ext = os.path.splitext(document.name or "")[1].lower()
+            # A photo with no text is expected (safe skip); a textual doc with
+            # no text means extract-content didn't run / failed (re-run it).
+            if ext in _PHOTO_EXTS:
+                reason, action = "non_textual_image", "safe_nonfinancial_skip"
+            else:
+                reason, action = "empty_extraction", "empty_extraction"
+            documents.append(
+                {
+                    "document": document.name or str(document.canonical_id),
+                    "classified_type": "unknown",
+                    "ingestion_status": "skipped",
+                    "ingestion_reason": reason,
+                    "rows_written": 0,
+                    "reconcile_ok": None,
+                    "division_total": None,
+                    "stated_total": None,
+                    "difference": None,
+                    "recommended_action": action,
+                }
+            )
+            continue
+
+        result = populate_ledger_for_document(session, document, doc_text)
+        stated = result.grand_total
+        divtot = result.division_total
+        difference = None
+        if stated is not None and divtot is not None:
+            difference = float(Decimal(str(stated)) - Decimal(str(divtot)))
+
+        documents.append(
+            {
+                "document": document.name or str(document.canonical_id),
+                "classified_type": result.sheet_type,
+                "ingestion_status": result.ingestion_status,
+                "ingestion_reason": result.ingestion_reason,
+                "rows_written": result.rows_written,
+                "reconcile_ok": result.reconcile_ok,
+                "division_total": float(divtot) if divtot is not None else None,
+                "stated_total": float(stated) if stated is not None else None,
+                "difference": difference,
+                "recommended_action": _recommended_action(
+                    document.name or "", result, has_text=True
+                ),
+            }
+        )
+
+    session.commit()
+
+    # Sort: things needing attention first, then OK, then safe skips -- so a PM
+    # reads the actionable rows at the top.
+    _ACTION_RANK = {
+        "review_parse_error": 0,
+        "review_reconcile_fail": 1,
+        "unsupported_pdf_quote": 2,
+        "unsupported_simple_estimate": 3,
+        "unsupported_job_cost": 4,
+        "empty_extraction": 5,
+        "ok": 6,
+        "safe_nonfinancial_skip": 7,
+    }
+    documents.sort(
+        key=lambda d: (_ACTION_RANK.get(d["recommended_action"], 9), d["document"].lower())
+    )
+
+    counts: dict[str, int] = {}
+    for d in documents:
+        counts[d["recommended_action"]] = counts.get(d["recommended_action"], 0) + 1
+
+    total_rows = sum(d["rows_written"] for d in documents)
+    parsed = sum(1 for d in documents if d["ingestion_status"] == "parsed")
+    needs_review = sum(
+        1
+        for d in documents
+        if d["recommended_action"] in ("review_parse_error", "review_reconcile_fail")
+    )
+    unsupported = sum(1 for d in documents if d["recommended_action"].startswith("unsupported_"))
+
+    return {
+        "project": project.name,
+        "project_id": str(project.canonical_id),
+        "document_count": len(documents),
+        "parsed_count": parsed,
+        "rows_written": total_rows,
+        "needs_review_count": needs_review,
+        "unsupported_count": unsupported,
+        "action_counts": counts,
+        "documents": documents,
+    }
+
+
 REPORT_REGISTRY: dict[str, Any] = {
     "active_projects": report_active_projects,
     "deal_pipeline_value": report_deal_pipeline_value,

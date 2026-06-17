@@ -525,12 +525,13 @@ multi-sheet routing, ingestion metadata, extras→quote fallback. Rockland corpu
    decision.
 
 2. **Financial Phase 1d — Ledger Health / Review Surface
-   (`FINANCIAL_REDESIGN.md §9`).** `fill-ledger --audit` / `report_ledger_health`:
-   per-document table of classified_type / ingestion_status / ingestion_reason /
-   rows_written / reconcile_ok / recommended_action. Makes the parser's
-   decisions visible so a PM can understand what was counted and why.
-   Build trigger: when a PM asks "why is this quote missing?"
-   **Prerequisite to any further financial parser work.**
+   (`FINANCIAL_REDESIGN.md §9`). ✅ DONE 2026-06-17.** `fill-ledger --audit` /
+   `report_ledger_health`: per-document table of classified_type /
+   ingestion_status / ingestion_reason / rows_written / reconcile_ok /
+   recommended_action, attention-first sorted. Validated on real Rockland (2 ok,
+   2 reconcile-fail, 4 unsupported, 23 safe skips). The parser's decisions are
+   now visible. **This unblocks further financial parser work (still gated on
+   the §8 eval harness).**
 
 3. **§8 eval harness for financial extraction.** Gold set (1455 Geller $159,120;
    6554 PSA $1.5M should-capture; 5768 $8k settlement). Required BEFORE any
