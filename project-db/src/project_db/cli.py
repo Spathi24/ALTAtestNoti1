@@ -758,6 +758,63 @@ def _print_ledger_audit(data: dict) -> int:
     return 0
 
 
+def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
+    """LLM-extract division-keyed rows from quotes the grid parser can't read.
+
+    For PDF / single-column / unstructured quotes (most of the portfolio). The
+    LLM reads each doc's extracted text; deterministic code maps divisions,
+    verifies amounts, reconciles, and writes source='llm' FinancialLineItem
+    rows. COSTS OPENAI TOKENS -- this is a budgeted action. Skips docs already
+    covered by the deterministic grid parser. Run extract-content first.
+    """
+    from project_db.ai.financial_llm_extractor import (
+        FinancialLineExtractorError,
+        OpenAIFinancialLineExtractor,
+        populate_ledger_llm_for_project,
+    )
+    from project_db.ai.views import _resolve_project
+    from project_db.db.models import Project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        extractor = OpenAIFinancialLineExtractor()
+    except FinancialLineExtractorError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"Extractor: {extractor.name} ({extractor.model})  -- this calls OpenAI (costs tokens)")
+
+    with session_scope() as s:
+        if args.all:
+            projects = s.query(Project).order_by(Project.name).all()
+        else:
+            if not args.project:
+                print("FAIL: give a project name/UUID, or use --all", file=sys.stderr)
+                return 2
+            proj = _resolve_project(s, args.project)
+            if proj is None:
+                print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+                return 2
+            projects = [proj]
+
+        grand_rows = 0
+        for proj in projects:
+            batch = populate_ledger_llm_for_project(
+                s, extractor, proj.canonical_id, limit=args.limit
+            )
+            parsed = batch.parsed_docs
+            if parsed:
+                grand_rows += batch.total_rows
+                print(f"\nProject: {proj.name}")
+                print(batch.summary())
+        print(f"\nDone: {grand_rows} LLM ledger row(s) written.")
+        print("  View per-project: project_db division-margins <project>")
+    return 0
+
+
 def cmd_division_margins(args: argparse.Namespace) -> int:
     """Per-(unit, division) margin pivot from the FinancialLineItem ledger (Phase 2).
 
@@ -2858,6 +2915,25 @@ def build_parser() -> argparse.ArgumentParser:
         "instead of the short summary. Still refreshes the ledger (idempotent).",
     )
     fl.set_defaults(func=cmd_fill_ledger)
+
+    fll = sub.add_parser(
+        "fill-ledger-llm",
+        help="LLM-extract division rows from PDF/unstructured quotes the grid "
+        "parser can't read (portfolio-wide margins). Costs OpenAI tokens. Skips "
+        "docs already grid-parsed. Needs OPENAI_API_KEY + extract-content.",
+    )
+    fll.add_argument(
+        "project", nargs="?", help="Project canonical UUID or name fragment (omit with --all)"
+    )
+    fll.add_argument("--all", action="store_true", help="Process every project.")
+    fll.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Cap how many documents per project are sent to the LLM (cost control).",
+    )
+    fll.set_defaults(func=cmd_fill_ledger_llm)
 
     dm = sub.add_parser(
         "division-margins",
