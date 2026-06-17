@@ -296,6 +296,20 @@ unstructured PDFs (subcontractor invoices, supplier quotes, etc.) with
 correct approach is LLM-classify-then-extract with a deterministic validation
 layer, gated behind an eval harness. Do not build it without eval.
 
+**French document-NAME classification is deferred (deliberately, not missed).**
+`classify_financial_sheet` matches English doc-type markers
+(`quote`/`estimate`/`extras`/...). The live corpus confirms French-named
+financial docs exist — e.g. `2025-03-25 - Soumission - 5770 Boul St Laurent`
+(soumission = quote/bid) and several `Facture #…` (facture = invoice). They are
+**not** currently lost revenue, because every one of them is a PDF or an
+invoice: the grid parser only reads CSV/TSV grids today, and invoice/PDF
+ingestion is itself deferred (above). Adding French *name* markers now would be
+untested code that changes no real outcome. **When PDF/invoice ingestion is
+built (Phase 4-5), revisit `classify_financial_sheet` with French naming
+(`soumission`, `devis`, `avenant`, `facture`) as part of that work** — the
+CELL-CONTENT side is already bilingual (status values + division keywords are
+accent-folded EN/FR as of 2026-06-17).
+
 ## 9. Phase 1d — Ledger Health / Review Surface
 
 **Goal.** The parser is now safe, but a PM still cannot trust the numbers
