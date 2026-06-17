@@ -67,16 +67,19 @@
 > parsers (job_cost, Word/PDF, LLM ingestion) until Phase 1d exists and an
 > eval harness (§8) is in place.
 
-> **STATUS 2026-06-17 (b): Project Log image ingestion QUEUED behind Phase 1d.**
-> A new adoption-driven feature — daily ALTA Project Log labour/time sheets
-> emailed in as images/PDF, classified separately from field notes, extracted
-> into structured `ProjectLogSubmission` / `ProjectLogEntry` rows (reusing the
-> existing `Worker` roster for employee linkage), validated deterministically,
-> written to the canonical DB, then mirrored to a Drive CSV/Excel that the
-> scanner skips. ~70% of the plumbing already exists (email_intake, the vision
-> chain in field_note_extraction, Worker, dedup). Full spec:
-> `docs/PROJECT_LOG_INGESTION.md`. Decided 2026-06-17: build it **after** Phase
-> 1d. It is NOT a field note and NOT a financial document.
+> **STATUS 2026-06-17 (b): Project Log image ingestion MVP BUILT.**
+> Daily ALTA Project Log labour/time sheets emailed in as images are classified
+> separately from field notes (a fork in `email_intake._process_one`), extracted
+> by a vision structured-output call, validated deterministically (hours
+> computed vs reported, mismatches flagged, blanks dropped), and written to
+> `ProjectLogSubmission` / `ProjectLogEntry` (employee linkage reuses `Worker` +
+> a new `WorkerAlias`). A CSV mirror is exported under `ALTA Generated Reports/`
+> which the Drive scanner now skips (no re-ingestion loop). CLI: `project-logs
+> <project> [--export-dir]`, `poll-mail --no-project-logs`. Source of truth is
+> the canonical DB, not Drive. Full spec + build status:
+> `docs/PROJECT_LOG_INGESTION.md`. **Next = adoption** (send a real sheet;
+> needs OPENAI_API_KEY + gmail-auth). Deferred: PDF rendering, fuzzy employee
+> matching, employee profile UI, productivity analytics.
 
 **Framing (owner, via boss):** the software is already well-built; what it is
 *paid for* is **saving the company money over the long term** — being useful,

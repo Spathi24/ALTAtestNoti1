@@ -407,6 +407,47 @@ class TestGDriveConnectorRegistry:
         assert cls is GDriveConnector
 
 
+class TestGeneratedReportsFolderSkipped:
+    """The scanner must NOT ingest ALTA's own generated outputs, or a generated
+    project-log CSV would be pulled back in as a source document (the loop the
+    Project Log spec forbids)."""
+
+    def test_generated_reports_folder_not_ingested(self, session, org):
+        from project_db.connectors.gdrive.client import GDriveClient
+        from project_db.connectors.gdrive.connector import GDriveConnector
+        from project_db.db.models.docs import Document
+
+        svc = MagicMock()
+        gen_folder = _make_folder("genf", "ALTA Generated Reports")
+        normal_file = _make_file("ok1", "Overview.pdf", folder_id="root")
+        # Contents of the generated folder -- MUST NOT be reached if skip works.
+        secret = _make_file("secret1", "project_log_entries.csv", folder_id="genf")
+        list_mock = MagicMock()
+        list_mock.execute.side_effect = [
+            {"files": [gen_folder, normal_file], "nextPageToken": None},  # root
+            {"files": [secret], "nextPageToken": None},  # genf (should be skipped)
+        ]
+        svc.files.return_value.list.return_value = list_mock
+        svc.changes.return_value.getStartPageToken.return_value.execute.return_value = {
+            "startPageToken": "tok"
+        }
+        svc.changes.return_value.list.return_value.execute.return_value = {
+            "changes": [],
+            "newStartPageToken": "tok2",
+        }
+
+        connector = GDriveConnector(
+            session=session,
+            organization_id=org.canonical_id,
+            config={"_client": GDriveClient(service=svc), "root_folder": "root"},
+        )
+        connector.sync()
+
+        names = {d.name for d in session.query(Document).all()}
+        assert "Overview.pdf" in names  # normal file ingested
+        assert "project_log_entries.csv" not in names  # generated export NOT ingested
+
+
 class TestFolderNameNormalization:
     def test_normalize_name_strips_punctuation(self):
         from project_db.identity.matcher import normalize_name

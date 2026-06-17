@@ -9,6 +9,48 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- Project Log image ingestion (labour/time sheets) -- MVP
+
+A new ingestion path, separate from field notes and financials: daily ALTA
+PROJECT LOG sheets (photographed/scanned) emailed in, turned into structured,
+queryable labour rows. Full spec: docs/PROJECT_LOG_INGESTION.md.
+
+What it does today:
+- **Classify, don't guess.** A fork in email_intake screens image attachments
+  with a vision classify-extract call. An ALTA PROJECT LOG is handled by the
+  project-log path and NOT field-noted; anything else falls through unchanged.
+  Low-confidence -> quarantined (never silently misprocessed).
+- **Model extracts, code validates.** The vision call returns strict JSON
+  (document_type, site_name, rows); deterministic code normalises dates/times,
+  computes hours (left-arrived-lunch), flags reported-vs-computed mismatches,
+  and drops blank rows. Reported hours are never overwritten -- both kept.
+- **Canonical DB is the source of truth.** ProjectLogSubmission (one per form) +
+  ProjectLogEntry (one per worker/time row). Employee linkage reuses the Worker
+  roster + a new WorkerAlias (exact/alias only -- a wrong match is worse than
+  unresolved; raw handwritten names are never discarded). Idempotent on
+  (message_id AND attachment_hash), sibling-safe so one email can carry several
+  sheets.
+- **Site/project resolution:** site name on the form wins, else the email's
+  resolved project. Unresolved -> quarantined unknown_site, rows still kept.
+- **Human-readable mirror.** `project-logs <project>` prints hours-by-employee
+  (resolved + unresolved) and each sheet's status; `--export-dir` writes a CSV
+  under `ALTA Generated Reports/Project Logs/<project>/`. The Drive scanner now
+  SKIPS `ALTA Generated Reports/`, so a generated CSV is never re-ingested as a
+  source document (the loop the spec forbids).
+- CLI: `poll-mail` runs the route by default (`--no-project-logs` to disable);
+  `project-logs <project> [--export-dir]` to view/export.
+
+Reuse over rebuild: ~70% leaned on existing email_intake, the vision chain in
+field_note_extraction, and Worker. New tables created via create_all +
+ensure_sqlite_schema. ~120 new tests (test_project_log.py,
+test_project_log_email.py, + the skip-rule test). 1271 tests total.
+
+NOT yet done (deliberate): real-sheet run (needs OPENAI_API_KEY + gmail-auth --
+the adoption step), PDF->image rendering, fuzzy employee matching, employee
+profile UI, productivity analytics. No payroll logic.
+
+---
+
 ## 2026-06-17 -- Financial Phase 1d: Ledger Health / Review Surface
 
 The parser was safe and routing-correct, but a PM still couldn't *see* what it

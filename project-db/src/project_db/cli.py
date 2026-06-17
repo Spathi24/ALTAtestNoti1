@@ -847,6 +847,15 @@ def cmd_project_logs(args: argparse.Namespace) -> int:
                     f"    [{sub_row['status']}{reason}]  {sub_row['document']}  "
                     f"site={site}  {sub_row['received_at'] or ''}"
                 )
+
+        if getattr(args, "export_dir", None) is not None:
+            from project_db.ai.project_log_export import export_project_log_csv
+
+            path = export_project_log_csv(s, args.project, out_root=args.export_dir or None)
+            if path:
+                print(f"\n  Exported CSV -> {path}")
+            else:
+                print("\n  (nothing to export -- no time-log rows)")
     return 0
 
 
@@ -2903,6 +2912,17 @@ def build_parser() -> argparse.ArgumentParser:
         "plus each submitted sheet's status. No LLM.",
     )
     pl.add_argument("project", help="Project canonical UUID or name fragment")
+    pl.add_argument(
+        "--export-dir",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="Also write a human-readable CSV under "
+        "DIR/'ALTA Generated Reports'/'Project Logs'/<project>/. Omit DIR to use "
+        "PROJECT_LOG_EXPORT_DIR or the current directory. The Drive scanner skips "
+        "the generated-reports folder, so the export is never re-ingested.",
+    )
     pl.set_defaults(func=cmd_project_logs)
 
     retry = sub.add_parser(

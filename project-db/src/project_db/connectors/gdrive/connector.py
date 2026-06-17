@@ -77,6 +77,12 @@ _PROJECT_BUCKETS: dict[str, ProjectStatus] = {
     "LEADS": ProjectStatus.PROPOSED,
 }
 
+# ALTA's own generated outputs live under this folder.  The Drive scanner must
+# NEVER ingest them as source documents, or it creates a loop (a generated
+# project-log CSV gets pulled back in as a new raw document).  See
+# docs/PROJECT_LOG_INGESTION.md ("Generated Outputs").
+_GENERATED_REPORTS_FOLDER = "alta generated reports"
+
 # Keyword (in the normalized top-level folder name) -> document category.
 _CATEGORY_KEYWORDS: list[tuple[str, str]] = [
     ("projects", "projects"),
@@ -326,6 +332,11 @@ class GDriveConnector(BaseConnector):
 
         for item in items:
             if item.get("mimeType") == _FOLDER_MIME:
+                # Never descend into ALTA's own generated-output tree -- that
+                # would re-ingest exported reports as source documents.
+                if (item.get("name") or "").strip().lower() == _GENERATED_REPORTS_FOLDER:
+                    logger.info("[GDRIVE] Skipping generated-reports folder under %r", folder_path)
+                    continue
                 child_path = f"{folder_path}/{item['name']}" if folder_path else item["name"]
                 # A folder at  01. PROJECTS/<bucket>/<name>  IS a project --
                 # create/resolve its canonical Project.  Any other folder

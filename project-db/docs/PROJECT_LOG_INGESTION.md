@@ -1,8 +1,19 @@
-# Project Log Image Ingestion — Spec (queued behind Phase 1d)
+# Project Log Image Ingestion — Spec + Build Status
 
-**Status: NOT STARTED — queued.** Decided 2026-06-17: build *after* financial
-Phase 1d (Ledger Health). This doc captures the spec verbatim-in-spirit plus a
-feasibility map against the existing codebase so the build can start cold.
+**Status: MVP BUILT 2026-06-17.** All six priority steps shipped:
+(1) classifier route, (2) DB tables, (3) vision structured extractor,
+(4) deterministic hours validation, (5) CSV export + Drive-scanner skip,
+(6) idempotent dedup. Code: `ai/project_log_extraction.py`,
+`ai/project_log_export.py`, `db/models/project_log.py`, the fork in
+`ai/email_intake.py`, and the `project-logs` / `poll-mail --no-project-logs`
+CLI. ~120 tests across `tests/test_project_log.py`,
+`tests/test_project_log_email.py`, plus the generated-folder skip test in
+`tests/test_gdrive_connector.py`. **Not yet exercised on a real emailed sheet**
+(needs OPENAI_API_KEY + gmail-auth) — that is the adoption step. Deferred:
+PDF rendering to image, fuzzy employee matching, employee profile UI, analytics.
+
+Original plan below (kept for reference). Decided 2026-06-17: built *after*
+financial Phase 1d (Ledger Health).
 
 A real ALTA Project Log sheet is going to be emailed in (images/PDF). This is an
 **immediate-use, adoption-driven** feature — a usable labour-log archive, NOT a

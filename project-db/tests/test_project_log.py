@@ -7,7 +7,9 @@ No API calls, no real client data.
 
 from __future__ import annotations
 
+import csv as _csv
 import json
+import os
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -581,3 +583,83 @@ class TestReportHours:
         assert len(rep["submissions"]) == 1
         assert rep["submissions"][0]["status"] == "parsed"
         assert rep["submissions"][0]["document"] == "sheet.jpg"
+
+
+# ---------------------------------------------------------------------------
+# CSV export (mirror; DB stays source of truth)
+# ---------------------------------------------------------------------------
+
+
+_EXPECTED_CSV_HEADER = [
+    "Received At",
+    "Source File",
+    "Site Name",
+    "Resolved Project",
+    "Date",
+    "Name",
+    "Time Arrived",
+    "Time Left",
+    "Lunch Hours",
+    "Total Hours Reported",
+    "Total Hours Computed",
+    "Hours Mismatch",
+    "Supervisor Signature Present",
+    "Confidence",
+    "Review Status",
+]
+
+
+class TestCsvExport:
+    def test_export_writes_csv_under_generated_folder(self, db_session, tmp_path):
+        from project_db.ai.project_log_export import export_project_log_csv
+
+        _seed_project(db_session)
+        ex = MockProjectLogExtractor([_pl_response()])
+        ingest_project_log(db_session, ex, image_path="/tmp/log.jpg", source_email_message_id="m1")
+        db_session.commit()
+
+        path = export_project_log_csv(db_session, "923-927 Rockland", out_root=str(tmp_path))
+        assert path is not None
+        assert os.path.exists(path)
+        # Lands under the generated-reports tree the Drive scanner skips.
+        assert "ALTA Generated Reports" in path
+        assert os.path.join("Project Logs", "923-927 Rockland") in path
+
+        with open(path, newline="", encoding="utf-8") as fh:
+            rows = list(_csv.reader(fh))
+        assert rows[0] == _EXPECTED_CSV_HEADER
+        assert len(rows) == 3  # header + Mike + Sam
+        by_name = {r[5]: r for r in rows[1:]}
+        sam = by_name["Sam"]
+        assert sam[9] == "9.00"  # Total Hours Reported (preserved)
+        assert sam[10] == "8.00"  # Total Hours Computed
+        assert sam[11] == "yes"  # Hours Mismatch
+        assert sam[3] == "923-927 Rockland"  # Resolved Project
+        assert sam[14] == "parsed"  # Review Status
+
+    def test_export_none_when_no_rows(self, db_session, tmp_path):
+        from project_db.ai.project_log_export import export_project_log_csv
+
+        _seed_project(db_session)
+        assert (
+            export_project_log_csv(db_session, "923-927 Rockland", out_root=str(tmp_path)) is None
+        )
+
+    def test_export_none_for_bad_ref(self, db_session, tmp_path):
+        from project_db.ai.project_log_export import export_project_log_csv
+
+        assert export_project_log_csv(db_session, "nonexistent xyz", out_root=str(tmp_path)) is None
+
+    def test_export_idempotent_overwrite(self, db_session, tmp_path):
+        from project_db.ai.project_log_export import export_project_log_csv
+
+        _seed_project(db_session)
+        ex = MockProjectLogExtractor([_pl_response(), _pl_response()])
+        ingest_project_log(db_session, ex, image_path="/tmp/log.jpg", source_email_message_id="m1")
+        db_session.commit()
+        p1 = export_project_log_csv(db_session, "923-927 Rockland", out_root=str(tmp_path))
+        p2 = export_project_log_csv(db_session, "923-927 Rockland", out_root=str(tmp_path))
+        assert p1 == p2  # same path, overwritten (no duplicate files)
+        with open(p1, newline="", encoding="utf-8") as fh:
+            rows = list(_csv.reader(fh))
+        assert len(rows) == 3  # still header + 2 rows, not doubled
