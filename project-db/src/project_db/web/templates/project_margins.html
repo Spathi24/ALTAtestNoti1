@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project }} - Division Margins{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.project }} &mdash; Division Margins</h2>
+  <p><small>
+    Deterministic grid parser — no LLM.
+    Revenue = own-authored quote sheets (<code>fill-ledger</code>).
+    Cost data pending job-cost extractor (Phase 1c).
+    <a href="/projects/{{ d.project_id }}">&larr; back to project</a>
+  </small></p>
+</hgroup>
+
+<!-- Summary KPIs -->
+<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  <div class="kpi">
+    <h3>Quoted revenue</h3>
+    <div class="kpi-number pos">
+      {% if d.total_quoted_revenue is not none %}
+        ${{ "{:,.0f}".format(d.total_quoted_revenue) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </div>
+  </div>
+  <div class="kpi">
+    <h3>Actual cost</h3>
+    <div class="kpi-number">
+      {% if d.total_actual_cost is not none %}
+        ${{ "{:,.0f}".format(d.total_actual_cost) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </div>
+  </div>
+  <div class="kpi">
+    <h3>Gross margin</h3>
+    <div class="kpi-number {{ 'pos' if d.gross_margin and d.gross_margin >= 0 else 'neg' if d.gross_margin is not none else '' }}">
+      {% if d.gross_margin is not none %}
+        ${{ "{:,.0f}".format(d.gross_margin) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if d.coverage_note %}
+<p><small><span class="pill pill-warn">coverage</span> {{ d.coverage_note }}</small></p>
+{% endif %}
+
+{% if d.divisions %}
+
+{# Group rows by unit for a cleaner multi-unit table #}
+{% set ns = namespace(current_unit="__none__") %}
+<table>
+  <thead>
+    <tr>
+      <th>Unit</th>
+      <th>Div</th>
+      <th>Division</th>
+      <th style="text-align:right">Quoted Rev.</th>
+      <th style="text-align:right">Act. Cost</th>
+      <th style="text-align:right">Gross Margin</th>
+      <th style="text-align:right">Margin %</th>
+      <th>Flag</th>
+      <th>Sources</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in d.divisions %}
+    <tr>
+      <td><code>{{ row.unit if row.unit else "unknown_unit" }}</code></td>
+      <td><code>{{ row.division_code }}</code></td>
+      <td>{{ row.division_name }}</td>
+      <td style="text-align:right">
+        {% if row.quoted_revenue is not none %}${{ "{:,.2f}".format(row.quoted_revenue) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.actual_total_cost is not none %}${{ "{:,.2f}".format(row.actual_total_cost) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.gross_margin is not none %}
+          <span class="{{ 'pos' if row.gross_margin >= 0 else 'neg' }}">
+            ${{ "{:,.2f}".format(row.gross_margin) }}
+          </span>
+        {% else %}
+          &mdash;
+        {% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.gross_margin_pct is not none %}{{ row.gross_margin_pct }}%{% else %}&mdash;{% endif %}
+      </td>
+      <td>
+        {% if row.status_flag == "ok" %}
+          <span class="pill pill-accepted">ok</span>
+        {% elif row.status_flag == "revenue_only" %}
+          <span class="pill pill-warn">rev-only</span>
+        {% elif row.status_flag == "cost_only" %}
+          <span class="pill pill-warn">cost-only</span>
+        {% else %}
+          <span class="pill">{{ row.status_flag }}</span>
+        {% endif %}
+      </td>
+      <td><small>{{ row.source_docs | join(", ") }}</small></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% else %}
+<article>
+  <p>No ledger rows yet. Run:
+     <code>project_db fill-ledger "{{ d.project }}"</code>
+     (requires <code>extract-content</code> first).</p>
+</article>
+{% endif %}
+
+<details style="margin-top:1rem">
+  <summary>Raw JSON</summary>
+  <pre><code>{{ d | tojson(indent=2) }}</code></pre>
+</details>
+{% endblock %}

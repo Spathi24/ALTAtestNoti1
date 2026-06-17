@@ -46,6 +46,21 @@ def project_financials(session: Session, project_id: str) -> dict[str, Any] | No
     return rep
 
 
+def project_division_margins(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Per-(unit, division) margin pivot from the FinancialLineItem ledger.
+
+    Thin pass-through to ``report_division_margins`` so the CLI and the web
+    panel render the same numbers from the same canonical source.  Returns
+    None when the project doesn't resolve (route renders a 404).
+    """
+    from project_db.ai.views import report_division_margins
+
+    rep = report_division_margins(session, project_id)
+    if isinstance(rep, dict) and rep.get("error"):
+        return None
+    return rep
+
+
 def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     """Portfolio attention briefing for the landing page.
 

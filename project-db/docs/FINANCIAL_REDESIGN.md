@@ -7,6 +7,34 @@ layer it replaces) and `MONDAY_AUDIT.md` (the task-graph rework it parallels).
 
 ---
 
+## Financial Data Contract (canonical source declaration)
+
+**Decided 2026-06-17 after the Phase 2 checkpoint.**
+
+| Consumer | Reads from | Status |
+|---|---|---|
+| `report_project_financials` | `FinancialRecord` (LLM-extracted) | Transition — kept until Phase 5 cutover |
+| `/projects/{id}/financials` web panel + HTMX toggle | `FinancialRecord` via `report_project_financials` | Transition |
+| `report_project_money_line` | `FinancialRecord` via `report_project_financials` | Transition |
+| Attention briefing money section | `FinancialRecord` | Transition |
+| `extract_financials_for_project` (ai/financials.py) | Writes `FinancialRecord` | Transition writer |
+| **`report_division_margins`** | **`FinancialLineItem`** | **Canonical new source** |
+| **`/projects/{id}/margins` web panel** | **`FinancialLineItem` via `report_division_margins`** | **Canonical new source** |
+| **`fill-ledger` CLI** | Writes `FinancialLineItem` | **Canonical new source writer** |
+| `report_budget_vs_contract` | `DocumentText` only | Independent (regex heuristic) |
+
+**`FinancialLineItem` is canonical for division-keyed margin analysis.**
+`FinancialRecord` is the compatibility/transition layer — it stays until
+`report_division_margins` covers all use cases that `report_project_financials`
+currently covers (confirmed toggle, per-document breakdown, cross-check view).
+That cutover is Phase 5. No consumer currently reads from both tables.
+
+**`unit=None` semantics:** a `None` unit means the document had no unit prefix
+(e.g. "ACCEPTED QUOTE" with no civic number). It does NOT mean "covers all
+units." Display as `"unknown_unit"` in all UIs, never as `"(all)"`.
+
+---
+
 ## 0. Why (the problem, verified against real code)
 
 The owner's boss models profit **per trade/division per unit** (Plumbing
