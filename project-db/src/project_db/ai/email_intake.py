@@ -87,6 +87,8 @@ class EmailPollBatch:
     duplicate: int = 0
     failed: int = 0
     field_note_batches: list[FieldNoteBatch] = field(default_factory=list)
+    # Project-log submissions handled this run (one batch per such email).
+    project_log_batches: list[Any] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -487,6 +489,7 @@ def poll_mailbox(
     *,
     attachment_dir: str | None = None,
     embedding_provider: Any | None = None,
+    project_log_extractor: Any | None = None,  # ProjectLogExtractor subclass
 ) -> EmailPollBatch:
     """Poll the Gmail mailbox and ingest any new field notes.
 
@@ -519,6 +522,7 @@ def poll_mailbox(
                 batch=batch,
                 attachment_dir=attach_base,
                 embedding_provider=embedding_provider,
+                project_log_extractor=project_log_extractor,
             )
         except Exception as exc:
             logger.exception("[GMAIL] Unexpected error processing %s", gmail_id)
@@ -542,6 +546,7 @@ def _process_one(
     batch: EmailPollBatch,
     attachment_dir: str,
     embedding_provider: Any | None = None,
+    project_log_extractor: Any | None = None,
 ) -> None:
     """Process a single Gmail message.  All side-effects happen here."""
     # ----- Dedup check -----
@@ -622,6 +627,52 @@ def _process_one(
     # Commit the ingest row with known sender BEFORE extraction so crash is idempotent.
     session.flush()
     session.commit()
+
+    # ----- Project-log route (before field notes) -----
+    # If any image attachment is an ALTA PROJECT LOG, handle it here and do NOT
+    # run field-note extraction on this email.  Runs even when no project was
+    # resolved (the project-log path quarantines unknown sites itself) and when
+    # there is no body text (the form IS the content).  Uses the project-log
+    # extractor's own (broader) image-extension set, not the field-note one.
+    if attachment_paths and project_log_extractor is not None:
+        from project_db.ai.project_log_extraction import (
+            ingest_project_logs_from_email,
+            is_project_log_image,
+        )
+
+        pl_image_paths = [p for p in attachment_paths if is_project_log_image(p)]
+    else:
+        pl_image_paths = []
+
+    if pl_image_paths:
+        pl_batch = ingest_project_logs_from_email(
+            session,
+            project_log_extractor,
+            pl_image_paths,
+            source_email_message_id=gmail_id,
+            email_ingest_id=str(ingest.canonical_id),
+            received_at=received_at,
+            project_hint=project_id,
+        )
+        if pl_batch.any_project_log:
+            ingest.status = "processed"
+            ingest.notes = (
+                f"project_log: {pl_batch.total_entries} entr(y/ies) across "
+                f"{sum(1 for r in pl_batch.results if r.handled)} sheet(s)"
+            )
+            ingest.processed_at = datetime.utcnow()
+            session.flush()
+            session.commit()
+            batch.processed += 1
+            batch.project_log_batches.append(pl_batch)
+            poller.apply_label(gmail_id, _LABEL_PROCESSED)
+            logger.info(
+                "[GMAIL] Processed project-log msg %s from %s -> %d entr(y/ies)",
+                gmail_id,
+                sender_email,
+                pl_batch.total_entries,
+            )
+            return
 
     # ----- Body extraction -----
     body_text = _extract_body_text(payload).strip()

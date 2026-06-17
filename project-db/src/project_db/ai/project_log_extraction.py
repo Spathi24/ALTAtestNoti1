@@ -102,6 +102,16 @@ def _load_image_data_url(path: str) -> str | None:
     return f"data:{mime};base64,{_base64.b64encode(data).decode()}"
 
 
+def is_project_log_image(path: str) -> bool:
+    """True if *path* has an image extension the project-log extractor supports.
+
+    Broader than the field-note image set (adds .jfif/.heic/.bmp/.tif) because a
+    project log is itself a photographed/scanned form -- the email router uses
+    this to pick which attachments to hand to the project-log extractor.
+    """
+    return os.path.splitext(path)[1].lower() in _IMAGE_EXTS
+
+
 def _sha256_file(path: str) -> str | None:
     try:
         h = hashlib.sha256()
