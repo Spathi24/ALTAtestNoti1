@@ -9,6 +9,34 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- Telegram labour intake: LIVE + closed up
+
+Live end-to-end: a linked worker texts @ALTA_employeebot ("worked Rockland 7-4
+half hour lunch") -> poll-telegram -> LLM extract -> consolidated shift in the DB
+-> bot confirmation reply. Proven with a real message (Nicholas, 8h, Rockland).
+
+Transport (committed earlier today): pyTelegramBotAPI (telebot) SYNC, one-shot
+poll-telegram (offset cursor; no always-on server, no webhook -- poll >=daily,
+like Gmail), /start <token> worker binding, unbound senders quarantined.
+
+Closed up cleanly today with the deliberately-simple model:
+- The LabourClaimCluster IS the canonical labour record (NO synthetic
+  ProjectLogEntry write-back -- that was the convoluted part avoided).
+- EXCEPTION-ONLY review: clean shifts auto-confirm; only conflict /
+  needs_review are surfaced. The PM does not confirm every claim.
+- report_labour() -> one function behind both `labour-claims` (CLI) and a new
+  "Labour" tab on the project web page (shifts, hours-by-worker, the exceptions
+  to review, unresolved names).
+- labour-consolidate --all (Gmail bridge + consolidate every project) = the one
+  daily-schedule command; no source required on any given day; two Project Log
+  sheets for the same worker+day MERGE into one shift (tested).
+
+Deferred (not blocking the text pilot): Telegram voice transcription, photo-of-
+a-Project-Log via Telegram, activity-text -> field-note proposals, employee
+alias-resolution UI. 1324 tests.
+
+---
+
 ## 2026-06-17 -- Unified labour intake: consolidation spine + Telegram text extraction
 
 Started the Telegram + Gmail labour-intake plan by building its architectural
