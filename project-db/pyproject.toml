@@ -15,6 +15,7 @@ ai = ["anthropic>=0.40"]
 gdrive = ["google-api-python-client>=2.0", "google-auth>=2.0", "google-auth-oauthlib>=1.0"]
 content = ["pymupdf>=1.24", "python-docx>=1.1", "openpyxl>=3.1"]
 rag = ["openai>=1.40", "tiktoken>=0.7", "numpy>=1.26"]
+telegram = ["pyTelegramBotAPI>=4.34"]
 ui = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "jinja2>=3.1", "python-multipart>=0.0.9", "markdown>=3.5"]
 dev = ["pytest>=8.0", "ruff>=0.5", "mypy>=1.10", "fastapi>=0.110", "uvicorn[standard]>=0.27", "jinja2>=3.1", "python-multipart>=0.0.9", "httpx>=0.27", "markdown>=3.5", "numpy>=1.26"]
 

@@ -581,6 +581,35 @@ SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_INDEXES = (
 )
 
 
+SQLITE_TELEGRAM_IDENTITY_DDL = """
+CREATE TABLE telegram_identity (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    worker_id TEXT NOT NULL,
+    telegram_user_id VARCHAR,
+    telegram_chat_id VARCHAR,
+    telegram_username VARCHAR,
+    telegram_first_name VARCHAR,
+    telegram_last_name VARCHAR,
+    telegram_phone VARCHAR,
+    verified BOOLEAN NOT NULL DEFAULT 0,
+    verified_method VARCHAR,
+    invite_token VARCHAR,
+    first_seen_at DATETIME,
+    last_seen_at DATETIME,
+    FOREIGN KEY (worker_id) REFERENCES worker(canonical_id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_TELEGRAM_IDENTITY_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_telegram_identity_user ON telegram_identity (telegram_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_telegram_identity_token ON telegram_identity (invite_token)",
+    "CREATE INDEX IF NOT EXISTS ix_telegram_identity_worker ON telegram_identity (worker_id)",
+)
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -678,6 +707,9 @@ def ensure_sqlite_schema(engine) -> None:
             conn, tables, "labour_claim_cluster_member", SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_DDL
         )
         for _idx_ddl in SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(conn, tables, "telegram_identity", SQLITE_TELEGRAM_IDENTITY_DDL)
+        for _idx_ddl in SQLITE_TELEGRAM_IDENTITY_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
         # Post-DDL columns on field_note (email_ingest_id added after initial DDL).

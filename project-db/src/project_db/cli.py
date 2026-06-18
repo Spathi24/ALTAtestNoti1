@@ -2040,6 +2040,155 @@ def cmd_poll_mail(args: argparse.Namespace) -> int:
     return 0 if batch.ok else 1
 
 
+def cmd_telegram_invite_worker(args: argparse.Namespace) -> int:
+    """Create a Telegram invite deep-link that binds the sender to a Worker.
+
+    Give a worker display-name (or UUID); an unknown name creates a stub. Share
+    the printed link with that worker -- tapping it sends /start <token> to the
+    bot and links their Telegram account.
+    """
+    from project_db.ai.telegram_intake import generate_invite
+    from project_db.connectors.telegram.client import TelegramClient, TelegramClientError
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        client = TelegramClient()
+    except TelegramClientError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        info = generate_invite(s, client, args.worker)
+    print(f"Invite for worker: {info['worker']}  ({info['worker_id']})")
+    print(f"  Deep link: {info['deep_link']}")
+    print(f"  (or have them send to the bot:  /start {info['token']} )")
+    print("Share the deep link with the worker; tapping it links their Telegram account.")
+    return 0
+
+
+def cmd_poll_telegram(args: argparse.Namespace) -> int:
+    """Poll the Telegram bot once and ingest new worker/foreman messages.
+
+    One-shot (not a daemon): grabs everything since the last cursor and exits, so
+    no always-on server is needed -- run on a schedule or on demand. Telegram
+    retains unacknowledged updates ~24h. Free-text from a LINKED worker becomes
+    LabourClaims (via OpenAI) + consolidated shifts; unlinked senders are
+    quarantined. Needs TELEGRAM_BOT_TOKEN + OPENAI_API_KEY.
+    """
+    from project_db.ai.telegram_intake import poll_telegram
+    from project_db.ai.telegram_labour_extraction import (
+        OpenAITelegramLabourExtractor,
+        TelegramLabourExtractorError,
+    )
+    from project_db.connectors.telegram.client import TelegramClient, TelegramClientError
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    try:
+        client = TelegramClient()
+    except TelegramClientError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+    try:
+        extractor = OpenAITelegramLabourExtractor()
+    except TelegramLabourExtractorError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        me = client.get_me()
+        print(f"[poll-telegram] bot: @{me.get('username')}  (extractor: {extractor.model})")
+    except Exception as exc:
+        print(f"FAIL: cannot reach Telegram ({exc}). Check TELEGRAM_BOT_TOKEN.", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        batch = poll_telegram(s, client, extractor)
+    print(batch.summary())
+    for err in batch.errors:
+        print(f"  WARN: {err}")
+    if batch.claims_created:
+        print("  Review with: project_db labour-claims <project>  /  the project's web page")
+    return 0 if batch.ok else 1
+
+
+def cmd_labour_consolidate(args: argparse.Namespace) -> int:
+    """Re-run labour-claim consolidation for a project (deterministic, no LLM)."""
+    from project_db.ai.labour_consolidation import bridge_project_log_to_claims, consolidate_claims
+    from project_db.ai.views import _resolve_project
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+    with session_scope() as s:
+        p = _resolve_project(s, args.project)
+        if p is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+        if args.bridge_gmail:
+            n = bridge_project_log_to_claims(s, p.canonical_id)
+            s.commit()
+            print(f"Bridged {n} Project Log entr(y/ies) into labour claims.")
+        res = consolidate_claims(s, p.canonical_id)
+        print(f"Project: {p.name}")
+        print(res.summary())
+    return 0
+
+
+def cmd_labour_claims(args: argparse.Namespace) -> int:
+    """Show a project's consolidated labour shifts (clusters) + their claims."""
+    from project_db.ai.views import _resolve_project
+    from project_db.db.models import LabourClaim, LabourClaimCluster, Worker
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+    with session_scope() as s:
+        p = _resolve_project(s, args.project)
+        if p is None:
+            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+            return 2
+        clusters = (
+            s.query(LabourClaimCluster)
+            .filter(LabourClaimCluster.project_id == p.canonical_id)
+            .order_by(LabourClaimCluster.work_date)
+            .all()
+        )
+        names = {w.canonical_id: w.display_name for w in s.query(Worker).all()}
+        print(f"Project: {p.name}  ({p.canonical_id})")
+        print(f"  {len(clusters)} shift cluster(s)")
+        print()
+        if clusters:
+            print(f"  {'Date':<12}  {'Worker':<22}  {'Hours':>6}  {'Src':<18}  {'Status':<18}  Ev")
+            print("  " + "-" * 90)
+            for c in clusters:
+                worker = names.get(c.worker_id, "(unresolved)")
+                hrs = f"{c.chosen_total_hours}" if c.chosen_total_hours is not None else "-"
+                src = (c.source_channels_json or "").strip("[]").replace('"', "")
+                d = c.work_date.isoformat() if c.work_date else "?"
+                print(
+                    f"  {d:<12}  {worker[:22]:<22}  {hrs:>6}  {src:<18}  {c.status:<18}  "
+                    f"{c.evidence_count}"
+                )
+        # Unclustered / unresolved-project claims are worth surfacing too.
+        loose = (
+            s.query(LabourClaim)
+            .filter(
+                LabourClaim.project_id == p.canonical_id,
+                LabourClaim.canonical_cluster_id.is_(None),
+            )
+            .count()
+        )
+        if loose:
+            print(f"\n  ({loose} claim(s) not yet consolidated — run labour-consolidate)")
+    return 0
+
+
 def cmd_retry_quarantined(_: argparse.Namespace) -> int:
     """Clear quarantined EmailIngest rows so the next poll-mail reprocesses them.
 
@@ -3036,6 +3185,42 @@ def build_parser() -> argparse.ArgumentParser:
         "the generated-reports folder, so the export is never re-ingested.",
     )
     pl.set_defaults(func=cmd_project_logs)
+
+    tinv = sub.add_parser(
+        "telegram-invite-worker",
+        help="Create a Telegram invite deep-link that binds a worker's account "
+        "to their Worker record. Needs TELEGRAM_BOT_TOKEN.",
+    )
+    tinv.add_argument("worker", help="Worker display-name (exact) or canonical UUID")
+    tinv.set_defaults(func=cmd_telegram_invite_worker)
+
+    tpoll = sub.add_parser(
+        "poll-telegram",
+        help="Poll the Telegram bot once; ingest linked workers' messages as "
+        "LabourClaims + consolidated shifts. One-shot (schedule it). Needs "
+        "TELEGRAM_BOT_TOKEN + OPENAI_API_KEY.",
+    )
+    tpoll.set_defaults(func=cmd_poll_telegram)
+
+    lc = sub.add_parser(
+        "labour-claims",
+        help="Show a project's consolidated labour shifts (Gmail + Telegram). No LLM.",
+    )
+    lc.add_argument("project", help="Project canonical UUID or name fragment")
+    lc.set_defaults(func=cmd_labour_claims)
+
+    lcons = sub.add_parser(
+        "labour-consolidate",
+        help="Re-run labour consolidation for a project (deterministic). "
+        "Use --bridge-gmail to first emit claims from Project Log entries.",
+    )
+    lcons.add_argument("project", help="Project canonical UUID or name fragment")
+    lcons.add_argument(
+        "--bridge-gmail",
+        action="store_true",
+        help="First emit LabourClaims from this project's Project Log entries.",
+    )
+    lcons.set_defaults(func=cmd_labour_consolidate)
 
     retry = sub.add_parser(
         "retry-quarantined",

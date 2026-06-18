@@ -58,6 +58,7 @@ from project_db.db.models.roadmap import (
     RoadmapPhase,
     RoadmapTask,
 )
+from project_db.db.models.telegram_identity import TelegramIdentity
 from project_db.db.models.work import (
     DailyLog,
     Project,
@@ -124,6 +125,7 @@ __all__ = [
     "Task",
     "TaskDependency",
     "TaskStatus",
+    "TelegramIdentity",
     "User",
     "Vendor",
     "Worker",
