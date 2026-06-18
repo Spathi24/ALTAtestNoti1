@@ -9,6 +9,48 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-17 -- Unified labour intake: consolidation spine + Telegram text extraction
+
+Started the Telegram + Gmail labour-intake plan by building its architectural
+core: Gmail Project Logs and (future) Telegram messages feed ONE consolidation
+layer, not two silos.
+
+Library decision (researched): the Telegram adapter will use **pyTelegramBotAPI
+(telebot) in sync mode, NOT aiogram** -- this repo is fully synchronous (sync
+SQLAlchemy, sync Gmail poller, sync CLI); aiogram and python-telegram-bot v20+
+are async-only and would force event-loop bridging around sync DB calls for no
+benefit at pilot scale. telebot 4.34 (June 2026) has first-class sync polling +
+voice/photo downloads.
+
+Built + mock-tested today (no bot token, no API spend):
+- **4 models** (`db/models/labour_intake.py`): LabourSourceEvent (raw item),
+  LabourClaim (one extracted shift/activity claim), LabourClaimCluster +
+  Member. Reuses Worker/WorkerAlias -- no separate employee DB.
+- **Gmail bridge** (`ai/labour_consolidation.py`): emits LabourClaims from the
+  existing ProjectLogEntry rows, so the layer works on real data without
+  touching Project Log ingestion.
+- **Consolidation engine**: coarse (worker, project, date) clustering; agreeing
+  sources REINFORCE, a single source is single-source, unresolved worker /
+  missing date is needs-review, and materially different hours (>0.25h) is a
+  CONFLICT surfaced for review -- never silently collapsed (the labour twin of
+  the financial reconcile gate). Implements the plan's Examples 1-5.
+- **Telegram text extraction** (`ai/telegram_labour_extraction.py`): LLM (strict
+  JSON, ABC + OpenAI + Mock) turns "John 8h Mike 7.5 Alex 5 at Rockland" into
+  one claim per worker; deterministic code resolves worker (self ->
+  telegram_identity, else exact/alias only) + project (+ sender default) +
+  date/times + computed hours. Raw names never discarded.
+- End-to-end test: a Telegram self-report + a Gmail claim for the same
+  worker/project/date consolidate into ONE auto_reinforced shift.
+
+29 new tests across 2 files. 1308 tests total.
+
+Remaining phases (next sessions): live telebot poller + /start worker binding +
+TelegramIdentity [needs TELEGRAM_BOT_TOKEN + the pyTelegramBotAPI dep]; voice
+transcription; reconciliation reports + web panel; field-note linking. No
+public webhook needed (long polling, like the Gmail poller).
+
+---
+
 ## 2026-06-17 -- LLM division extractor for PDF quotes (+ a trust gate the live run earned)
 
 To take division margins beyond the one project with spreadsheet quotes, added
