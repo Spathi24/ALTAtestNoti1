@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project }} - Labour{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.project }} &mdash; Labour</h2>
+  <p><small>
+    Consolidated worker shifts from Gmail Project Logs + Telegram messages.
+    Clean shifts auto-confirm; you only review conflicts / unresolved.
+    <a href="/projects/{{ d.project_id }}">&larr; back to project</a>
+  </small></p>
+</hgroup>
+
+<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  <div class="kpi">
+    <h3>Shifts</h3>
+    <div class="kpi-number">{{ d.shift_count }}</div>
+  </div>
+  <div class="kpi">
+    <h3>Confirmed</h3>
+    <div class="kpi-number pos">{{ d.confirmed_count }}</div>
+  </div>
+  <div class="kpi">
+    <h3>To review</h3>
+    <div class="kpi-number {{ 'neg' if d.review_count else '' }}">{{ d.review_count }}</div>
+  </div>
+  <div class="kpi">
+    <h3>Total hours</h3>
+    <div class="kpi-number">
+      {% if d.total_hours is not none %}{{ "%g"|format(d.total_hours) }}{% else %}&mdash;{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if d.exceptions %}
+<article style="border-left:3px solid var(--pill-warn-bg, #a85)">
+  <h3>Needs your review</h3>
+  <table>
+    <thead><tr><th>Date</th><th>Worker</th><th>Status</th><th>Why</th></tr></thead>
+    <tbody>
+      {% for e in d.exceptions %}
+      <tr>
+        <td>{{ e.date or "?" }}</td>
+        <td>{{ e.worker }}</td>
+        <td><span class="pill pill-warn">{{ e.status }}</span></td>
+        <td><small>{{ e.reason }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endif %}
+
+{% if d.roster %}
+<h3>Hours by worker</h3>
+<table>
+  <thead><tr><th>Worker</th><th style="text-align:right">Hours</th><th style="text-align:right">Shifts</th></tr></thead>
+  <tbody>
+    {% for r in d.roster %}
+    <tr>
+      <td>{{ r.worker }}</td>
+      <td style="text-align:right">{{ "%g"|format(r.hours) }}</td>
+      <td style="text-align:right">{{ r.shifts }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if d.shifts %}
+<h3>All shifts</h3>
+<table>
+  <thead>
+    <tr><th>Date</th><th>Worker</th><th style="text-align:right">Hours</th><th>Sources</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for s in d.shifts %}
+    <tr>
+      <td>{{ s.date or "?" }}</td>
+      <td>{{ s.worker }}</td>
+      <td style="text-align:right">{% if s.hours is not none %}{{ "%g"|format(s.hours) }}{% else %}&mdash;{% endif %}</td>
+      <td><small>{{ s.sources | join(", ") }}</small></td>
+      <td>
+        {% if s.confirmed %}
+          <span class="pill pill-accepted">{{ s.status }}</span>
+        {% else %}
+          <span class="pill pill-warn">{{ s.status }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<article>
+  <p>No labour shifts yet. Workers text the bot (e.g. "worked Rockland 7-4, half
+     hour lunch") or supervisors email a Project Log; then run
+     <code>poll-telegram</code> / <code>labour-consolidate --all</code>.</p>
+</article>
+{% endif %}
+
+{% if d.unresolved_names %}
+<p><small><strong>Unresolved names</strong> (link them with an alias or invite):
+   {{ d.unresolved_names | join(", ") }}</small></p>
+{% endif %}
+
+<details style="margin-top:1rem">
+  <summary>Raw JSON</summary>
+  <pre><code>{{ d | tojson(indent=2) }}</code></pre>
+</details>
+{% endblock %}

@@ -2118,14 +2118,37 @@ def cmd_poll_telegram(args: argparse.Namespace) -> int:
 
 
 def cmd_labour_consolidate(args: argparse.Namespace) -> int:
-    """Re-run labour-claim consolidation for a project (deterministic, no LLM)."""
+    """Re-run labour-claim consolidation (deterministic, no LLM).
+
+    With --all, bridges every project's Gmail Project Log entries into claims
+    and re-consolidates all projects -- the one command to run on a daily
+    schedule so whatever arrived (Telegram and/or Gmail) is consolidated.
+    """
     from project_db.ai.labour_consolidation import bridge_project_log_to_claims, consolidate_claims
     from project_db.ai.views import _resolve_project
+    from project_db.db.models import Project
 
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
     with session_scope() as s:
+        if args.all:
+            projects = s.query(Project).order_by(Project.name).all()
+            print(
+                f"Consolidating labour for {len(projects)} project(s) (Gmail bridge + cluster)..."
+            )
+            for p in projects:
+                bridge_project_log_to_claims(s, p.canonical_id)
+                s.commit()
+                res = consolidate_claims(s, p.canonical_id)
+                if res.claims_clustered:
+                    print(f"  {p.name!r:<40} {res.summary()}")
+            print("Done.")
+            return 0
+
+        if not args.project:
+            print("FAIL: give a project name/UUID, or use --all", file=sys.stderr)
+            return 2
         p = _resolve_project(s, args.project)
         if p is None:
             print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
@@ -2141,51 +2164,45 @@ def cmd_labour_consolidate(args: argparse.Namespace) -> int:
 
 
 def cmd_labour_claims(args: argparse.Namespace) -> int:
-    """Show a project's consolidated labour shifts (clusters) + their claims."""
-    from project_db.ai.views import _resolve_project
-    from project_db.db.models import LabourClaim, LabourClaimCluster, Worker
+    """Show a project's consolidated labour shifts + the exceptions to review."""
+    from project_db.ai.views import report_labour
 
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
     with session_scope() as s:
-        p = _resolve_project(s, args.project)
-        if p is None:
-            print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+        data = report_labour(s, args.project)
+        if "error" in data:
+            print(f"FAIL: {data['error']}", file=sys.stderr)
             return 2
-        clusters = (
-            s.query(LabourClaimCluster)
-            .filter(LabourClaimCluster.project_id == p.canonical_id)
-            .order_by(LabourClaimCluster.work_date)
-            .all()
+
+        print(f"Project: {data['project']}  ({data['project_id']})")
+        print(
+            f"  {data['shift_count']} shift(s)  |  confirmed: {data['confirmed_count']}  "
+            f"|  to review: {data['review_count']}  "
+            + (f"|  total: {data['total_hours']:g}h" if data["total_hours"] is not None else "")
         )
-        names = {w.canonical_id: w.display_name for w in s.query(Worker).all()}
-        print(f"Project: {p.name}  ({p.canonical_id})")
-        print(f"  {len(clusters)} shift cluster(s)")
         print()
-        if clusters:
-            print(f"  {'Date':<12}  {'Worker':<22}  {'Hours':>6}  {'Src':<18}  {'Status':<18}  Ev")
-            print("  " + "-" * 90)
-            for c in clusters:
-                worker = names.get(c.worker_id, "(unresolved)")
-                hrs = f"{c.chosen_total_hours}" if c.chosen_total_hours is not None else "-"
-                src = (c.source_channels_json or "").strip("[]").replace('"', "")
-                d = c.work_date.isoformat() if c.work_date else "?"
+        if data["shifts"]:
+            print(f"  {'Date':<12}  {'Worker':<20}  {'Hours':>6}  {'Sources':<18}  Status")
+            print("  " + "-" * 80)
+            for sh in data["shifts"]:
+                hrs = f"{sh['hours']:g}" if sh["hours"] is not None else "-"
+                src = ", ".join(sh["sources"])
+                d = sh["date"] or "?"
                 print(
-                    f"  {d:<12}  {worker[:22]:<22}  {hrs:>6}  {src:<18}  {c.status:<18}  "
-                    f"{c.evidence_count}"
+                    f"  {d:<12}  {(sh['worker'] or '?')[:20]:<20}  {hrs:>6}  {src:<18}  {sh['status']}"
                 )
-        # Unclustered / unresolved-project claims are worth surfacing too.
-        loose = (
-            s.query(LabourClaim)
-            .filter(
-                LabourClaim.project_id == p.canonical_id,
-                LabourClaim.canonical_cluster_id.is_(None),
-            )
-            .count()
-        )
-        if loose:
-            print(f"\n  ({loose} claim(s) not yet consolidated — run labour-consolidate)")
+        if data["roster"]:
+            print("\n  Hours by worker (confirmed):")
+            for r in data["roster"]:
+                print(f"    {r['worker'][:24]:<24}  {r['hours']:g}h  ({r['shifts']} shift(s))")
+        if data["exceptions"]:
+            print("\n  NEEDS REVIEW:")
+            for e in data["exceptions"]:
+                print(f"    [{e['status']}] {e['date']}  {e['worker']}  -- {e['reason']}")
+        if data["unresolved_names"]:
+            print(f"\n  Unresolved names: {', '.join(data['unresolved_names'])}")
     return 0
 
 
@@ -3211,10 +3228,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     lcons = sub.add_parser(
         "labour-consolidate",
-        help="Re-run labour consolidation for a project (deterministic). "
-        "Use --bridge-gmail to first emit claims from Project Log entries.",
+        help="Re-run labour consolidation (deterministic). --all bridges + "
+        "consolidates every project (run this on a daily schedule).",
     )
-    lcons.add_argument("project", help="Project canonical UUID or name fragment")
+    lcons.add_argument(
+        "project", nargs="?", help="Project canonical UUID or name fragment (omit with --all)"
+    )
+    lcons.add_argument(
+        "--all",
+        action="store_true",
+        help="Bridge Gmail + consolidate EVERY project (the daily-schedule command).",
+    )
     lcons.add_argument(
         "--bridge-gmail",
         action="store_true",

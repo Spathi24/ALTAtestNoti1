@@ -291,3 +291,67 @@ class TestConsolidation:
         _claim(db_session, p, channel="gmail", worker=mike, d=date(2026, 6, 19), reported=8)
         res = consolidate_claims(db_session, p.canonical_id)
         assert res.clusters == 2  # different dates = different shifts
+
+    def test_two_sheets_same_day_merge_not_double_counted(self, db_session):
+        """Two Project Log sheets for the same worker+day must merge into ONE
+        shift cluster (evidence 2), never two -- the user's merge requirement."""
+        p = _project(db_session)
+        w = _worker(db_session, "Mike")
+        # Reuse the bridge helper to make two submissions for the same worker/day.
+        TestGmailBridge()._project_log(db_session, p, w)
+        TestGmailBridge()._project_log(db_session, p, w)
+        bridge_project_log_to_claims(db_session, p.canonical_id)
+        db_session.commit()
+        res = consolidate_claims(db_session, p.canonical_id)
+        assert res.clusters == 1  # merged, not double-counted
+        cluster = db_session.query(LabourClaimCluster).one()
+        assert cluster.evidence_count == 2
+        assert cluster.work_date == date(2026, 6, 18)
+
+
+class TestReportLabour:
+    def test_bad_ref(self, db_session):
+        from project_db.ai.views import report_labour
+
+        assert "error" in report_labour(db_session, "nope xyz")
+
+    def test_confirmed_shift_and_roster(self, db_session):
+        from project_db.ai.views import report_labour
+
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        _claim(db_session, p, channel="gmail", worker=mike, reported=8.5)
+        _claim(db_session, p, channel="telegram", worker=mike, reported=8.5)
+        consolidate_claims(db_session, p.canonical_id)
+        rep = report_labour(db_session, "923-927 Rockland")
+        assert rep["shift_count"] == 1
+        assert rep["confirmed_count"] == 1
+        assert rep["review_count"] == 0
+        assert rep["total_hours"] == pytest.approx(8.5)
+        assert rep["roster"][0]["worker"] == "Mike"
+        assert rep["roster"][0]["hours"] == pytest.approx(8.5)
+        assert rep["shifts"][0]["sources"] == ["gmail", "telegram"]
+
+    def test_conflict_surfaced_as_exception(self, db_session):
+        from project_db.ai.views import report_labour
+
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        _claim(db_session, p, channel="gmail", worker=mike, reported=8.5)
+        _claim(db_session, p, channel="telegram", worker=mike, reported=5.0)
+        consolidate_claims(db_session, p.canonical_id)
+        rep = report_labour(db_session, "923-927 Rockland")
+        assert rep["review_count"] == 1
+        assert rep["confirmed_count"] == 0
+        assert rep["exceptions"][0]["status"] == "conflict"
+        assert rep["total_hours"] in (None, 0.0)  # nothing confirmed
+
+    def test_unresolved_name_listed(self, db_session):
+        from project_db.ai.views import report_labour
+
+        p = _project(db_session)
+        _claim(db_session, p, channel="telegram", worker=None, name="NewGuy", reported=8)
+        consolidate_claims(db_session, p.canonical_id)
+        rep = report_labour(db_session, "923-927 Rockland")
+        assert "NewGuy" in rep["unresolved_names"]
+        assert rep["review_count"] == 1  # unresolved worker -> needs_review

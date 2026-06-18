@@ -2446,6 +2446,132 @@ def report_project_log_hours(session: Session, project_ref: str) -> dict[str, An
     }
 
 
+def report_labour(session: Session, project_ref: str) -> dict[str, Any]:
+    """Consolidated labour shifts for a project (Gmail + Telegram), deterministic.
+
+    The ``LabourClaimCluster`` IS the canonical labour record. Clusters with an
+    ``auto_*`` status are accepted automatically; ``conflict`` / ``needs_review``
+    are the ONLY ones a human looks at -- surfaced as ``exceptions``. Returns a
+    PM-facing shape (shifts + per-worker roster + exceptions). No LLM.
+
+    ``{"error": "..."}`` when the project_ref doesn't resolve.
+    """
+    import json
+    from collections import defaultdict
+
+    from project_db.db.models import LabourClaim, LabourClaimCluster, Worker
+
+    project = _resolve_project(session, project_ref)
+    if project is None:
+        return {"error": f"No project matched ref={project_ref!r}"}
+
+    clusters: list[LabourClaimCluster] = (
+        session.query(LabourClaimCluster)
+        .filter(LabourClaimCluster.project_id == project.canonical_id)
+        .all()
+    )
+    worker_names = {w.canonical_id: w.display_name for w in session.query(Worker).all()}
+
+    # A representative raw name per cluster (for unresolved-worker clusters).
+    raw_name_by_cluster: dict[Any, str] = {}
+    unresolved_names: set[str] = set()
+    for claim in (
+        session.query(LabourClaim).filter(LabourClaim.project_id == project.canonical_id).all()
+    ):
+        if claim.canonical_cluster_id and claim.canonical_cluster_id not in raw_name_by_cluster:
+            raw_name_by_cluster[claim.canonical_cluster_id] = claim.employee_name_raw or "(unnamed)"
+        if claim.reported_for_worker_id is None and claim.employee_name_raw:
+            unresolved_names.add(claim.employee_name_raw)
+
+    _CONFIRMED = {"auto_reinforced", "auto_single_source"}
+    _zero = Decimal(0)
+
+    def _wname(c: LabourClaimCluster) -> str:
+        if c.worker_id:
+            return worker_names.get(c.worker_id, "(worker)")
+        return raw_name_by_cluster.get(c.canonical_id, "(unresolved)")
+
+    shifts: list[dict] = []
+    exceptions: list[dict] = []
+    roster: dict[Any, dict] = defaultdict(
+        lambda: {"worker": None, "worker_id": None, "hours": _zero, "shifts": 0}
+    )
+    total_hours = _zero
+
+    for c in sorted(
+        clusters, key=lambda x: (x.work_date.isoformat() if x.work_date else "", _wname(x))
+    ):
+        hrs = Decimal(str(c.chosen_total_hours)) if c.chosen_total_hours is not None else None
+        confirmed = c.status in _CONFIRMED
+        is_conflict = c.status == "conflict"
+        needs_review = c.status == "needs_review"
+        flags = json.loads(c.conflict_flags_json) if c.conflict_flags_json else []
+        row = {
+            "date": c.work_date.isoformat() if c.work_date else None,
+            "worker": _wname(c),
+            "worker_id": str(c.worker_id) if c.worker_id else None,
+            "hours": float(hrs) if hrs is not None else None,
+            "sources": json.loads(c.source_channels_json) if c.source_channels_json else [],
+            "status": c.status,
+            "evidence_count": c.evidence_count,
+            "confirmed": confirmed,
+            "flags": flags,
+        }
+        shifts.append(row)
+
+        if confirmed:
+            if hrs is not None:
+                total_hours += hrs
+                if c.worker_id:
+                    g = roster[c.worker_id]
+                    g["worker"] = _wname(c)
+                    g["worker_id"] = str(c.worker_id)
+                    g["hours"] += hrs
+                    g["shifts"] += 1
+        else:
+            reason = (
+                "hours conflict" if is_conflict else ("needs review" if needs_review else c.status)
+            )
+            if flags:
+                reason += f" ({', '.join(flags)})"
+            exceptions.append(
+                {
+                    "date": row["date"],
+                    "worker": row["worker"],
+                    "status": c.status,
+                    "reason": reason,
+                    "hours": row["hours"],
+                    "evidence_count": c.evidence_count,
+                }
+            )
+
+    roster_rows = sorted(
+        (
+            {
+                "worker": g["worker"],
+                "worker_id": g["worker_id"],
+                "hours": float(g["hours"]),
+                "shifts": g["shifts"],
+            }
+            for g in roster.values()
+        ),
+        key=lambda r: -r["hours"],
+    )
+
+    return {
+        "project": project.name,
+        "project_id": str(project.canonical_id),
+        "shift_count": len(clusters),
+        "confirmed_count": sum(1 for s in shifts if s["confirmed"]),
+        "review_count": len(exceptions),
+        "total_hours": float(total_hours) if clusters else None,
+        "shifts": shifts,
+        "exceptions": exceptions,
+        "roster": roster_rows,
+        "unresolved_names": sorted(unresolved_names),
+    }
+
+
 REPORT_REGISTRY: dict[str, Any] = {
     "active_projects": report_active_projects,
     "deal_pipeline_value": report_deal_pipeline_value,

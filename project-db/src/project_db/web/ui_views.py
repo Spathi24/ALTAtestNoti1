@@ -61,6 +61,21 @@ def project_division_margins(session: Session, project_id: str) -> dict[str, Any
     return rep
 
 
+def project_labour(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Consolidated labour shifts (Gmail + Telegram) for one project.
+
+    Thin pass-through to ``report_labour``. The cluster is the canonical labour
+    record; clean shifts auto-confirm, only conflicts/needs-review are surfaced.
+    None when the project doesn't resolve (route renders a 404).
+    """
+    from project_db.ai.views import report_labour
+
+    rep = report_labour(session, project_id)
+    if isinstance(rep, dict) and rep.get("error"):
+        return None
+    return rep
+
+
 def project_ledger_health(session: Session, project_id: str) -> dict[str, Any] | None:
     """Phase 1d ledger-health audit for one project (read-only).
 

@@ -168,6 +168,17 @@ class TestLedgerHealthPage:
         assert "Ledger Health" in r.text
 
 
+class TestLabourPage:
+    def test_renders(self, client, margin_project):
+        r = client.get(f"/projects/{margin_project.canonical_id}/labour")
+        assert r.status_code == 200
+        assert "Labour" in r.text
+
+    def test_404_unknown_project(self, client):
+        r = client.get("/projects/00000000-0000-0000-0000-000000000000/labour")
+        assert r.status_code == 404
+
+
 class TestNavLinks:
     def test_project_detail_links_to_margins_and_ledger_health(self, client, margin_project):
         r = client.get(f"/projects/{margin_project.canonical_id}")
@@ -175,3 +186,4 @@ class TestNavLinks:
         body = r.text
         assert f"/projects/{margin_project.canonical_id}/margins" in body
         assert f"/projects/{margin_project.canonical_id}/ledger-health" in body
+        assert f"/projects/{margin_project.canonical_id}/labour" in body
