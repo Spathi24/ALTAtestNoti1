@@ -434,6 +434,153 @@ SQLITE_WORKER_ALIAS_INDEXES = (
 )
 
 
+SQLITE_LABOUR_SOURCE_EVENT_DDL = """
+CREATE TABLE labour_source_event (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    source_channel VARCHAR NOT NULL DEFAULT 'manual',
+    source_kind VARCHAR NOT NULL DEFAULT 'manual',
+    source_external_id VARCHAR,
+    source_parent_id VARCHAR,
+    source_sender_key VARCHAR,
+    source_chat_id VARCHAR,
+    source_message_id VARCHAR,
+    received_at DATETIME NOT NULL,
+    source_created_at DATETIME,
+    raw_text TEXT,
+    raw_payload_json TEXT,
+    attachment_paths_json TEXT,
+    attachment_hashes_json TEXT,
+    ingestion_status VARCHAR NOT NULL DEFAULT 'received',
+    ingestion_reason TEXT,
+    worker_id TEXT,
+    project_id_hint TEXT,
+    FOREIGN KEY (worker_id) REFERENCES worker(canonical_id),
+    FOREIGN KEY (project_id_hint) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_LABOUR_SOURCE_EVENT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_labour_source_event_external "
+    "ON labour_source_event (source_external_id)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_source_event_worker ON labour_source_event (worker_id)",
+)
+
+SQLITE_LABOUR_CLAIM_DDL = """
+CREATE TABLE labour_claim (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    source_event_id TEXT,
+    source_channel VARCHAR NOT NULL DEFAULT 'manual',
+    source_confidence FLOAT,
+    reporter_worker_id TEXT,
+    reporter_role VARCHAR NOT NULL DEFAULT 'unknown',
+    reported_for_worker_id TEXT,
+    employee_name_raw VARCHAR,
+    employee_phone_raw VARCHAR,
+    employee_match_method VARCHAR NOT NULL DEFAULT 'unresolved',
+    employee_match_confidence FLOAT,
+    project_id TEXT,
+    project_name_raw VARCHAR,
+    project_match_method VARCHAR NOT NULL DEFAULT 'unresolved',
+    project_match_confidence FLOAT,
+    work_date DATE,
+    work_date_raw VARCHAR,
+    time_arrived VARCHAR,
+    time_left VARCHAR,
+    lunch_hours NUMERIC(5, 2),
+    total_hours_reported NUMERIC(6, 2),
+    total_hours_computed NUMERIC(6, 2),
+    hours_mismatch BOOLEAN NOT NULL DEFAULT 0,
+    activity_text TEXT,
+    trade VARCHAR,
+    unit VARCHAR,
+    claim_type VARCHAR NOT NULL DEFAULT 'unknown',
+    extraction_method VARCHAR NOT NULL DEFAULT 'manual',
+    extractor_version VARCHAR,
+    missing_fields_json TEXT,
+    raw_extraction_json TEXT,
+    canonical_cluster_id TEXT,
+    canonicalized BOOLEAN NOT NULL DEFAULT 0,
+    review_status VARCHAR NOT NULL DEFAULT 'pending',
+    FOREIGN KEY (source_event_id) REFERENCES labour_source_event(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (reporter_worker_id) REFERENCES worker(canonical_id),
+    FOREIGN KEY (reported_for_worker_id) REFERENCES worker(canonical_id),
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (canonical_cluster_id) REFERENCES labour_claim_cluster(canonical_id)
+)
+"""
+
+SQLITE_LABOUR_CLAIM_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_labour_claim_source_event ON labour_claim (source_event_id)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_claim_cluster ON labour_claim (canonical_cluster_id)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_claim_project ON labour_claim (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_claim_for_worker "
+    "ON labour_claim (reported_for_worker_id)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_claim_work_date ON labour_claim (work_date)",
+)
+
+SQLITE_LABOUR_CLAIM_CLUSTER_DDL = """
+CREATE TABLE labour_claim_cluster (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    worker_id TEXT,
+    project_id TEXT,
+    work_date DATE,
+    cluster_key VARCHAR NOT NULL,
+    confidence FLOAT,
+    status VARCHAR NOT NULL DEFAULT 'open',
+    chosen_time_arrived VARCHAR,
+    chosen_time_left VARCHAR,
+    chosen_lunch_hours NUMERIC(5, 2),
+    chosen_total_hours NUMERIC(6, 2),
+    evidence_count INTEGER NOT NULL DEFAULT 0,
+    source_channels_json TEXT,
+    conflict_flags_json TEXT,
+    resolution_method VARCHAR,
+    canonical_submission_id TEXT,
+    canonical_entry_id TEXT,
+    FOREIGN KEY (worker_id) REFERENCES worker(canonical_id),
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (canonical_submission_id) REFERENCES project_log_submission(canonical_id),
+    FOREIGN KEY (canonical_entry_id) REFERENCES project_log_entry(canonical_id)
+)
+"""
+
+SQLITE_LABOUR_CLAIM_CLUSTER_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_labour_cluster_key ON labour_claim_cluster (cluster_key)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_cluster_wpd "
+    "ON labour_claim_cluster (worker_id, project_id, work_date)",
+)
+
+SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_DDL = """
+CREATE TABLE labour_claim_cluster_member (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    cluster_id TEXT NOT NULL,
+    claim_id TEXT NOT NULL,
+    relationship VARCHAR NOT NULL DEFAULT 'supporting',
+    similarity_score FLOAT,
+    FOREIGN KEY (cluster_id) REFERENCES labour_claim_cluster(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (claim_id) REFERENCES labour_claim(canonical_id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_labour_member_cluster "
+    "ON labour_claim_cluster_member (cluster_id)",
+    "CREATE INDEX IF NOT EXISTS ix_labour_member_claim ON labour_claim_cluster_member (claim_id)",
+)
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -511,6 +658,26 @@ def ensure_sqlite_schema(engine) -> None:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "project_log_entry", SQLITE_PROJECT_LOG_ENTRY_DDL)
         for _idx_ddl in SQLITE_PROJECT_LOG_ENTRY_INDEXES:
+            conn.execute(text(_idx_ddl))
+        # Labour consolidation layer (needs worker/project/project_log_* to exist).
+        # Order: source_event -> cluster -> claim (FK->cluster) -> member.
+        _create_table_if_missing(
+            conn, tables, "labour_source_event", SQLITE_LABOUR_SOURCE_EVENT_DDL
+        )
+        for _idx_ddl in SQLITE_LABOUR_SOURCE_EVENT_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(
+            conn, tables, "labour_claim_cluster", SQLITE_LABOUR_CLAIM_CLUSTER_DDL
+        )
+        for _idx_ddl in SQLITE_LABOUR_CLAIM_CLUSTER_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(conn, tables, "labour_claim", SQLITE_LABOUR_CLAIM_DDL)
+        for _idx_ddl in SQLITE_LABOUR_CLAIM_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(
+            conn, tables, "labour_claim_cluster_member", SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_DDL
+        )
+        for _idx_ddl in SQLITE_LABOUR_CLAIM_CLUSTER_MEMBER_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
         # Post-DDL columns on field_note (email_ingest_id added after initial DDL).

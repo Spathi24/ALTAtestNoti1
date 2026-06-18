@@ -27,6 +27,14 @@ from project_db.db.models.finance import (
     Invoice,
     InvoiceStatus,
 )
+from project_db.db.models.labour_intake import (
+    CLAIM_TYPES,
+    CLUSTER_STATUSES,
+    LabourClaim,
+    LabourClaimCluster,
+    LabourClaimClusterMember,
+    LabourSourceEvent,
+)
 from project_db.db.models.obligations import (
     OBLIGATION_DIRECTIONS,
     OBLIGATION_KINDS,
@@ -61,6 +69,8 @@ from project_db.db.models.work import (
 from project_db.db.models.workers import EmailIngest, Worker
 
 __all__ = [
+    "CLAIM_TYPES",
+    "CLUSTER_STATUSES",
     "EMPLOYEE_MATCH_METHODS",
     "FINANCIAL_DIRECTIONS",
     "FINANCIAL_DOC_ROLES",
@@ -91,6 +101,10 @@ __all__ = [
     "FinancialRecord",
     "Invoice",
     "InvoiceStatus",
+    "LabourClaim",
+    "LabourClaimCluster",
+    "LabourClaimClusterMember",
+    "LabourSourceEvent",
     "Lead",
     "LeadStage",
     "NoteChannel",
