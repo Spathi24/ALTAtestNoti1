@@ -205,6 +205,71 @@ class TestFreeTextIntake:
         # The worker got a confirmation reply.
         assert any("Logged 1 claim" in t for _, t in client.sent)
 
+    def test_foreman_message_auto_creates_crew(self, db_session):
+        """The real use case: a bound foreman (Andres) reports several people in
+        one message; unknown names get auto-created profiles, all attributed."""
+        from project_db.db.models import Worker
+
+        p = _project(db_session)
+        andres = _worker(db_session, "Andres", default_project=p)
+        mike = _worker(db_session, "Mike")
+        self._bind(db_session, andres, user_id="555")
+        foreman_result = {
+            "document_type": "labour_update",
+            "classification_confidence": 0.9,
+            "reporter_role": "foreman",
+            "claims": [
+                {
+                    "claim_type": "labour_time",
+                    "employee_name": "Mike",
+                    "employee_phone": None,
+                    "is_reporter_self": False,
+                    "project_name": "Rockland",
+                    "work_date": "2026-06-18",
+                    "time_arrived": None,
+                    "time_left": None,
+                    "lunch_hours": None,
+                    "total_hours_reported": 8,
+                    "activity_text": None,
+                    "trade": None,
+                    "unit": None,
+                    "confidence": 0.9,
+                    "missing_fields": [],
+                    "raw_excerpt": "Mike 8",
+                },
+                {
+                    "claim_type": "labour_time",
+                    "employee_name": "NewGuy",
+                    "employee_phone": None,
+                    "is_reporter_self": False,
+                    "project_name": "Rockland",
+                    "work_date": "2026-06-18",
+                    "time_arrived": None,
+                    "time_left": None,
+                    "lunch_hours": None,
+                    "total_hours_reported": 7,
+                    "activity_text": None,
+                    "trade": None,
+                    "unit": None,
+                    "confidence": 0.9,
+                    "missing_fields": [],
+                    "raw_excerpt": "NewGuy 7",
+                },
+            ],
+            "needs_followup": False,
+            "followup_question": None,
+        }
+        client = MockTelegramClient([_update(9, "Mike 8 NewGuy 7 at Rockland", from_id=555)])
+        batch = poll_telegram(db_session, client, MockTelegramLabourExtractor(foreman_result))
+        assert batch.errors == []
+        assert batch.claims_created == 2
+        # NewGuy got a fresh unverified profile; Mike resolved to the existing one.
+        newguy = db_session.query(Worker).filter(Worker.display_name == "NewGuy").one()
+        assert newguy.verified is False
+        claims = {c.employee_name_raw: c for c in db_session.query(LabourClaim).all()}
+        assert claims["Mike"].reported_for_worker_id == mike.canonical_id
+        assert claims["NewGuy"].reported_for_worker_id == newguy.canonical_id
+
     def test_offset_prevents_reprocessing(self, db_session):
         """The offset cursor (real dedup): after processing update 7, the next
         poll's offset is 8, so Telegram no longer returns update 7."""

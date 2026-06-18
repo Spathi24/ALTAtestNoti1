@@ -180,7 +180,8 @@ class TestTelegramExtraction:
         assert all(c.reported_for_worker_id is not None for c in claims)  # all resolved by name
         assert all(c.employee_match_method == "exact" for c in claims)
 
-    def test_unresolved_name_kept_raw(self, db_session):
+    def test_unresolved_name_kept_raw_when_no_reporter(self, db_session):
+        # No bound reporter (reporter_worker=None) -> no auto-create -> unresolved.
         p = _project(db_session)
         ev = _event(db_session, "NewGuy 8h")
         ex = MockTelegramLabourExtractor(
@@ -201,6 +202,63 @@ class TestTelegramExtraction:
         assert c.reported_for_worker_id is None
         assert c.employee_match_method == "unresolved"
         assert c.employee_name_raw == "NewGuy"  # never discarded
+
+    def test_foreman_auto_creates_unknown_crew(self, db_session):
+        """A BOUND foreman naming an unknown person auto-creates an unverified
+        Worker stub; a known name still resolves exact. No fuzzy merge."""
+        p = _project(db_session)
+        andres = _worker(db_session, "Andres")
+        mike = _worker(db_session, "Mike")
+        ev = _event(db_session, "Mike 8h NewGuy 7h at Rockland")
+        ex = MockTelegramLabourExtractor(
+            _result(
+                [
+                    _claim_dict(employee_name="Mike", total_hours_reported=8),
+                    _claim_dict(employee_name="NewGuy", total_hours_reported=7),
+                ],
+                reporter_role="foreman",
+            )
+        )
+        claims = ingest_telegram_labour_claims(
+            db_session,
+            ex,
+            text=ev.raw_text,
+            source_event_id=ev.canonical_id,
+            message_datetime=_MSG_DT,
+            reporter_worker=andres,  # bound -> allow_create
+            default_project_id=p.canonical_id,
+        )
+        db_session.commit()
+        by = {c.employee_name_raw: c for c in claims}
+        assert by["Mike"].employee_match_method == "exact"
+        assert by["Mike"].reported_for_worker_id == mike.canonical_id
+        assert by["NewGuy"].employee_match_method == "auto_created"
+        assert by["NewGuy"].reported_for_worker_id is not None
+        newguy = db_session.query(Worker).filter(Worker.display_name == "NewGuy").one()
+        assert newguy.verified is False  # flagged for confirm/merge
+
+    def test_auto_created_worker_reused_not_duplicated(self, db_session):
+        p = _project(db_session)
+        andres = _worker(db_session, "Andres")
+        ex = MockTelegramLabourExtractor(
+            _result(
+                [_claim_dict(employee_name="NewGuy", total_hours_reported=8)],
+                reporter_role="foreman",
+            )
+        )
+        for uid in (1, 2):
+            ev = _event(db_session, "NewGuy 8h")
+            ingest_telegram_labour_claims(
+                db_session,
+                ex,
+                text=ev.raw_text,
+                source_event_id=ev.canonical_id,
+                message_datetime=_MSG_DT,
+                reporter_worker=andres,
+                default_project_id=p.canonical_id,
+            )
+            db_session.commit()
+        assert db_session.query(Worker).filter(Worker.display_name == "NewGuy").count() == 1
 
     def test_project_default_when_unnamed(self, db_session):
         p = _project(db_session)

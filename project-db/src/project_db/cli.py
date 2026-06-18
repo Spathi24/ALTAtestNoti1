@@ -2201,6 +2201,10 @@ def cmd_labour_claims(args: argparse.Namespace) -> int:
             print("\n  NEEDS REVIEW:")
             for e in data["exceptions"]:
                 print(f"    [{e['status']}] {e['date']}  {e['worker']}  -- {e['reason']}")
+        if data.get("new_workers"):
+            print("\n  NEW PEOPLE TO CONFIRM (auto-created from a foreman's report):")
+            for w in data["new_workers"]:
+                print(f"    {w['worker']}  ({w['worker_id']})")
         if data["unresolved_names"]:
             print(f"\n  Unresolved names: {', '.join(data['unresolved_names'])}")
     return 0

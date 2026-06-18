@@ -85,6 +85,7 @@ EMPLOYEE_MATCH_METHODS_CLAIM = {
     "telegram_identity",
     "phone",
     "fuzzy",
+    "auto_created",  # a bound reporter named a new person -> unverified Worker stub
     "manual",
     "unresolved",
 }

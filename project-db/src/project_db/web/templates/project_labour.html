@@ -99,6 +99,20 @@
 </article>
 {% endif %}
 
+{% if d.new_workers %}
+<article>
+  <h3>New people to confirm</h3>
+  <p><small>Auto-created when a foreman named someone without a profile. Confirm
+     them as real, or merge into an existing worker with an alias. Their hours
+     are already counted in the meantime.</small></p>
+  <ul>
+    {% for w in d.new_workers %}
+    <li>{{ w.worker }} <small><code>{{ w.worker_id }}</code></small></li>
+    {% endfor %}
+  </ul>
+</article>
+{% endif %}
+
 {% if d.unresolved_names %}
 <p><small><strong>Unresolved names</strong> (link them with an alias or invite):
    {{ d.unresolved_names | join(", ") }}</small></p>

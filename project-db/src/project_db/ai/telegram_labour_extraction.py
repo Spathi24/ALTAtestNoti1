@@ -243,8 +243,17 @@ def _resolve_worker(
     is_self: bool,
     name: str | None,
     reporter_worker: Worker | None,
+    allow_create: bool = False,
 ) -> tuple[Any, str, float | None]:
-    """(worker_id, method, confidence). Exact/alias only -- never a forced match."""
+    """(worker_id, method, confidence).
+
+    Order: self -> exact display_name -> alias. Then, when ``allow_create`` (a
+    name reported by a BOUND reporter, e.g. a foreman listing crew), a genuinely
+    new name auto-creates an UNVERIFIED Worker stub (method ``auto_created``) so
+    the hours attach to someone reviewable -- rather than floating unresolved.
+    We never fuzzy-merge: "Mike" gets its own stub even if "Michael" exists; the
+    PM aliases/merges later (a wrong merge corrupts; a new stub is reversible).
+    """
     if is_self and reporter_worker is not None:
         return reporter_worker.canonical_id, "telegram_identity", 1.0
     if not name or not name.strip():
@@ -256,6 +265,16 @@ def _resolve_worker(
     for a in session.query(WorkerAlias).all():
         if " ".join((a.alias_text or "").lower().split()) == needle:
             return a.worker_id, "alias", (a.confidence if a.confidence is not None else 0.9)
+    if allow_create:
+        stub = Worker(
+            canonical_id=uuid.uuid4(),
+            display_name=name.strip(),
+            active=True,
+            verified=False,  # flagged for the PM to confirm / merge
+        )
+        session.add(stub)
+        session.flush()  # so a repeated name in the same message resolves to it
+        return stub.canonical_id, "auto_created", 0.6
     return None, "unresolved", None
 
 
@@ -298,12 +317,20 @@ def ingest_telegram_labour_claims(
         return []
 
     reporter_role = raw.get("reporter_role") or "unknown"
+    # A BOUND reporter (e.g. foreman Andres) is trusted to name crew, so an
+    # unknown name they report auto-creates a stub. An unbound message never
+    # reaches here (it's quarantined), so this can't mint workers from strangers.
+    allow_create = reporter_worker is not None
     out: list[LabourClaim] = []
     for c in raw.get("claims") or []:
         is_self = bool(c.get("is_reporter_self"))
         name = c.get("employee_name")
         wid, wmethod, wconf = _resolve_worker(
-            session, is_self=is_self, name=name, reporter_worker=reporter_worker
+            session,
+            is_self=is_self,
+            name=name,
+            reporter_worker=reporter_worker,
+            allow_create=allow_create,
         )
         pid, pmethod, pconf = _resolve_project(
             session, name=c.get("project_name"), default_project_id=default_project_id

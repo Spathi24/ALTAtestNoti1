@@ -2558,6 +2558,20 @@ def report_labour(session: Session, project_ref: str) -> dict[str, Any]:
         key=lambda r: -r["hours"],
     )
 
+    # Unverified workers appearing in shifts -- typically auto-created when a
+    # foreman named someone with no profile. Surfaced so the PM can confirm them
+    # as real new hires or merge them into an existing worker (via an alias).
+    referenced_ids = {c.worker_id for c in clusters if c.worker_id}
+    new_workers = []
+    if referenced_ids:
+        for w in (
+            session.query(Worker)
+            .filter(Worker.verified.is_(False), Worker.canonical_id.in_(referenced_ids))
+            .all()
+        ):
+            new_workers.append({"worker_id": str(w.canonical_id), "worker": w.display_name})
+    new_workers.sort(key=lambda r: r["worker"].lower())
+
     return {
         "project": project.name,
         "project_id": str(project.canonical_id),
@@ -2568,6 +2582,7 @@ def report_labour(session: Session, project_ref: str) -> dict[str, Any]:
         "shifts": shifts,
         "exceptions": exceptions,
         "roster": roster_rows,
+        "new_workers": new_workers,
         "unresolved_names": sorted(unresolved_names),
     }
 
