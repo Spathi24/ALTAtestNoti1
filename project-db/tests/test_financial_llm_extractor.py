@@ -36,7 +36,7 @@ _QUOTE_TEXT = (
 
 
 def _quote_response(
-    unit=None, stated=10000.0, lines=None, doc_type="construction_quote", revenue=True
+    unit=None, stated=10000.0, lines=None, doc_type="construction_quote", side="revenue"
 ):
     if lines is None:
         lines = [
@@ -67,7 +67,7 @@ def _quote_response(
         ]
     return {
         "document_type": doc_type,
-        "is_revenue_quote": revenue,
+        "ledger_side": side,
         "unit": unit,
         "currency": "CAD",
         "stated_total": stated,
@@ -243,15 +243,92 @@ class TestPopulateLLMDocument:
             == 0
         )
 
-    def test_non_revenue_skipped(self, db_session):
+    def test_skip_side_writes_nothing(self, db_session):
+        """ledger_side='skip' (budget / schedule / non-financial) -> no rows."""
         project = _seed_project(db_session)
-        doc, dt = _make_doc(db_session, project, "Supplier Invoice.pdf", _QUOTE_TEXT)
+        doc, dt = _make_doc(db_session, project, "Schedule.pdf", _QUOTE_TEXT)
         ex = MockFinancialLineExtractor(
-            {doc.name: _quote_response(doc_type="supplier_invoice", revenue=False)}
+            {doc.name: _quote_response(doc_type="other", side="skip")}
         )
         res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
         assert res.ingestion_status == "skipped"
-        assert res.ingestion_reason == "not_revenue_quote"
+        assert res.ingestion_reason == "not_financial"
+        assert (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .count()
+            == 0
+        )
+
+    def test_cost_invoice_writes_cost_rows(self, db_session):
+        """A supplier invoice (ledger_side='cost') becomes side='cost', status=
+        'actual' rows -- this is the half that was missing and made every margin
+        revenue-only."""
+        project = _seed_project(db_session)
+        cost_text = (
+            "PLOMBERIE GVA INC.\nINVOICE 148127\n"
+            "Labour, Material and Transport all included: $2,000.00\n"
+            "Sub-total: $2,000.00\nTotal amount: $2,299.50\n"
+        )
+        doc, dt = _make_doc(db_session, project, "Invoice 148127.pdf", cost_text)
+        lines = [
+            {
+                "description": "Plumbing rough-in (labour, material, transport)",
+                "masterformat_hint": "Plumbing",
+                "amount": 2000.0,
+                "amount_type": "total",
+                "quoted_excerpt": "Labour, Material and Transport all included: $2,000.00",
+                "confidence": 0.95,
+            },
+        ]
+        ex = MockFinancialLineExtractor(
+            {
+                doc.name: _quote_response(
+                    doc_type="supplier_invoice", side="cost", stated=2000.0, lines=lines
+                )
+            }
+        )
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.ingestion_status == "parsed"
+        assert res.rows_written == 1
+        row = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .one()
+        )
+        assert row.side == "cost"
+        assert row.status == "actual"
+        assert row.doc_role == "invoice"
+        assert row.division_code == "22"  # plumbing
+        assert row.amount_verified is True
+
+    def test_cost_unreconciled_quarantined(self, db_session):
+        """The trust gate is identical on the cost side: a sheet whose actual-spend
+        rows do not reconcile to a stated total is quarantined, never counted."""
+        project = _seed_project(db_session)
+        cost_text = "MATERIAL SPENDING\nFloor $11,506.24\nTile $11,361.82\n"
+        doc, dt = _make_doc(db_session, project, "JOB COSTING", cost_text)
+        lines = [
+            {
+                "description": "Floor",
+                "masterformat_hint": "Finishes",
+                "amount": 11506.24,
+                "amount_type": "material",
+                "quoted_excerpt": "Floor $11,506.24",
+                "confidence": 0.8,
+            },
+        ]
+        # No stated actual-spend total on the sheet -> stated=None -> quarantine.
+        ex = MockFinancialLineExtractor(
+            {
+                doc.name: _quote_response(
+                    doc_type="expense_tracker", side="cost", stated=None, lines=lines
+                )
+            }
+        )
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.ingestion_status == "quarantined"
+        assert res.ingestion_reason == "no_stated_total"
         assert (
             db_session.query(FinancialLineItem)
             .filter(FinancialLineItem.document_id == doc.canonical_id)

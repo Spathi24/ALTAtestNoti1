@@ -49,21 +49,33 @@ from project_db.db.models.finance import LINE_ITEM_AMOUNT_TYPES
 FINANCIAL_LINE_PROMPT_VERSION = "fin-line-llm-v1"
 EXTRACTOR_VERSION_LLM = "llm-v1"
 
-# Document types the model classifies into. Only revenue quotes/estimates/change
-# orders WE issued become ledger rows; everything else is skipped here (the old
-# FinancialRecord layer still captures supplier invoices etc. on the cost side).
+# Document types the model classifies into. The authoritative router is
+# ``ledger_side`` (revenue / cost / skip), not the type -- the type only refines
+# the doc_role label. BOTH sides become ledger rows now: revenue from quotes WE
+# issued, cost from supplier invoices + actual-spend trackers billed to / paid by
+# us. Future-money documents (a subcontractor's quote, a budget) are skipped --
+# only money actually invoiced or spent counts as cost.
 _LLM_DOC_TYPES = [
+    # revenue -- documents WE issue to a client
     "construction_quote",
     "construction_estimate",
     "change_order",
+    # cost -- money actually billed to / spent by us
     "supplier_invoice",
+    "expense_tracker",  # job-cost / material-spending actual-spend sheet
+    # neither (skipped): future money or non-financial
+    "subcontractor_quote",  # a sub's price to us, NOT yet paid -> skip
+    "budget",  # planned, NOT yet spent -> skip
     "other",
 ]
 _REVENUE_DOC_TYPES = {"construction_quote", "construction_estimate", "change_order"}
+_COST_DOC_TYPES = {"supplier_invoice", "expense_tracker"}
 _DOC_ROLE_BY_TYPE = {
     "construction_quote": "quote",
     "construction_estimate": "estimate",
     "change_order": "change_order",
+    "supplier_invoice": "invoice",
+    "expense_tracker": "expense",
 }
 
 # Reconcile tolerance: lines must sum to the stated total within the greater of
@@ -80,7 +92,7 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
         "required": [
             "document_type",
-            "is_revenue_quote",
+            "ledger_side",
             "unit",
             "currency",
             "stated_total",
@@ -88,12 +100,17 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
         ],
         "properties": {
             "document_type": {"type": "string", "enum": _LLM_DOC_TYPES},
-            "is_revenue_quote": {
-                "type": "boolean",
+            "ledger_side": {
+                "type": "string",
+                "enum": ["revenue", "cost", "skip"],
                 "description": (
-                    "true ONLY if this is a quote/estimate/change-order WE issued "
-                    "to a client (our revenue). false for supplier invoices, "
-                    "budgets, or anything else."
+                    "revenue = a quote/estimate/change-order WE issued to a "
+                    "client (our income). cost = an invoice a supplier/"
+                    "subcontractor billed TO us, OR a record of money we "
+                    "ACTUALLY paid/spent (an actual-spend tracker). skip = "
+                    "anything else: a subcontractor's quote/estimate not yet "
+                    "paid, a budget/forecast, a schedule, or a non-financial "
+                    "document. When unsure, choose skip."
                 ),
             },
             "unit": {
@@ -108,8 +125,11 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
             "stated_total": {
                 "type": ["number", "null"],
                 "description": (
-                    "The document's stated grand/pre-tax total, for cross-check "
-                    "ONLY. Do NOT also list it as a line item."
+                    "The document's stated PRE-TAX total that the line items sum "
+                    "to, for cross-check ONLY (never also a line item). For an "
+                    "invoice use the pre-tax sub-total (exclude GST/QST/TPS/TVQ/"
+                    "freight). For an actual-spend sheet, use its stated total of "
+                    "money ACTUALLY spent if one is printed; null if none is."
                 ),
             },
             "line_items": {
@@ -168,26 +188,43 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
 
 def _system_prompt(company_name: str) -> str:
     return (
-        "You are a meticulous construction-company estimator. You read ONE quote "
-        "document (already extracted to text) and return its priced scope lines.\n\n"
+        "You are a meticulous construction-company bookkeeper. You read ONE "
+        "financial document (already extracted to text) and return its priced "
+        "lines, tagging which side of the ledger it belongs to.\n\n"
         f'OUR COMPANY is "{company_name}".\n\n'
-        "1. Classify document_type and set is_revenue_quote = true ONLY for a "
-        "quote/estimate/change-order WE issued to a client (our revenue). For a "
-        "supplier invoice or anything else, set is_revenue_quote = false and "
-        "return an empty line_items array.\n"
-        "2. unit: if the document is for a specific sub-scope (a civic number "
+        "1. ledger_side -- the single most important decision:\n"
+        "   * revenue: a quote / estimate / change-order WE issued to a CLIENT "
+        "(money coming IN to us).\n"
+        "   * cost: an invoice a supplier or subcontractor billed TO us, OR a "
+        "sheet recording money we have ACTUALLY spent/paid (real supplier names, "
+        "dates, amounts already incurred).\n"
+        "   * skip: ANYTHING else -- a subcontractor's quote/estimate we have not "
+        "paid yet, a budget or forecast, a price list, a schedule (WBS) with no "
+        "dollars, or a non-financial document. When in doubt, skip.\n"
+        "   If skip, return an empty line_items array.\n"
+        "2. document_type: pick the closest type.\n"
+        "3. unit: if the document is for a specific sub-scope (a civic number "
         "like 923/927, or 'exterior'), put it; else null.\n"
-        "3. stated_total: the document's grand/pre-tax total, for CROSS-CHECK "
-        "ONLY. Never also emit it as a line item.\n"
-        "4. line_items: one per priced scope line. For each, give the "
-        "description, any MasterFormat/trade hint the doc names, the amount "
-        "(number only), and amount_type (total for a normal scope line; markup/"
-        "contingency/tax for those; material/labour only if the doc splits "
-        "them).\n\n"
+        "4. stated_total: the pre-tax total the line items sum to, for "
+        "CROSS-CHECK ONLY. Never also emit it as a line item.\n"
+        "5. line_items: one per priced line. Give the description, any "
+        "MasterFormat/trade hint the doc names, the amount (number only), and "
+        "amount_type (total for a normal line; material/labour only if the doc "
+        "splits them; markup/contingency/tax for those).\n\n"
+        "COST RULE (critical): on a cost document, include ONLY money ACTUALLY "
+        "spent or invoiced. A single sheet often mixes real spend with planning "
+        "numbers -- you must EXCLUDE every budget column, estimate column, and "
+        "any figure labelled receivable, target, projection, prediction, "
+        "'quoted (N units)', forecast, or a per-unit number extrapolated to many "
+        "units. Return only the rows that are real, incurred costs.\n\n"
+        "TAX RULE: never emit sales tax (GST/QST/TPS/TVQ/HST), freight/shipping, "
+        "or a 'deposit'/'balance due' line as a line_item. Costs and revenue are "
+        "tracked PRE-TAX. stated_total is the pre-tax sub-total the line items "
+        "sum to.\n\n"
         "RULES: NEVER invent an amount. NEVER do arithmetic (no summing, no "
         "margins) -- our code sums and reconciles. quoted_excerpt must be "
         "verbatim from the document; if you cannot quote it, omit the line. "
-        "Prefer the real scope lines over restating subtotals."
+        "Prefer the real lines over restating subtotals."
     )
 
 
@@ -275,7 +312,7 @@ class MockFinancialLineExtractor(FinancialLineExtractor):
         self._by_name = by_name or {}
         self._default = default or {
             "document_type": "other",
-            "is_revenue_quote": False,
+            "ledger_side": "skip",
             "unit": None,
             "currency": None,
             "stated_total": None,
@@ -301,10 +338,15 @@ def populate_ledger_llm_for_document(
     *,
     company_name: str | None = None,
 ) -> DocLedgerResult:
-    """LLM-extract one quote doc into FinancialLineItem rows. Flushes, not commits.
+    """LLM-extract one financial doc into FinancialLineItem rows. Flushes, not commits.
 
+    Handles BOTH sides of the ledger: revenue (quotes we issued) and cost
+    (supplier invoices / actual-spend trackers). The LLM tags ``ledger_side``;
+    a ``skip`` doc (future money, budget, schedule, non-financial) writes nothing.
     Idempotent on this document's ``source='llm'`` rows (re-run replaces them);
-    never touches ``source='grid'`` rows. A non-revenue doc is skipped.
+    never touches ``source='grid'`` rows. The same trust gate applies to both
+    sides: rows are written only if they reconcile to a stated pre-tax total,
+    else they are quarantined for review.
     """
     from project_db.ai.financials import _company_name
 
@@ -331,9 +373,11 @@ def populate_ledger_llm_for_document(
         return result
 
     doc_type = raw.get("document_type", "other")
-    if not raw.get("is_revenue_quote") or doc_type not in _REVENUE_DOC_TYPES:
-        result.ingestion_reason = "not_revenue_quote"
+    ledger_side = (raw.get("ledger_side") or "skip").strip().lower()
+    if ledger_side not in ("revenue", "cost"):
+        result.ingestion_reason = "not_financial"
         return result
+    result.sheet_type = doc_type
 
     raw_lines = raw.get("line_items") or []
     if not raw_lines:
@@ -342,10 +386,15 @@ def populate_ledger_llm_for_document(
 
     norm_text = _norm(text)
     unit = (raw.get("unit") or "").strip() or _extract_unit(document.name)
-    status = _extract_status(document.name)
     currency = (raw.get("currency") or "").strip() or _extract_currency(text)
-    doc_role = _DOC_ROLE_BY_TYPE.get(doc_type, "quote")
     doc_date = document.modified_at_source.date() if document.modified_at_source else None
+    if ledger_side == "cost":
+        # Costs that reach this layer are money already incurred -> status=actual.
+        status = "actual"
+        doc_role = _DOC_ROLE_BY_TYPE.get(doc_type, "invoice")
+    else:
+        status = _extract_status(document.name)
+        doc_role = _DOC_ROLE_BY_TYPE.get(doc_type, "quote")
 
     items: list[FinancialLineItem] = []
     div_total = Decimal(0)
@@ -358,6 +407,11 @@ def populate_ledger_llm_for_document(
         amount_type = line.get("amount_type") or "total"
         if amount_type not in LINE_ITEM_AMOUNT_TYPES:
             amount_type = "total"
+        # Costs are tracked PRE-TAX (revenue is too). Defensively drop any tax
+        # line the model emitted despite the prompt, so recoverable sales tax
+        # never inflates a project's actual cost.
+        if ledger_side == "cost" and amount_type == "tax":
+            continue
         div = classify_division(desc, masterformat_hint=hint)
         verified = _amount_in_text(amount, norm_text)
         try:
@@ -372,7 +426,7 @@ def populate_ledger_llm_for_document(
                 unit=unit,
                 division_code=div.code,
                 division_name=div.name,
-                side="revenue",
+                side=ledger_side,
                 amount_type=amount_type,
                 status=status,
                 doc_role=doc_role,
