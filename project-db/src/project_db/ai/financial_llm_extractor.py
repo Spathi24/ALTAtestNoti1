@@ -33,7 +33,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from project_db.ai.financial_divisions import classify_division
+from project_db.ai.financial_divisions import (
+    DIVISIONS,
+    UNCLASSIFIED,
+    classify_division,
+    division_by_code,
+)
 from project_db.ai.financial_grid_populator import (
     DocLedgerResult,
     ProjectLedgerResult,
@@ -83,6 +88,17 @@ _DOC_ROLE_BY_TYPE = {
 _RECONCILE_ABS = Decimal("1.00")
 _RECONCILE_PCT = Decimal("0.01")
 
+# The controlled division vocabulary, exposed to the LLM so it assigns the CSI
+# division DIRECTLY using full-document context (the supplier's trade, the scope
+# described) instead of us keyword-matching a terse line afterwards -- the latter
+# dumped most invoice lines into 99 Unclassified. ``classify_division`` stays as
+# a deterministic backstop only when the model returns 99.
+_DIVISION_CHOICES: tuple[tuple[str, str], ...] = tuple(
+    [(d.code, d.name) for d in DIVISIONS] + [(UNCLASSIFIED.code, UNCLASSIFIED.name)]
+)
+_DIVISION_CODE_ENUM: list[str] = [c for c, _ in _DIVISION_CHOICES]
+_DIVISION_GUIDE: str = "\n".join(f"   {c} = {n}" for c, n in _DIVISION_CHOICES)
+
 
 FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
     "name": "financial_line_extraction",
@@ -96,10 +112,23 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
             "unit",
             "currency",
             "stated_total",
+            "is_summary_rollup",
             "line_items",
         ],
         "properties": {
             "document_type": {"type": "string", "enum": _LLM_DOC_TYPES},
+            "is_summary_rollup": {
+                "type": "boolean",
+                "description": (
+                    "true if this document is a SUMMARY / ROLLUP that restates "
+                    "money priced in DETAIL elsewhere -- e.g. a one-line "
+                    "'Statement of Work' lump total, a recap/cover page, or scope "
+                    "quoted 'as per the accepted quote'. false for an itemized "
+                    "quote or invoice that prices its own scope. This flags "
+                    "probable double-counts for human reconciliation; it does NOT "
+                    "change what you extract."
+                ),
+            },
             "ledger_side": {
                 "type": "string",
                 "enum": ["revenue", "cost", "skip"],
@@ -140,6 +169,7 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
                     "additionalProperties": False,
                     "required": [
                         "description",
+                        "division_code",
                         "masterformat_hint",
                         "amount",
                         "amount_type",
@@ -148,6 +178,21 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
                     ],
                     "properties": {
                         "description": {"type": "string"},
+                        "division_code": {
+                            "type": "string",
+                            "enum": _DIVISION_CODE_ENUM,
+                            "description": (
+                                "The CSI MasterFormat division THIS line belongs "
+                                "to. Decide using the WHOLE document's context -- "
+                                "the supplier's trade, the scope described, the "
+                                "materials named -- not only this line's words. "
+                                "E.g. a line that says only 'materials' or "
+                                "'labour' on a plumber's invoice is 22; a tile "
+                                "purchase is 09. Use '99' ONLY when the line is "
+                                "genuinely unclassifiable.\nThe codes:\n"
+                                + _DIVISION_GUIDE
+                            ),
+                        },
                         "masterformat_hint": {
                             "type": ["string", "null"],
                             "description": (
@@ -210,7 +255,21 @@ def _system_prompt(company_name: str) -> str:
         "5. line_items: one per priced line. Give the description, any "
         "MasterFormat/trade hint the doc names, the amount (number only), and "
         "amount_type (total for a normal line; material/labour only if the doc "
-        "splits them; markup/contingency/tax for those).\n\n"
+        "splits them; markup/contingency/tax for those).\n"
+        "6. division_code (per line): assign each line to ONE CSI division using "
+        "the WHOLE document -- the supplier's trade, the scope, the materials. A "
+        "plumbing supplier's invoice line is 22 even if it only says 'materials'; "
+        "a flooring/tile purchase is 09; a kitchen-cabinet line is 10-12. Use the "
+        "controlled codes:\n" + _DIVISION_GUIDE + "\n"
+        "Use 99 only when a line is genuinely unclassifiable. This 'split by "
+        "trade' is the whole point of the report -- do NOT default to 99.\n"
+        "7. is_summary_rollup: set true when the WHOLE document just restates "
+        "money detailed elsewhere (a lump 'Statement of Work' total, a recap "
+        "page, 'as per accepted quote') so we don't double-count it; false for an "
+        "itemized quote/invoice.\n\n"
+        "ITEMIZE: when the document breaks its price into trades/sections, return "
+        "EACH as its own line with its own division_code. Only return a single "
+        "lump line when the document itself gives one price for everything.\n\n"
         "COST RULE (critical): on a cost document, include ONLY money ACTUALLY "
         "spent or invoiced. A single sheet often mixes real spend with planning "
         "numbers -- you must EXCLUDE every budget column, estimate column, and "
@@ -388,6 +447,10 @@ def populate_ledger_llm_for_document(
     unit = (raw.get("unit") or "").strip() or _extract_unit(document.name)
     currency = (raw.get("currency") or "").strip() or _extract_currency(text)
     doc_date = document.modified_at_source.date() if document.modified_at_source else None
+    # Advisory flag: a summary/rollup doc likely restates money priced elsewhere.
+    # Stored on every row so the cross-document reconciliation pass (and a human)
+    # can spot probable double-counts; it does NOT gate writing here.
+    is_rollup = bool(raw.get("is_summary_rollup"))
     if ledger_side == "cost":
         # Costs that reach this layer are money already incurred -> status=actual.
         status = "actual"
@@ -412,7 +475,21 @@ def populate_ledger_llm_for_document(
         # never inflates a project's actual cost.
         if ledger_side == "cost" and amount_type == "tax":
             continue
-        div = classify_division(desc, masterformat_hint=hint)
+        # Division: TRUST THE LLM FIRST. It read the whole document, so it knows
+        # the trade for a terse line ('materials' on a plumber's invoice -> 22).
+        # Keyword-matching the line text only kicks in when the model abstains
+        # (returns 99 / nothing) -- a backstop, not the primary signal. This is
+        # the fix for everything landing in 99 Unclassified.
+        llm_code = (line.get("division_code") or "").strip()
+        div = division_by_code(llm_code) if llm_code else UNCLASSIFIED
+        div_source = "llm" if div.code != "99" else None
+        if div.code == "99":
+            fallback = classify_division(desc, masterformat_hint=hint)
+            if fallback.code != "99":
+                div = fallback
+                div_source = "fallback"
+            else:
+                div_source = "unclassified"
         verified = _amount_in_text(amount, norm_text)
         try:
             conf = max(0.0, min(1.0, float(line.get("confidence"))))
@@ -442,7 +519,14 @@ def populate_ledger_llm_for_document(
                 classification_method="llm_assisted",
                 classification_confidence=conf,
                 source_doc_type=doc_type,
-                source_meta_json=json.dumps({"masterformat_hint": hint}),
+                source_meta_json=json.dumps(
+                    {
+                        "masterformat_hint": hint,
+                        "llm_division_code": llm_code or None,
+                        "division_source": div_source,
+                        "is_summary_rollup": is_rollup,
+                    }
+                ),
             )
         )
 
