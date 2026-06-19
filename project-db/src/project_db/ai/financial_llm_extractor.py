@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from typing import Any
@@ -36,6 +37,7 @@ from sqlalchemy.orm import Session
 from project_db.ai.financial_divisions import (
     DIVISIONS,
     UNCLASSIFIED,
+    _strip_accents,
     classify_division,
     division_by_code,
 )
@@ -98,6 +100,30 @@ _DIVISION_CHOICES: tuple[tuple[str, str], ...] = tuple(
 )
 _DIVISION_CODE_ENUM: list[str] = [c for c, _ in _DIVISION_CHOICES]
 _DIVISION_GUIDE: str = "\n".join(f"   {c} = {n}" for c, n in _DIVISION_CHOICES)
+
+# Sales tax is pass-through money (we collect GST/QST and remit it; we pay it on
+# purchases and claim it back) -- it is NEVER revenue or cost, so it must stay
+# out of the margin on BOTH sides. The model is told this but routinely mislabels
+# a tax line as amount_type='total' (seen live: 'GST', 'QST', 'Tax', 'Quebec
+# sales tax' written as totals), so we strip tax DETERMINISTICALLY by amount_type
+# OR a tax keyword in the description. Whole-word, accent-folded, bilingual.
+_TAX_LINE_RE = re.compile(
+    r"\b("
+    r"gst|qst|pst|hst|tps|tvq|tvh|"
+    r"tax|taxe|"
+    r"sales tax|goods and services tax|harmonized sales tax|"
+    r"quebec sales tax|taxe de vente|provincial sales tax"
+    r")\b"
+)
+
+
+def _is_tax_line(description: str, amount_type: str) -> bool:
+    """True if a line is sales tax (pass-through), to be excluded from margins on
+    either side. Catches the model's frequent mislabelling of tax as 'total'."""
+    if amount_type == "tax":
+        return True
+    folded = _strip_accents((description or "").lower())
+    return bool(_TAX_LINE_RE.search(folded))
 
 
 FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
@@ -460,7 +486,9 @@ def populate_ledger_llm_for_document(
         doc_role = _DOC_ROLE_BY_TYPE.get(doc_type, "quote")
 
     items: list[FinancialLineItem] = []
-    div_total = Decimal(0)
+    pretax_total = Decimal(0)  # non-tax lines -- what we persist & count
+    gross_total = Decimal(0)  # all lines incl tax -- for the dual reconcile
+    dropped_tax = Decimal(0)
     for line in raw_lines:
         amount = _parse_amount(line.get("amount"))
         if amount is None:
@@ -470,11 +498,14 @@ def populate_ledger_llm_for_document(
         amount_type = line.get("amount_type") or "total"
         if amount_type not in LINE_ITEM_AMOUNT_TYPES:
             amount_type = "total"
-        # Costs are tracked PRE-TAX (revenue is too). Defensively drop any tax
-        # line the model emitted despite the prompt, so recoverable sales tax
-        # never inflates a project's actual cost.
-        if ledger_side == "cost" and amount_type == "tax":
+        gross_total += amount
+        # Sales tax is pass-through on BOTH sides -- exclude it from the ledger so
+        # it never inflates revenue or cost. The model often mislabels tax as a
+        # 'total' line, so this is keyword-based, not just amount_type-based.
+        if _is_tax_line(desc, amount_type):
+            dropped_tax += amount
             continue
+        pretax_total += amount
         # Division: TRUST THE LLM FIRST. It read the whole document, so it knows
         # the trade for a terse line ('materials' on a plumber's invoice -> 22).
         # Keyword-matching the line text only kicks in when the model abstains
@@ -495,7 +526,6 @@ def populate_ledger_llm_for_document(
             conf = max(0.0, min(1.0, float(line.get("confidence"))))
         except (TypeError, ValueError):
             conf = 0.5
-        div_total += amount
         items.append(
             FinancialLineItem(
                 project_id=document.project_id,
@@ -536,10 +566,17 @@ def populate_ledger_llm_for_document(
 
     stated = _parse_amount(raw.get("stated_total"))
     result.grand_total = stated
-    result.division_total = div_total
+    result.division_total = pretax_total
     if stated is not None:
+        # The model is inconsistent about whether stated_total is pre- or
+        # after-tax. Accept EITHER convention: the kept (pre-tax) lines OR all
+        # lines incl tax must sum to the stated total. Then we always persist the
+        # pre-tax lines only. This keeps clean docs reconciling while stripping
+        # the tax the model wrongly folded into a 'total' line + stated total.
         tol = max(_RECONCILE_ABS, (abs(stated) * _RECONCILE_PCT))
-        result.reconcile_ok = abs(div_total - stated) <= tol
+        result.reconcile_ok = (
+            abs(pretax_total - stated) <= tol or abs(gross_total - stated) <= tol
+        )
 
     # Always clear this document's prior LLM rows first (idempotent + cleans up
     # a previous bad extraction).
@@ -566,8 +603,8 @@ def populate_ledger_llm_for_document(
         result.ingestion_status = "quarantined"
         result.ingestion_reason = "reconcile_fail" if stated is not None else "no_stated_total"
         result.warnings.append(
-            f"extracted lines sum to {div_total} vs stated {stated}; "
-            "quarantined (not written to ledger)"
+            f"extracted lines sum to {pretax_total} (pre-tax) / {gross_total} "
+            f"(incl tax) vs stated {stated}; quarantined (not written to ledger)"
         )
     return result
 

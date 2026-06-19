@@ -258,6 +258,145 @@ class TestPopulateLLMDocument:
         assert rows
         assert all(json.loads(r.source_meta_json)["is_summary_rollup"] is True for r in rows)
 
+    def test_revenue_tax_lines_stripped_aftertax_stated(self, db_session):
+        """GST/QST on a revenue contract are pass-through -- stripped from the
+        ledger. The model reported the AFTER-tax total as stated; we reconcile
+        via the gross convention but persist only the pre-tax contract line."""
+        project = _seed_project(db_session)
+        text = (
+            "ALTA CONSTRUCTION GROUP - CONTRACT\n"
+            "Contract Price ........ $4,973.56\n"
+            "Goods and services tax (GST) ... $248.68\n"
+            "Quebec sales tax (QST) ......... $496.11\n"
+            "Total ................. $5,718.35\n"
+        )
+        doc, dt = _make_doc(db_session, project, "Alta contract.pdf", text)
+        lines = [
+            {
+                "description": "Contract Price",
+                "division_code": "01",
+                "masterformat_hint": None,
+                "amount": 4973.56,
+                "amount_type": "total",
+                "quoted_excerpt": "Contract Price $4,973.56",
+                "confidence": 0.9,
+            },
+            {
+                "description": "Goods and services tax (GST)",
+                "division_code": "99",
+                "masterformat_hint": None,
+                "amount": 248.68,
+                "amount_type": "total",  # model MISLABELS tax as total
+                "quoted_excerpt": "GST $248.68",
+                "confidence": 0.9,
+            },
+            {
+                "description": "Quebec sales tax (QST)",
+                "division_code": "99",
+                "masterformat_hint": None,
+                "amount": 496.11,
+                "amount_type": "total",
+                "quoted_excerpt": "QST $496.11",
+                "confidence": 0.9,
+            },
+        ]
+        ex = MockFinancialLineExtractor(
+            {doc.name: _quote_response(stated=5718.35, lines=lines, side="revenue")}
+        )
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.reconcile_ok is True  # gross (incl tax) == stated 5718.35
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
+        assert len(rows) == 1  # the two tax lines were stripped
+        assert rows[0].description == "Contract Price"
+        assert float(rows[0].amount) == pytest.approx(4973.56)
+
+    def test_revenue_tax_lines_stripped_pretax_stated(self, db_session):
+        """Same doc, but the model reported the PRE-tax total -- still reconciles
+        (pre-tax convention) and still strips the tax lines."""
+        project = _seed_project(db_session)
+        text = "CONTRACT\nContract Price $4,973.56\nGST $248.68\nQST $496.11\n"
+        doc, dt = _make_doc(db_session, project, "Alta contract 2.pdf", text)
+        lines = [
+            {
+                "description": "Contract Price",
+                "division_code": "01",
+                "masterformat_hint": None,
+                "amount": 4973.56,
+                "amount_type": "total",
+                "quoted_excerpt": "Contract Price $4,973.56",
+                "confidence": 0.9,
+            },
+            {
+                "description": "GST",
+                "division_code": "99",
+                "masterformat_hint": None,
+                "amount": 248.68,
+                "amount_type": "tax",
+                "quoted_excerpt": "GST $248.68",
+                "confidence": 0.9,
+            },
+        ]
+        ex = MockFinancialLineExtractor(
+            {doc.name: _quote_response(stated=4973.56, lines=lines, side="revenue")}
+        )
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.reconcile_ok is True  # pre-tax (excl tax) == stated 4973.56
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].description == "Contract Price"
+
+    def test_tax_keyword_stripped_when_mislabeled_as_total(self, db_session):
+        """A bare 'Tax' line the model labelled amount_type='total' is still
+        stripped (keyword catch), on the cost side."""
+        project = _seed_project(db_session)
+        text = "INVOICE\nPost Construction Cleaning $600.00\nTax $89.85\nTotal $689.85\n"
+        doc, dt = _make_doc(db_session, project, "Invoice-alta-1.pdf", text)
+        lines = [
+            {
+                "description": "Post Construction Cleaning",
+                "division_code": "01",
+                "masterformat_hint": None,
+                "amount": 600.0,
+                "amount_type": "total",
+                "quoted_excerpt": "Post Construction Cleaning $600.00",
+                "confidence": 0.9,
+            },
+            {
+                "description": "Tax",
+                "division_code": "99",
+                "masterformat_hint": None,
+                "amount": 89.85,
+                "amount_type": "total",  # mislabelled
+                "quoted_excerpt": "Tax $89.85",
+                "confidence": 0.9,
+            },
+        ]
+        ex = MockFinancialLineExtractor(
+            {
+                doc.name: _quote_response(
+                    doc_type="supplier_invoice", side="cost", stated=689.85, lines=lines
+                )
+            }
+        )
+        res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
+        assert res.reconcile_ok is True  # gross 689.85 == stated
+        rows = (
+            db_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.document_id == doc.canonical_id)
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].description == "Post Construction Cleaning"
+        assert rows[0].side == "cost"
+
     def test_amount_verified_against_text(self, db_session):
         project = _seed_project(db_session)
         doc, dt = _make_doc(db_session, project, "Quote.pdf", _QUOTE_TEXT)
