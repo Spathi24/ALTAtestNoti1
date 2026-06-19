@@ -220,10 +220,13 @@ class TestE2EFinancialPipeline:
         assert all(r.status == "proposed" for r in rows)
         assert all(r.unit == "927" for r in rows)
 
-        # Proposed docs still appear in margins (no filter by status at report layer)
+        # A NOT-STARTED ('proposed') quote is PIPELINE, not contracted revenue:
+        # it is reported separately and kept OUT of the margin, so you never bank
+        # money you haven't actually won.
         margins = report_division_margins(db_session, "927 Rockland E2E")
         assert "error" not in margins
-        assert margins["total_quoted_revenue"] == pytest.approx(9650.0, rel=1e-3)
+        assert margins["total_quoted_revenue"] is None
+        assert margins["total_proposed_revenue"] == pytest.approx(9650.0, rel=1e-3)
 
     def test_trashed_doc_excluded(self, db_session):
         """A trashed document's ledger rows are not written by the project populator."""

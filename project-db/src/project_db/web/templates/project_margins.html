@@ -17,7 +17,7 @@
 <!-- Summary KPIs -->
 <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
   <div class="kpi">
-    <h3>Quoted revenue</h3>
+    <h3>Contracted revenue</h3>
     <div class="kpi-number pos">
       {% if d.total_quoted_revenue is not none %}
         ${{ "{:,.0f}".format(d.total_quoted_revenue) }}
@@ -26,6 +26,14 @@
       {% endif %}
     </div>
   </div>
+  {% if d.total_proposed_revenue is not none %}
+  <div class="kpi">
+    <h3>Proposed (pipeline)</h3>
+    <div class="kpi-number" title="NOT-STARTED / speculative quotes — excluded from the margin">
+      ${{ "{:,.0f}".format(d.total_proposed_revenue) }}
+    </div>
+  </div>
+  {% endif %}
   <div class="kpi">
     <h3>Actual cost</h3>
     <div class="kpi-number">
@@ -77,7 +85,9 @@
       <td><code>{{ row.division_code }}</code></td>
       <td>{{ row.division_name }}</td>
       <td style="text-align:right">
-        {% if row.quoted_revenue is not none %}${{ "{:,.2f}".format(row.quoted_revenue) }}{% else %}&mdash;{% endif %}
+        {% if row.quoted_revenue is not none %}${{ "{:,.2f}".format(row.quoted_revenue) }}
+        {% elif row.proposed_revenue is not none %}<small style="opacity:.6">(proposed ${{ "{:,.0f}".format(row.proposed_revenue) }})</small>
+        {% else %}&mdash;{% endif %}
       </td>
       <td style="text-align:right">
         {% if row.actual_total_cost is not none %}${{ "{:,.2f}".format(row.actual_total_cost) }}{% else %}&mdash;{% endif %}
@@ -101,6 +111,8 @@
           <span class="pill pill-warn">rev-only</span>
         {% elif row.status_flag == "cost_only" %}
           <span class="pill pill-warn">cost-only</span>
+        {% elif row.status_flag == "proposed_only" %}
+          <span class="pill pill-warn">proposed</span>
         {% else %}
           <span class="pill">{{ row.status_flag }}</span>
         {% endif %}

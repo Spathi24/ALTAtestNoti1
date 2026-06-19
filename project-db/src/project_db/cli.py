@@ -843,7 +843,12 @@ def cmd_division_margins(args: argparse.Namespace) -> int:
         print(f"Project: {data['project']}  ({data['project_id']})")
         print()
         if data["total_quoted_revenue"] is not None:
-            print(f"  Total quoted revenue:  ${data['total_quoted_revenue']:>12,.2f}")
+            print(f"  Contracted revenue:    ${data['total_quoted_revenue']:>12,.2f}")
+        if data.get("total_proposed_revenue") is not None:
+            print(
+                f"  Proposed (not started):${data['total_proposed_revenue']:>12,.2f}"
+                "   <- pipeline, NOT in margin"
+            )
         if data["total_actual_cost"] is not None:
             print(f"  Total actual cost:     ${data['total_actual_cost']:>12,.2f}")
         if data["gross_margin"] is not None:

@@ -63,7 +63,7 @@ def _setup(session):
     return project, doc
 
 
-def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount):
+def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount, status="accepted"):
     row = FinancialLineItem(
         canonical_id=uuid.uuid4(),
         project_id=project.canonical_id,
@@ -75,7 +75,7 @@ def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount
         amount_type=amount_type,
         amount=Decimal(str(amount)),
         currency="CAD",
-        status="accepted",
+        status=status,
         doc_role="quote",
         source="grid",
     )
@@ -370,6 +370,77 @@ class TestProjectTotals:
         result = report_division_margins(db_session, "923 Test")
         assert "1 division" in result["coverage_note"]
         assert "revenue-only" in result["coverage_note"]
+
+
+class TestRevenueStatusGating:
+    """Revenue status gates whether a row counts as CONTRACTED money.
+
+    A NOT-STARTED / speculative quote (status='proposed') is pipeline, not money
+    actually sold, so it must stay OUT of the margin and be tracked separately.
+    A 'superseded' quote was replaced by a newer version and must vanish
+    entirely. 'accepted' / 'unknown' / 'actual' all count.  Regression: the LLM
+    extractor populated $282k of NOT-STARTED quotes that inflated every margin.
+    """
+
+    def test_proposed_excluded_from_contracted_revenue(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="02",
+            side="revenue", amount_type="total", amount=1000, status="accepted",
+        )
+        _add_row(
+            db_session, project, doc, unit="927", div_code="02",
+            side="revenue", amount_type="total", amount=5000, status="proposed",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        # Contracted revenue is the accepted $1000 only -- NOT $6000.
+        assert result["total_quoted_revenue"] == pytest.approx(1000.0)
+        # Proposed is tracked separately.
+        assert result["total_proposed_revenue"] == pytest.approx(5000.0)
+
+    def test_proposed_only_division_flagged_and_kept_out_of_margin(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="927", div_code="09",
+            side="revenue", amount_type="total", amount=4200, status="proposed",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["status_flag"] == "proposed_only"
+        assert row["quoted_revenue"] is None
+        assert row["proposed_revenue"] == pytest.approx(4200.0)
+        assert result["total_quoted_revenue"] is None
+
+    def test_superseded_excluded_entirely(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22",
+            side="revenue", amount_type="total", amount=900, status="superseded",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        # Superseded row contributes nothing on either side -> no divisions.
+        assert result["total_quoted_revenue"] is None
+        assert result["total_proposed_revenue"] is None
+        assert result["divisions"] == []
+
+    def test_unknown_status_counts_as_revenue(self, db_session):
+        """LLM-extracted rows carry status='unknown' -- treat as contracted."""
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22",
+            side="revenue", amount_type="total", amount=750, status="unknown",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        assert result["total_quoted_revenue"] == pytest.approx(750.0)
+        assert result["total_proposed_revenue"] is None
 
 
 class TestExtrasAdditiveToQuoteTotal:

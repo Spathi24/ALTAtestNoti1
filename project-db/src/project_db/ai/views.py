@@ -1965,6 +1965,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
             "project": project.name,
             "project_id": str(project.canonical_id),
             "total_quoted_revenue": None,
+            "total_proposed_revenue": None,
             "total_actual_cost": None,
             "gross_margin": None,
             "coverage_note": ("No ledger rows — run 'fill-ledger' to populate quote data."),
@@ -2012,6 +2013,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     pivot: dict = defaultdict(
         lambda: {
             "revenue_rows": [],
+            "proposed_revenue": _zero,
             "cost_material": _zero,
             "cost_labour": _zero,
             "cost_other": _zero,
@@ -2020,12 +2022,25 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
         }
     )
     for r in effective:
+        # Revenue status gates whether a row is CONTRACTED money:
+        #   superseded -> the quote was replaced by a newer version; never count.
+        #   proposed   -> a NOT-STARTED / speculative quote; that's pipeline, not
+        #                 revenue actually sold, so it is tracked SEPARATELY and
+        #                 kept out of the margin (you can't bank money you haven't
+        #                 won). accepted / actual / unknown all count as revenue.
+        # Cost rows are always actuals, so status does not gate them.
+        status = (r.status or "unknown") if r.side == "revenue" else "actual"
+        if r.side == "revenue" and status == "superseded":
+            continue
         key = (r.unit, r.division_code)
         bucket = pivot[key]
         bucket["doc_ids"].add(r.document_id)
         amount = _Decimal(str(r.amount or 0))
         if r.side == "revenue":
-            bucket["revenue_rows"].append(amount)
+            if status == "proposed":
+                bucket["proposed_revenue"] += amount
+            else:
+                bucket["revenue_rows"].append(amount)
         elif r.side == "cost":
             if r.amount_type == "material":
                 bucket["cost_material"] += amount
@@ -2044,6 +2059,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
         div = division_by_code(div_code)
         rev_amounts: list[_Decimal] = bucket["revenue_rows"]
         quoted_revenue: _Decimal | None = sum(rev_amounts, _zero) if rev_amounts else None
+        proposed_rev: _Decimal | None = bucket["proposed_revenue"] or None
         mat = bucket["cost_material"] or None
         lab = bucket["cost_labour"] or None
         oth = bucket["cost_other"] or None
@@ -2068,6 +2084,8 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
             flag = "revenue_only"
         elif actual_cost is not None:
             flag = "cost_only"
+        elif proposed_rev is not None:
+            flag = "proposed_only"
         else:
             flag = "unknown_division"
 
@@ -2081,6 +2099,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
                 "division_code": div_code,
                 "division_name": div.name,
                 "quoted_revenue": float(quoted_revenue) if quoted_revenue is not None else None,
+                "proposed_revenue": float(proposed_rev) if proposed_rev is not None else None,
                 "actual_material_cost": float(mat) if mat is not None else None,
                 "actual_labour_cost": float(lab) if lab is not None else None,
                 "actual_total_cost": float(actual_cost) if actual_cost is not None else None,
@@ -2095,6 +2114,13 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     total_revenue = (
         sum(
             (r["quoted_revenue"] for r in division_rows if r["quoted_revenue"] is not None),
+            0.0,
+        )
+        or None
+    )
+    total_proposed_revenue = (
+        sum(
+            (r["proposed_revenue"] for r in division_rows if r["proposed_revenue"] is not None),
             0.0,
         )
         or None
@@ -2124,6 +2150,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
         "project": project.name,
         "project_id": str(project.canonical_id),
         "total_quoted_revenue": total_revenue,
+        "total_proposed_revenue": total_proposed_revenue,
         "total_actual_cost": total_cost,
         "gross_margin": gross_total,
         "coverage_note": coverage_note,
