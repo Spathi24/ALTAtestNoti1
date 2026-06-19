@@ -156,6 +156,13 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             question,
             provider,
             embedding_provider=embed_provider,
+            public_identity=(
+                "In the Ask tab UI, your public name is Pini. "
+                "If asked who you are, say you are Pini. "
+                "Do not mention ALTA as your name. "
+                "This is only a presentation identity; do not change project names, "
+                "database names, report names, fields, modes, or stored data."
+            ),
         )
         text, fmt = _format_answer(llm_resp.answer)
         # De-duplicate cited documents for the "answered using" badge.

@@ -1,29 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Ask{% endblock %}
+{% block title %}Pini{% endblock %}
 
 {% block content %}
 <hgroup>
-  <h2>Ask</h2>
+  <h2>Pini</h2>
   <p>Natural-language Q&amp;A over the canonical DB.  Keyword-matched
      reports answer instantly.  Free-form questions fall through to
-     the fast LLM (Haiku) over a JSON snapshot of the whole database.</p>
+     Pini over a JSON snapshot of the whole database.</p>
 </hgroup>
 
 <form method="post" action="/ask" id="ask-form">
   <label>
-    Question
+    Question for Pini
     <textarea name="question" rows="3" autofocus
               placeholder="e.g. 'what active projects do we have?', 'budget vs contract for 923 Rockland', 'which project looks most at risk?', 'help'">{{ question or "" }}</textarea>
   </label>
   <fieldset role="group">
     <button type="submit"
             hx-disabled-elt="#ask-form button">
-      Ask
+      Ask Pini
     </button>
     <a href="/ask" role="button" class="secondary outline">Clear</a>
     <span id="ask-spinner" class="htmx-indicator">
       <span class="working">
-        Routing your question... if it falls to the LLM this can take 5-15s.
+        Pini is routing your question... if it falls to the LLM this can take 5-15s.
       </span>
     </span>
   </fieldset>
@@ -75,7 +75,7 @@
 
   {% if sources %}
   <details class="rag-sources" open data-testid="rag-sources">
-    <summary>Answered using {{ sources|length }} document excerpt(s)</summary>
+    <summary>Pini answered using {{ sources|length }} document excerpt(s)</summary>
     <ul>
       {% for s in sources %}
       <li>
@@ -103,7 +103,7 @@
     <li><code>tasks without dates</code> [<code>for project &lt;name&gt;</code>]</li>
     <li><code>which projects are missing documents</code></li>
     <li><code>budget vs contract for project &lt;name&gt;</code></li>
-    <li><code>help</code> -- prints this list (via the assistant itself)</li>
+    <li><code>help</code> -- prints this list (via Pini)</li>
   </ul>
   <p><small>Anything that doesn't match a pattern goes to the fast LLM over a
      JSON snapshot of the whole DB.  When documents have been embedded

@@ -695,9 +695,7 @@ judgment. The owner values quality of decisions over rule-following.
 - Test count in README/this doc is hand-maintained; update when you add tests.
 - CHANGELOG newest-on-top; one entry per work session (date + theme + what +
   tests + state).
-- Commit messages: imperative, group by concern, mention test count. Co-author
-  trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` (use the
-  model actually running; older commits used Sonnet 4.6).
+- Commit messages: imperative, group by concern, mention test count.
 - Strategic docs to keep current: **STRATEGY.md** (mission + standing rules),
   **INTENTIONS.md** (forward roadmap), **FEATURES.md** (plain-language features).
 - **Doc set is intentionally lean** (consolidated 2026-06-09): STRATEGY, HANDOFF,

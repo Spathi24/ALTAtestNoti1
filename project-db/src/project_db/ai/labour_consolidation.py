@@ -36,6 +36,9 @@ from project_db.db.models.project_log import ProjectLogEntry, ProjectLogSubmissi
 
 # Two reported totals farther apart than this (hours) are a material conflict.
 _HOURS_CONFLICT_TOL = Decimal("0.25")
+_LOW_CONFIDENCE_THRESHOLD = 0.5  # below this, claims are flagged "low_confidence" for review
+_AUTO_CLAIM_TYPES = {"labour_time", "attendance_only"}
+_SOFT_REVIEW_FLAGS = {"low_confidence", "hours_mismatch"}
 
 BRIDGE_VERSION = "gmail-bridge-v1"
 
@@ -183,6 +186,35 @@ def _pick_chosen(members: list[LabourClaim]) -> LabourClaim:
     return max(members, key=score)
 
 
+def _usable_hours_or_time(claim: LabourClaim) -> bool:
+    return (
+        claim.total_hours_reported is not None
+        or claim.total_hours_computed is not None
+        or (claim.time_arrived is not None and claim.time_left is not None)
+    )
+
+
+def _claim_review_flags(claim: LabourClaim) -> set[str]:
+    flags: set[str] = set()
+    if claim.claim_type not in _AUTO_CLAIM_TYPES:
+        flags.add(f"claim_type:{claim.claim_type or 'unknown'}")
+    if claim.review_status == "needs_review":
+        flags.add("claim_needs_review")
+    if claim.source_confidence is not None and claim.source_confidence < _LOW_CONFIDENCE_THRESHOLD:
+        flags.add("low_confidence")
+    if claim.hours_mismatch:
+        flags.add("hours_mismatch")
+    if claim.reported_for_worker_id is None:
+        flags.add("unresolved_worker")
+    if claim.project_id is None:
+        flags.add("unresolved_project")
+    if claim.work_date is None:
+        flags.add("missing_date")
+    if not _usable_hours_or_time(claim):
+        flags.add("missing_hours")
+    return flags
+
+
 def _build_cluster(
     session: Session,
     project_id: Any,
@@ -194,6 +226,12 @@ def _build_cluster(
     worker_id = next((m.reported_for_worker_id for m in members if m.reported_for_worker_id), None)
     work_date = next((m.work_date for m in members if m.work_date), None)
     channels = sorted({m.source_channel for m in members})
+    review_flags = sorted({flag for m in members for flag in _claim_review_flags(m)})
+    hard_flags = {
+        flag
+        for flag in review_flags
+        if flag not in _SOFT_REVIEW_FLAGS
+    }
 
     reported = [
         Decimal(str(m.total_hours_reported)) for m in members if m.total_hours_reported is not None
@@ -206,12 +244,16 @@ def _build_cluster(
     conflict_flags: list[str] = []
     if hours_conflict:
         conflict_flags.append("hours")
+    for flag in review_flags:
+        if flag not in conflict_flags:
+            conflict_flags.append(flag)
     if dateless:
         status, resolution = "needs_review", "conflict_unresolved"
-        conflict_flags.append("missing_date")
     elif hours_conflict:
         status, resolution = "conflict", "conflict_unresolved"
     elif worker_unresolved:
+        status, resolution = "needs_review", "conflict_unresolved"
+    elif hard_flags:
         status, resolution = "needs_review", "conflict_unresolved"
     elif len(channels) >= 2:
         status, resolution = "auto_reinforced", "auto_reinforced"
@@ -228,7 +270,7 @@ def _build_cluster(
         conf += 0.2
     if not hours_conflict and not dateless:
         conf += 0.1
-    if status == "conflict":
+    if status in ("conflict", "needs_review"):
         conf = min(conf, 0.4)
     conf = round(min(1.0, conf), 2)
 
@@ -255,7 +297,9 @@ def _build_cluster(
     session.flush()
 
     for i, m in enumerate(members):
-        if hours_conflict and m is not chosen:
+        if m.claim_type == "correction":
+            rel = "correction"
+        elif hours_conflict and m is not chosen:
             rel = "conflicting"
         elif i == 0:
             rel = "primary"
@@ -271,6 +315,8 @@ def _build_cluster(
         )
         m.canonical_cluster_id = cluster.canonical_id
         m.canonicalized = status in ("auto_reinforced", "auto_single_source")
+        if status in ("conflict", "needs_review"):
+            m.review_status = "needs_review"
     session.flush()
     return status
 

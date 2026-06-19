@@ -15,6 +15,7 @@ processed (A1 posture). The LLM extracts; deterministic code resolves + computes
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import uuid
@@ -40,7 +41,6 @@ _HELP = (
     "A foreman can list several workers in one message.\n\n"
     "Commands: /start <token> to link your account, /status for today, /help."
 )
-
 
 # ---------------------------------------------------------------------------
 # Invite (PM-side): pre-create a pending binding + deep link
@@ -166,7 +166,93 @@ def poll_telegram(
             logger.exception("[TELEGRAM] error processing update %s", upd.get("update_id"))
             batch.errors.append(f"{upd.get('update_id')}: {exc}")
             session.rollback()
+            _record_failed_update(session, upd, exc)
     return batch
+
+
+def _nested(d: dict[str, Any] | None, key: str) -> Any:
+    return d.get(key) if isinstance(d, dict) else None
+
+
+def _msg_chat_id(msg: dict[str, Any] | None) -> Any:
+    return _nested(msg, "chat_id") or _nested(_nested(msg, "chat"), "id")
+
+
+def _msg_from(msg: dict[str, Any] | None) -> dict[str, Any] | None:
+    frm = _nested(msg, "from")
+    return frm if isinstance(frm, dict) else None
+
+
+def _msg_from_id(msg: dict[str, Any] | None) -> Any:
+    return _nested(msg, "from_id") or _nested(_msg_from(msg), "id")
+
+
+def _msg_from_field(msg: dict[str, Any] | None, field: str) -> Any:
+    flat = _nested(msg, f"from_{field}")
+    if flat is not None:
+        return flat
+    return _nested(_msg_from(msg), field)
+
+
+def _msg_message_id(msg: dict[str, Any] | None) -> Any:
+    return _nested(msg, "message_id")
+
+
+def _msg_text(msg: dict[str, Any] | None) -> str:
+    return str(_nested(msg, "text") or _nested(msg, "caption") or "").strip()
+
+
+def _source_created_at(msg: dict[str, Any] | None) -> datetime | None:
+    date_value = _nested(msg, "date")
+    if date_value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(date_value, tz=timezone.utc).replace(tzinfo=None)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _serialisable_payload(upd: dict[str, Any]) -> str:
+    payload = upd.get("raw_update") if isinstance(upd.get("raw_update"), dict) else upd
+    try:
+        return json.dumps(payload, default=str, sort_keys=True)
+    except TypeError:
+        return json.dumps({"update_id": upd.get("update_id")}, sort_keys=True)
+
+
+def _event_exists(session: Session, update_id: Any) -> bool:
+    if update_id is None:
+        return False
+    return (
+        session.query(LabourSourceEvent)
+        .filter(
+            LabourSourceEvent.source_channel == "telegram",
+            LabourSourceEvent.source_external_id == str(update_id),
+        )
+        .one_or_none()
+        is not None
+    )
+
+
+def _record_failed_update(session: Session, upd: dict[str, Any], exc: Exception) -> None:
+    update_id = upd.get("update_id")
+    if update_id is None or _event_exists(session, update_id):
+        return
+    try:
+        _record_event(
+            session,
+            update_id,
+            upd.get("message"),
+            None,
+            "failed",
+            f"exception:{type(exc).__name__}",
+            raw_payload=upd,
+            source_kind="telegram_update",
+        )
+        session.commit()
+    except Exception:
+        logger.exception("[TELEGRAM] could not preserve failed update %s", update_id)
+        session.rollback()
 
 
 def _process_update(
@@ -178,47 +264,83 @@ def _process_update(
 ) -> None:
     update_id = upd.get("update_id")
     msg = upd.get("message")
-    if msg is None or update_id is None:
+    callback = upd.get("callback_query") if isinstance(upd.get("callback_query"), dict) else None
+    if update_id is None:
         batch.ignored += 1
+        _record_event(
+            session,
+            None,
+            msg,
+            None,
+            "failed",
+            "missing_update_id",
+            raw_payload=upd,
+            source_kind="telegram_update",
+        )
+        session.commit()
         return
 
     # Dedup: an update we already turned into an event is skipped.
-    existing = (
-        session.query(LabourSourceEvent)
-        .filter(
-            LabourSourceEvent.source_channel == "telegram",
-            LabourSourceEvent.source_external_id == str(update_id),
-        )
-        .one_or_none()
-    )
-    if existing is not None:
+    if _event_exists(session, update_id):
         batch.duplicate += 1
         return
 
-    text = (msg.get("text") or "").strip()
-    chat_id = msg.get("chat_id")
-    user_id = msg.get("from_id")
-    received_at = (
-        datetime.fromtimestamp(msg["date"], tz=timezone.utc).replace(tzinfo=None)
-        if msg.get("date")
-        else datetime.utcnow()
-    )
+    if msg is None:
+        if callback is not None:
+            cb_msg = callback.get("message") if isinstance(callback.get("message"), dict) else None
+            _record_event(
+                session,
+                update_id,
+                cb_msg,
+                str(callback.get("data") or "") or None,
+                "ignored",
+                "callback_query",
+                raw_payload=upd,
+                source_kind="telegram_callback",
+                sender_key=callback.get("from", {}).get("id")
+                if isinstance(callback.get("from"), dict)
+                else None,
+            )
+        else:
+            _record_event(
+                session,
+                update_id,
+                None,
+                None,
+                "ignored",
+                "non_message_update",
+                raw_payload=upd,
+                source_kind="telegram_update",
+            )
+        session.commit()
+        batch.ignored += 1
+        return
+
+    text = _msg_text(msg)
+    chat_id = _msg_chat_id(msg)
+    user_id = _msg_from_id(msg)
+    source_created_at = _source_created_at(msg)
+    message_datetime = source_created_at or datetime.utcnow()
 
     # ----- Commands -----
     if text.startswith("/start"):
         _handle_start(session, client, text, msg, batch)
-        _record_event(session, update_id, msg, text, "ignored", "command_start")
+        _record_event(
+            session, update_id, msg, text, "ignored", "command_start", raw_payload=upd
+        )
         session.commit()
         return
     if text.startswith(("/help", "/cancel")):
         client.send_message(chat_id, _HELP)
-        _record_event(session, update_id, msg, text, "ignored", "command_help")
+        _record_event(session, update_id, msg, text, "ignored", "command_help", raw_payload=upd)
         session.commit()
         batch.ignored += 1
         return
     if text.startswith("/status"):
         client.send_message(chat_id, _status_text(session, user_id))
-        _record_event(session, update_id, msg, text, "ignored", "command_status")
+        _record_event(
+            session, update_id, msg, text, "ignored", "command_status", raw_payload=upd
+        )
         session.commit()
         batch.ignored += 1
         return
@@ -226,7 +348,9 @@ def _process_update(
     # ----- Free text -----
     identity = _find_identity(session, user_id)
     if identity is None:
-        _record_event(session, update_id, msg, text, "quarantined", "unbound_sender")
+        _record_event(
+            session, update_id, msg, text, "quarantined", "unbound_sender", raw_payload=upd
+        )
         session.commit()
         batch.quarantined += 1
         client.send_message(
@@ -237,15 +361,22 @@ def _process_update(
         return
 
     if not text:
-        _record_event(session, update_id, msg, text, "ignored", "empty")
+        _record_event(session, update_id, msg, text, "ignored", "empty", raw_payload=upd)
         session.commit()
         batch.ignored += 1
         return
 
     worker = session.query(Worker).filter_by(canonical_id=identity.worker_id).one()
-    identity.last_seen_at = received_at
+    identity.last_seen_at = source_created_at or datetime.utcnow()
     event = _record_event(
-        session, update_id, msg, text, "extracted", None, worker_id=worker.canonical_id
+        session,
+        update_id,
+        msg,
+        text,
+        "extracted",
+        None,
+        worker_id=worker.canonical_id,
+        raw_payload=upd,
     )
     session.flush()
 
@@ -254,7 +385,7 @@ def _process_update(
         extractor,
         text=text,
         source_event_id=event.canonical_id,
-        message_datetime=received_at,
+        message_datetime=message_datetime,
         reporter_worker=worker,
         default_project_id=worker.default_project_id,
     )
@@ -286,7 +417,7 @@ def _handle_start(
 ) -> None:
     parts = text.split(maxsplit=1)
     token = parts[1].strip() if len(parts) > 1 else ""
-    chat_id = msg.get("chat_id")
+    chat_id = _msg_chat_id(msg)
     if not token:
         client.send_message(
             chat_id, "Send /start <invite token>, or ask your PM for an invite link."
@@ -300,11 +431,30 @@ def _handle_start(
             chat_id, "That invite link is invalid or already used. Ask your PM for a new one."
         )
         return
-    identity.telegram_user_id = str(msg.get("from_id"))
+    from_id = _msg_from_id(msg)
+    existing = (
+        session.query(TelegramIdentity)
+        .filter(
+            TelegramIdentity.telegram_user_id == str(from_id),
+            TelegramIdentity.verified.is_(True),
+        )
+        .one_or_none()
+    )
+    if existing is not None:
+        existing_worker = (
+            session.query(Worker).filter_by(canonical_id=existing.worker_id).one_or_none()
+        )
+        name = existing_worker.display_name if existing_worker else "an existing worker"
+        client.send_message(
+            chat_id,
+            f"Your account is already linked as {name}. Ask your PM if you need to re-link.",
+        )
+        return
+    identity.telegram_user_id = str(from_id)
     identity.telegram_chat_id = str(chat_id)
-    identity.telegram_username = msg.get("from_username")
-    identity.telegram_first_name = msg.get("from_first_name")
-    identity.telegram_last_name = msg.get("from_last_name")
+    identity.telegram_username = _msg_from_field(msg, "username")
+    identity.telegram_first_name = _msg_from_field(msg, "first_name")
+    identity.telegram_last_name = _msg_from_field(msg, "last_name")
     identity.verified = True
     identity.verified_method = "invite_token"
     identity.invite_token = None  # consume it
@@ -327,19 +477,25 @@ def _record_event(
     reason: str | None,
     *,
     worker_id: Any = None,
+    raw_payload: dict[str, Any] | None = None,
+    source_kind: str = "telegram_text",
+    sender_key: Any = None,
 ) -> LabourSourceEvent:
+    source_created_at = _source_created_at(msg)
     ev = LabourSourceEvent(
         canonical_id=uuid.uuid4(),
         source_channel="telegram",
-        source_kind="telegram_text",
-        source_external_id=str(update_id),
-        source_sender_key=str(msg.get("from_id")) if msg.get("from_id") is not None else None,
-        source_chat_id=str(msg.get("chat_id")) if msg.get("chat_id") is not None else None,
-        source_message_id=str(msg.get("message_id")) if msg.get("message_id") is not None else None,
-        received_at=datetime.fromtimestamp(msg["date"], tz=timezone.utc).replace(tzinfo=None)
-        if msg.get("date")
-        else datetime.utcnow(),
+        source_kind=source_kind,
+        source_external_id=str(update_id) if update_id is not None else None,
+        source_sender_key=str(sender_key if sender_key is not None else _msg_from_id(msg))
+        if (sender_key is not None or _msg_from_id(msg) is not None)
+        else None,
+        source_chat_id=str(_msg_chat_id(msg)) if _msg_chat_id(msg) is not None else None,
+        source_message_id=str(_msg_message_id(msg)) if _msg_message_id(msg) is not None else None,
+        received_at=datetime.utcnow(),
+        source_created_at=source_created_at,
         raw_text=text or None,
+        raw_payload_json=_serialisable_payload(raw_payload or {"update_id": update_id}),
         ingestion_status=status,
         ingestion_reason=reason,
         worker_id=worker_id,

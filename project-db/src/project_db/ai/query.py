@@ -246,6 +246,7 @@ class AiAssistant:
         embedding_provider: Any | None = None,
         top_k: int = 8,
         min_similarity: float = 0.2,
+        public_identity: str | None = None,
     ) -> AiResponse:
         """Answer a free-form question with an LLM over the whole-DB snapshot.
 
@@ -281,7 +282,7 @@ class AiAssistant:
 
         snapshot = report_database_overview(self.session)
         system = (
-            "You are ALTA, a senior operations and project intelligence "
+            "You are part of ALTA, a senior operations and project intelligence "
             "assistant for a construction company.\n\n"
             "Your job is not merely to answer literal database questions. "
             "Your job is to help the user reason through projects, tasks, "
@@ -328,6 +329,12 @@ class AiAssistant:
             "- Never end at a dead end -- end with the best conclusion the "
             "data supports."
         )
+        if public_identity:
+            system = (
+                system
+                + "\n\nPublic-facing identity for this interaction only:\n"
+                + public_identity.strip()
+            )
         # RAG: retrieve the most relevant document excerpts and feed them as
         # quotable, citable hard facts.  Best-effort -- no embedding provider
         # or no embedded chunks just means we answer from the metadata

@@ -4,6 +4,7 @@ network, no API)."""
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -92,6 +93,24 @@ def _update(update_id, text, *, from_id=999, chat_id=123):
     }
 
 
+def _raw_update(update_id, text, *, from_id=999, chat_id=123):
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id * 10,
+            "chat": {"id": chat_id},
+            "from": {
+                "id": from_id,
+                "username": "worker1",
+                "first_name": "Mike",
+                "last_name": None,
+            },
+            "text": text,
+            "date": _EPOCH,
+        },
+    }
+
+
 def _labour_result():
     return {
         "document_type": "labour_update",
@@ -154,6 +173,39 @@ class TestInviteAndBinding:
         assert db_session.query(TelegramIdentity).count() == 0
         assert any("invalid" in t.lower() for _, t in client.sent)
 
+    def test_already_bound_user_rejected(self, db_session):
+        """If a Telegram user is already verified, /start with a new token is rejected
+        rather than silently overwriting their binding."""
+        mike = _worker(db_session, "Mike")
+        andres = _worker(db_session, "Andres")
+        # Mike is already bound.
+        db_session.add(
+            TelegramIdentity(
+                canonical_id=uuid.uuid4(),
+                worker_id=mike.canonical_id,
+                telegram_user_id="555",
+                telegram_chat_id="123",
+                verified=True,
+                verified_method="invite_token",
+            )
+        )
+        db_session.flush()
+        # Generate a new invite for Andres, but Mike sends it.
+        client_for_invite = MockTelegramClient()
+        invite = generate_invite(db_session, client_for_invite, "Andres")
+        client = MockTelegramClient([_update(1, f"/start {invite['token']}", from_id=555)])
+        batch = poll_telegram(db_session, client, MockTelegramLabourExtractor())
+        assert batch.bound == 0
+        # Andres's pending identity stays unverified.
+        andres_identity = (
+            db_session.query(TelegramIdentity)
+            .filter_by(worker_id=andres.canonical_id)
+            .one()
+        )
+        assert andres_identity.verified is False
+        assert andres_identity.telegram_user_id is None
+        assert any("already linked" in t.lower() for _, t in client.sent)
+
 
 class TestFreeTextIntake:
     def _bind(self, session, worker, user_id="555"):
@@ -180,6 +232,24 @@ class TestFreeTextIntake:
         assert db_session.query(LabourClaim).count() == 0
         assert any("not linked" in t.lower() for _, t in client.sent)
 
+    def test_raw_nested_update_shape_still_processes(self, db_session):
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike", default_project=p)
+        self._bind(db_session, mike, user_id="555")
+        client = MockTelegramClient(
+            [_raw_update(3, "worked rockland 7-4 half hour lunch", from_id=555)]
+        )
+        batch = poll_telegram(db_session, client, MockTelegramLabourExtractor(_labour_result()))
+        assert batch.errors == []
+        assert batch.claims_created == 1
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.source_sender_key == "555"
+        assert ev.source_chat_id == "123"
+        assert ev.source_created_at == datetime.fromtimestamp(_EPOCH, tz=timezone.utc).replace(
+            tzinfo=None
+        )
+        assert json.loads(ev.raw_payload_json)["message"]["from"]["id"] == 555
+
     def test_bound_worker_message_creates_consolidated_claim(self, db_session):
         p = _project(db_session)
         mike = _worker(db_session, "Mike", default_project=p)
@@ -198,6 +268,12 @@ class TestFreeTextIntake:
         assert claim.reported_for_worker_id == mike.canonical_id
         assert claim.project_id == p.canonical_id
         assert claim.total_hours_computed == Decimal("8.50")
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.raw_payload_json is not None
+        assert json.loads(ev.raw_payload_json)["update_id"] == 7
+        assert ev.source_created_at == datetime.fromtimestamp(_EPOCH, tz=timezone.utc).replace(
+            tzinfo=None
+        )
         # Consolidated into a shift cluster.
         cluster = db_session.query(LabourClaimCluster).one()
         assert cluster.worker_id == mike.canonical_id
@@ -334,3 +410,35 @@ class TestOffsetCursor:
         )
         db_session.flush()
         assert _next_offset(db_session) == 43
+
+    def test_non_message_update_advances_cursor(self, db_session):
+        client = MockTelegramClient([{"update_id": 7, "message": None, "poll": {"id": "p1"}}])
+        batch = poll_telegram(db_session, client, MockTelegramLabourExtractor())
+        assert batch.ignored == 1
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.source_external_id == "7"
+        assert ev.ingestion_status == "ignored"
+        assert ev.ingestion_reason == "non_message_update"
+
+        batch2 = poll_telegram(db_session, client, MockTelegramLabourExtractor())
+        assert batch2.total_seen == 0
+        assert db_session.query(LabourSourceEvent).count() == 1
+
+    def test_callback_query_advances_cursor(self, db_session):
+        update = {
+            "update_id": 8,
+            "message": None,
+            "callback_query": {
+                "data": "noop",
+                "from": {"id": 555},
+                "message": {"message_id": 80, "chat_id": 123, "date": _EPOCH},
+            },
+        }
+        client = MockTelegramClient([update])
+        batch = poll_telegram(db_session, client, MockTelegramLabourExtractor())
+        assert batch.ignored == 1
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.source_external_id == "8"
+        assert ev.source_kind == "telegram_callback"
+        assert ev.source_sender_key == "555"
+        assert ev.ingestion_reason == "callback_query"

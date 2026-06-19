@@ -309,6 +309,107 @@ class TestTelegramExtraction:
         assert c.total_hours_reported is None
         assert c.total_hours_computed is None
         assert c.activity_text == "finished basement framing"
+        assert c.review_status == "needs_review"
+
+    def test_low_classification_confidence_needs_review(self, db_session):
+        """classification_confidence below 0.6 -> needs_review even for labour_time."""
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        ev = _event(db_session, "maybe worked rockland")
+        ex = MockTelegramLabourExtractor(
+            {
+                "document_type": "labour_update",
+                "classification_confidence": 0.4,
+                "reporter_role": "self",
+                "claims": [
+                    _claim_dict(
+                        is_reporter_self=True,
+                        total_hours_reported=8,
+                        confidence=0.9,  # per-claim is high; overall is not
+                    )
+                ],
+                "needs_followup": True,
+                "followup_question": "Which date?",
+            }
+        )
+        claims = ingest_telegram_labour_claims(
+            db_session,
+            ex,
+            text=ev.raw_text,
+            source_event_id=ev.canonical_id,
+            message_datetime=_MSG_DT,
+            reporter_worker=mike,
+            default_project_id=p.canonical_id,
+        )
+        c = claims[0]
+        assert c.review_status == "needs_review"
+
+    def test_low_per_claim_confidence_needs_review(self, db_session):
+        """Per-claim confidence below 0.6 -> needs_review even when classification is fine."""
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        ev = _event(db_session, "maybe worked rockland")
+        ex = MockTelegramLabourExtractor(
+            {
+                "document_type": "labour_update",
+                "classification_confidence": 0.9,
+                "reporter_role": "self",
+                "claims": [
+                    _claim_dict(
+                        is_reporter_self=True,
+                        total_hours_reported=8,
+                        confidence=0.5,  # per-claim is below gate
+                    )
+                ],
+                "needs_followup": False,
+                "followup_question": None,
+            }
+        )
+        claims = ingest_telegram_labour_claims(
+            db_session,
+            ex,
+            text=ev.raw_text,
+            source_event_id=ev.canonical_id,
+            message_datetime=_MSG_DT,
+            reporter_worker=mike,
+            default_project_id=p.canonical_id,
+        )
+        c = claims[0]
+        assert c.source_confidence == pytest.approx(0.5)
+        assert c.review_status == "needs_review"
+
+    def test_high_confidence_labour_time_stays_pending(self, db_session):
+        """Both confidence values >= 0.6 -> pending (eligible for auto-canonicalize)."""
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        ev = _event(db_session, "worked rockland 7-4")
+        ex = MockTelegramLabourExtractor(
+            {
+                "document_type": "labour_update",
+                "classification_confidence": 0.9,
+                "reporter_role": "self",
+                "claims": [
+                    _claim_dict(
+                        is_reporter_self=True,
+                        total_hours_reported=8,
+                        confidence=0.9,
+                    )
+                ],
+                "needs_followup": False,
+                "followup_question": None,
+            }
+        )
+        claims = ingest_telegram_labour_claims(
+            db_session,
+            ex,
+            text=ev.raw_text,
+            source_event_id=ev.canonical_id,
+            message_datetime=_MSG_DT,
+            reporter_worker=mike,
+            default_project_id=p.canonical_id,
+        )
+        c = claims[0]
+        assert c.review_status == "pending"
 
     def test_non_labour_message_no_claims(self, db_session):
         p = _project(db_session)

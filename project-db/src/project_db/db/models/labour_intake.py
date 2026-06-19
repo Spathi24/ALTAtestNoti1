@@ -51,6 +51,7 @@ SOURCE_KINDS = {
     "telegram_photo",
     "telegram_document",
     "telegram_callback",
+    "telegram_update",
     "manual",
 }
 SOURCE_EVENT_STATUSES = {

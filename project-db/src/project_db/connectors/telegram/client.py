@@ -12,6 +12,7 @@ Normalised update::
 
 from __future__ import annotations
 
+import json
 import os
 from abc import ABC, abstractmethod
 from typing import Any
@@ -24,7 +25,9 @@ class TelegramClientError(RuntimeError):
 def _normalise_update(u: Any) -> dict[str, Any]:
     """telebot.types.Update -> normalised dict (message-only; other kinds -> None)."""
     msg = getattr(u, "message", None) or getattr(u, "edited_message", None)
+    cb = getattr(u, "callback_query", None)
     norm_msg = None
+    norm_cb = None
     if msg is not None:
         frm = getattr(msg, "from_user", None)
         norm_msg = {
@@ -37,7 +40,44 @@ def _normalise_update(u: Any) -> dict[str, Any]:
             "text": getattr(msg, "text", None) or getattr(msg, "caption", None),
             "date": getattr(msg, "date", None),
         }
-    return {"update_id": getattr(u, "update_id", None), "message": norm_msg}
+    if cb is not None:
+        frm = getattr(cb, "from_user", None)
+        cb_msg = getattr(cb, "message", None)
+        norm_cb = {
+            "id": getattr(cb, "id", None),
+            "data": getattr(cb, "data", None),
+            "from": {
+                "id": getattr(frm, "id", None),
+                "username": getattr(frm, "username", None),
+                "first_name": getattr(frm, "first_name", None),
+                "last_name": getattr(frm, "last_name", None),
+            },
+            "message": {
+                "message_id": getattr(cb_msg, "message_id", None),
+                "chat_id": getattr(getattr(cb_msg, "chat", None), "id", None),
+                "date": getattr(cb_msg, "date", None),
+            }
+            if cb_msg is not None
+            else None,
+        }
+    raw_update = None
+    for attr in ("to_dict", "to_json"):
+        fn = getattr(u, attr, None)
+        if not callable(fn):
+            continue
+        try:
+            raw_update = fn()
+            if isinstance(raw_update, str):
+                raw_update = json.loads(raw_update)
+            break
+        except Exception:
+            raw_update = None
+    return {
+        "update_id": getattr(u, "update_id", None),
+        "message": norm_msg,
+        "callback_query": norm_cb,
+        "raw_update": raw_update,
+    }
 
 
 class BaseTelegramClient(ABC):

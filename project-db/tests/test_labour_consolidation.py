@@ -81,8 +81,13 @@ def _claim(
     name=None,
     d=date(2026, 6, 18),
     reported=None,
+    computed=None,
     arrived=None,
     left=None,
+    claim_type="labour_time",
+    source_confidence=0.9,
+    review_status="pending",
+    hours_mismatch=False,
 ):
     c = LabourClaim(
         canonical_id=uuid.uuid4(),
@@ -95,8 +100,12 @@ def _claim(
         time_arrived=arrived,
         time_left=left,
         total_hours_reported=Decimal(str(reported)) if reported is not None else None,
-        claim_type="labour_time",
+        total_hours_computed=Decimal(str(computed)) if computed is not None else None,
+        hours_mismatch=hours_mismatch,
+        source_confidence=source_confidence,
+        claim_type=claim_type,
         extraction_method="text_llm" if channel == "telegram" else "gmail_bridge",
+        review_status=review_status,
     )
     session.add(c)
     session.flush()
@@ -230,6 +239,40 @@ class TestConsolidation:
         assert res.single_source == 1
         assert db_session.query(LabourClaimCluster).one().status == "auto_single_source"
 
+    def test_low_confidence_single_source_is_flagged_but_confirmed(self, db_session):
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        c = _claim(
+            db_session,
+            p,
+            channel="telegram",
+            worker=mike,
+            reported=8,
+            source_confidence=0.4,
+        )
+        res = consolidate_claims(db_session, p.canonical_id)
+        assert res.single_source == 1
+        cluster = db_session.query(LabourClaimCluster).one()
+        assert cluster.status == "auto_single_source"
+        assert "low_confidence" in json.loads(cluster.conflict_flags_json)
+        assert c.canonicalized is True
+
+    def test_low_confidence_telegram_can_reinforce_reliable_gmail(self, db_session):
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        _claim(db_session, p, channel="gmail", worker=mike, reported=8)
+        _claim(
+            db_session,
+            p,
+            channel="telegram",
+            worker=mike,
+            reported=8,
+            source_confidence=0.4,
+        )
+        res = consolidate_claims(db_session, p.canonical_id)
+        assert res.reinforced == 1
+        assert db_session.query(LabourClaimCluster).one().status == "auto_reinforced"
+
     def test_example5_conflict_surfaced(self, db_session):
         p = _project(db_session)
         mike = _worker(db_session, "Mike")
@@ -242,6 +285,68 @@ class TestConsolidation:
         assert "hours" in json.loads(cluster.conflict_flags_json)
         # The conflict is surfaced, not silently collapsed.
         assert cluster.confidence <= 0.4
+
+    def test_reported_vs_computed_mismatch_is_flagged_but_confirmed(self, db_session):
+        """Nicholas/Rockland class: stated 8h but 7-4 minus half-hour computes 8.5."""
+        p = _project(db_session)
+        nicholas = _worker(db_session, "Nicholas")
+        c = _claim(
+            db_session,
+            p,
+            channel="telegram",
+            worker=nicholas,
+            reported=8,
+            computed=8.5,
+            arrived="07:00",
+            left="16:00",
+            hours_mismatch=True,
+        )
+        res = consolidate_claims(db_session, p.canonical_id)
+        assert res.single_source == 1
+        cluster = db_session.query(LabourClaimCluster).one()
+        assert cluster.status == "auto_single_source"
+        assert "hours_mismatch" in json.loads(cluster.conflict_flags_json)
+        assert c.canonicalized is True
+
+    def test_activity_only_not_canonical_labour(self, db_session):
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        c = _claim(
+            db_session,
+            p,
+            channel="telegram",
+            worker=mike,
+            reported=None,
+            claim_type="activity_only",
+            review_status="needs_review",
+        )
+        res = consolidate_claims(db_session, p.canonical_id)
+        assert res.needs_review == 1
+        cluster = db_session.query(LabourClaimCluster).one()
+        assert cluster.status == "needs_review"
+        assert cluster.chosen_total_hours is None
+        assert c.canonicalized is False
+        assert db_session.query(ProjectLogEntry).count() == 0
+
+    def test_correction_does_not_create_clean_duplicate_shift(self, db_session):
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike")
+        c = _claim(
+            db_session,
+            p,
+            channel="telegram",
+            worker=mike,
+            reported=6,
+            claim_type="correction",
+            review_status="needs_review",
+        )
+        res = consolidate_claims(db_session, p.canonical_id)
+        assert res.needs_review == 1
+        cluster = db_session.query(LabourClaimCluster).one()
+        assert cluster.status == "needs_review"
+        assert "claim_type:correction" in json.loads(cluster.conflict_flags_json)
+        assert c.canonicalized is False
+        assert db_session.query(ProjectLogEntry).count() == 0
 
     def test_unresolved_worker_needs_review(self, db_session):
         p = _project(db_session)

@@ -32,6 +32,10 @@ from project_db.db.models import LabourClaim, Project, Worker, WorkerAlias
 
 PROMPT_VERSION = "telegram-labour-v1"
 
+# Claims below this extraction confidence are quarantined to needs_review so
+# they never auto-canonicalize on uncertain data.
+_CONFIDENCE_GATE = 0.6
+
 _CLAIM_TYPES = [
     "labour_time",
     "activity_only",
@@ -316,6 +320,13 @@ def ingest_telegram_labour_claims(
     if raw.get("document_type") != "labour_update":
         return []
 
+    try:
+        classification_confidence = max(
+            0.0, min(1.0, float(raw.get("classification_confidence")))
+        )
+    except (TypeError, ValueError):
+        classification_confidence = 0.0
+
     reporter_role = raw.get("reporter_role") or "unknown"
     # A BOUND reporter (e.g. foreman Andres) is trusted to name crew, so an
     # unknown name they report auto-creates a stub. An unbound message never
@@ -348,6 +359,11 @@ def ingest_telegram_labour_claims(
             cconf = 0.5
 
         claim_type = c.get("claim_type") or "unknown"
+        review_status = "pending"
+        if claim_type not in ("labour_time", "attendance_only"):
+            review_status = "needs_review"
+        elif classification_confidence < _CONFIDENCE_GATE or cconf < _CONFIDENCE_GATE:
+            review_status = "needs_review"
         # Resolve the reporter (the sender) when this claim is a self-report.
         reporter_worker_id = reporter_worker.canonical_id if reporter_worker else None
 
@@ -384,8 +400,13 @@ def ingest_telegram_labour_claims(
             extraction_method="text_llm",
             extractor_version=PROMPT_VERSION,
             missing_fields_json=json.dumps(c.get("missing_fields") or []),
-            raw_extraction_json=json.dumps(c),
-            review_status="pending",
+            raw_extraction_json=json.dumps(
+                {
+                    "classification_confidence": classification_confidence,
+                    "claim": c,
+                }
+            ),
+            review_status=review_status,
         )
         session.add(claim)
         out.append(claim)
