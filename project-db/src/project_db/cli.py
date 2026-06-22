@@ -817,53 +817,71 @@ def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
 
 
 def cmd_weekly_changes(args: argparse.Namespace) -> int:
-    """What changed per project in the last N days -- facts only, no LLM.
+    """What changed per project in the last N days.
 
-    The deterministic delta the weekly report is built on.  Omit the project
-    argument for an all-projects rollup; pass a name/UUID to focus one project.
+    Without --narrate: facts only (no LLM, zero cost).
+    With    --narrate: adds a 2-4 sentence prose summary per project.
     """
-    from project_db.ai.views import report_weekly_changes
-
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
 
-    with session_scope() as s:
-        data = report_weekly_changes(s, args.project, since_days=args.days)
-        if "error" in data:
-            print(f"FAIL: {data['error']}", file=sys.stderr)
+    narrate = getattr(args, "narrate", False)
+
+    if narrate:
+        from project_db.ai.providers import get_fast_provider
+        from project_db.ai.views import narrate_weekly_report
+
+        try:
+            provider = get_fast_provider()
+        except Exception as exc:
+            print(f"FAIL: could not build LLM provider: {exc}", file=sys.stderr)
             return 2
 
-        print(
-            f"Changes in the last {data['since_days']} day(s) "
-            f"({data['window_start'][:10]} -> {data['window_end'][:10]})"
-        )
-        print(
-            f"  {data['total_changes']} change(s) across "
-            f"{data['project_count']} project(s)."
-        )
-        if not data["projects"]:
-            print("  Nothing changed in this window.")
-            return 0
-        for proj in data["projects"]:
-            print(f"\n{proj['name']}  ({proj['change_count']} change(s))")
-            for d in proj["documents"]:
-                print(f"  [doc]      {d['modified_at_source'][:10]}  {d['name']}")
-            for n in proj["field_notes"]:
-                cls = n["classification"] or "note"
-                print(f"  [note]     {n['received_at'][:10]}  {cls}: {n['excerpt'][:80]}")
-            for p in proj["proposals_opened"]:
-                print(
-                    f"  [proposal] {p['created_at'][:10]}  opened "
-                    f"{p['entity_type']}.{p['field_name']}"
-                )
-            for p in proj["proposals_decided"]:
-                print(
-                    f"  [proposal] {p['decided_at'][:10]}  {p['status']} "
-                    f"{p['entity_type']}.{p['field_name']}"
-                )
-            for t in proj["tasks_completed"]:
-                print(f"  [task]     {t['completed_at'][:10]}  done: {t['title']}")
+        with session_scope() as s:
+            data = narrate_weekly_report(s, args.project, provider=provider, since_days=args.days)
+    else:
+        from project_db.ai.views import report_weekly_changes
+
+        with session_scope() as s:
+            data = report_weekly_changes(s, args.project, since_days=args.days)
+
+    if "error" in data:
+        print(f"FAIL: {data['error']}", file=sys.stderr)
+        return 2
+
+    print(
+        f"Changes in the last {data['since_days']} day(s) "
+        f"({data['window_start'][:10]} -> {data['window_end'][:10]})"
+    )
+    print(
+        f"  {data['total_changes']} change(s) across "
+        f"{data['project_count']} project(s)."
+    )
+    if not data["projects"]:
+        print("  Nothing changed in this window.")
+        return 0
+    for proj in data["projects"]:
+        print(f"\n{proj['name']}  ({proj['change_count']} change(s))")
+        for d in proj["documents"]:
+            print(f"  [doc]      {d['modified_at_source'][:10]}  {d['name']}")
+        for n in proj["field_notes"]:
+            cls = n["classification"] or "note"
+            print(f"  [note]     {n['received_at'][:10]}  {cls}: {n['excerpt'][:80]}")
+        for p in proj["proposals_opened"]:
+            print(
+                f"  [proposal] {p['created_at'][:10]}  opened "
+                f"{p['entity_type']}.{p['field_name']}"
+            )
+        for p in proj["proposals_decided"]:
+            print(
+                f"  [proposal] {p['decided_at'][:10]}  {p['status']} "
+                f"{p['entity_type']}.{p['field_name']}"
+            )
+        for t in proj["tasks_completed"]:
+            print(f"  [task]     {t['completed_at'][:10]}  done: {t['title']}")
+        if narrate and "narrative" in proj:
+            print(f"\n  >> {proj['narrative']}")
     return 0
 
 
@@ -3183,6 +3201,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wc.add_argument(
         "--days", type=int, default=7, help="Look-back window in days (default 7)"
+    )
+    wc.add_argument(
+        "--narrate",
+        action="store_true",
+        default=False,
+        help="Add a short LLM prose summary per project (uses the fast provider)",
     )
     wc.set_defaults(func=cmd_weekly_changes)
 

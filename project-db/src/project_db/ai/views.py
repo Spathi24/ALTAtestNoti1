@@ -676,6 +676,70 @@ def report_weekly_changes(
     }
 
 
+def narrate_weekly_report(
+    session: Session,
+    project_ref: str | None = None,
+    *,
+    provider: "Any",  # LLMProvider -- lazy import keeps the module light
+    since_days: int = 7,
+    now: "datetime | None" = None,
+) -> dict[str, Any]:
+    """Add a short LLM narrative to each project in the weekly delta.
+
+    Calls ``report_weekly_changes`` for the deterministic facts, then asks the
+    provider to write 2-4 prose sentences per project: what moved, what to act
+    on.  Projects with zero changes get a hard-coded "nothing moved" line --
+    no LLM call, because the model would just hallucinate filler.
+
+    The return shape mirrors ``report_weekly_changes`` with a ``narrative`` key
+    added to each project dict.  Errors (unknown project, etc.) pass through
+    unchanged.
+
+    Safe to call with ``MockLLMProvider`` in tests -- zero token cost, zero
+    network calls.
+    """
+    import json as _json
+
+    from project_db.ai.providers.base import LLMMessage
+
+    data = report_weekly_changes(session, project_ref, since_days=since_days, now=now)
+    if "error" in data:
+        return data
+
+    _SYSTEM = (
+        "You write concise weekly project updates for a construction company. "
+        "You receive structured facts about one project for the past week. "
+        "Write 2-4 plain-prose sentences: "
+        "(1) what actually moved -- name specific documents, tasks, or field notes by title; "
+        "(2) anything worth acting on (pending proposals, key milestones just completed, etc.). "
+        "Do not invent anything not present in the facts. No bullet points. No headers."
+    )
+
+    for proj in data["projects"]:
+        if proj["change_count"] == 0:
+            proj["narrative"] = f"No new activity was recorded for {proj['name']} this week."
+            continue
+
+        facts = {
+            "project": proj["name"],
+            "window_days": since_days,
+            "documents_changed": proj["documents"],
+            "field_notes": proj["field_notes"],
+            "proposals_opened": proj["proposals_opened"],
+            "proposals_decided": proj["proposals_decided"],
+            "tasks_completed": proj["tasks_completed"],
+        }
+        resp = provider.complete(
+            messages=[LLMMessage(role="user", content=_json.dumps(facts, indent=2))],
+            system=_SYSTEM,
+            temperature=0.2,
+            max_tokens=300,
+        )
+        proj["narrative"] = resp.content.strip()
+
+    return data
+
+
 # Picks up "$123,456.78" / "$123,456" / "$123.45" (with optional decimals + commas).
 _MONEY_RE = _re.compile(r"\$\s?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?")
 
