@@ -9,6 +9,49 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-22 -- Direction reset: docs canon, build freeze, weekly-report build #1
+
+A deliberate course-correction after recognizing a "documentation-as-steering-
+wheel" loop: every doc declared itself the next build, each session patched
+toward the latest doc, and half-working features piled onto a half-working
+product. What changed:
+
+**Documentation reset to a four-file canon.** CLAUDE.md rewritten around ONE
+metric -- time saved -- plus a BUILD FREEZE (no new subsystems until the visible
+spine meets a usage gate) and doc discipline (present-tense facts only; no
+roadmap/authority docs). HANDOFF.md = current state, wiped each handoff. This
+CHANGELOG = history, never wiped. 9 forward-looking / point-in-time docs moved to
+`docs/archive/` with a guard README ("history, not instructions"). README's two
+navigation blocks repointed at the canon (its status-timeline body is stale and
+still slated for rewrite).
+
+**Safety branch.** The full, fully-exposed pre-reset build is frozen on the
+`full-exposed-build` branch (commit 3323441) so `main` can evolve freely.
+
+**Feature-flag quarantine committed.** `features.py` gates ~16 non-spine surfaces
+off by default (reversible via `PROJECT_DB_FEATURE_<NAME>=true`); purely
+presentational -- no schema/data change. Visible spine: core, ask, search,
+proposals, typed field notes, finance margins, ledger health.
+
+**Weekly report -- build #1 (foundation).** `report_weekly_changes(session,
+project_ref=None, *, since_days=7, now=None)` in `ai/views.py` -- deterministic,
+facts-only "what changed per project in the last N days": documents changed in
+Drive (`modified_at_source`), field notes received, proposals opened/decided,
+tasks completed. Proposals (no `project_id`) attributed via `entity_type`
+Project/Task. `weekly-changes [project] [--days N]` CLI. Verified on live
+Rockland data (7-day + 30-day). Known limitations, by design + documented:
+`FinancialLineItem` excluded (ledger rebuilt via delete+insert, so its
+`created_at` means "last parsed" -- noisy); "newly filed but Drive-old" docs not
+caught (only `modified_at_source` used, because `Document.created_at` is reset by
+a full DB wipe and would flood wide windows with false "new"); proposals shown
+for all statuses; in-memory aggregation (fine at current scale). Next: LLM
+narration layer (facts -> readable weekly summary + "what to act on"),
+built/tested on the mock provider so development costs no tokens.
+
+Tests: 1394 passing.
+
+---
+
 ## 2026-06-17 -- Telegram labour intake: LIVE + closed up
 
 Live end-to-end: a linked worker texts @ALTA_employeebot ("worked Rockland 7-4

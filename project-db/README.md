@@ -5,20 +5,19 @@ A unified data layer that pulls live data from all of the company's SaaS tools
 you query across all of them — or have an LLM read your contracts and propose
 corrections to what Monday says is happening.
 
-> **New here? Read the docs in this order** (the set is intentionally lean):
-> 1. **[docs/STRATEGY.md](docs/STRATEGY.md)** — mission + the standing
->    ALWAYS/NEVER rules + owner clarifications.
-> 2. **[docs/HANDOFF.md](docs/HANDOFF.md)** — how it works now (engineering
->    state, the financial layer, the extraction pipeline diagram, footguns).
-> 3. **[docs/FEATURES.md](docs/FEATURES.md)** — plain-language "what it does".
-> 4. **[docs/INTENTIONS.md](docs/INTENTIONS.md)** — the forward roadmap (the
->    core "active adaptation" purpose, money layers, the lead-gen north star).
-> 5. **[CHANGELOG.md](CHANGELOG.md)** — day-by-day history; the **current test
->    count lives here** (latest entry) and nowhere else.
+> **New here? Read these, in order** (the canon is intentionally four files):
+> 1. **[../CLAUDE.md](../CLAUDE.md)** — operating rules + the time-saved
+>    philosophy + the build freeze. Overrides everything.
+> 2. **[docs/HANDOFF.md](docs/HANDOFF.md)** — current engineering state
+>    (wiped & retyped each handoff).
+> 3. **[CHANGELOG.md](CHANGELOG.md)** — dated history; the **current test
+>    count lives here** (top entry) and nowhere else.
+> 4. This README — what it is + how to set up and run it.
 >
-> Current state: the brain is built; the next focus is the active-adaptation
-> automation + adoption, not more features. Budget: Anthropic credits at $0,
-> OpenAI fallback — see the budget note in HANDOFF.
+> Earlier roadmap / strategy / feature docs were moved to
+> **[docs/archive/](docs/archive/)** — kept as history, not instructions (see
+> CLAUDE.md "Documentation discipline"). **NOTE:** the status timeline below is
+> stale and slated for rewrite; it still references some archived docs.
 
 **Status timeline (latest detail 2026-06-04):**
 - Phase 1 (Brain foundation): DocumentText sidecar + Proposal table +
@@ -98,13 +97,11 @@ corrections to what Monday says is happening.
   Rockland. `project_db field-note <project> "text"`; see **CHANGELOG.md** /
   **docs/FIELD_NOTES_BRIEF.md**.
 
-For "what does it do?" read **[docs/FEATURES.md](docs/FEATURES.md)**
-(plain-language feature list); for the mission + the standing ALWAYS/NEVER rules
-read **[docs/STRATEGY.md](docs/STRATEGY.md)**; for the developer handoff
-(invariants, the financial layer, the extraction pipeline diagram, footguns) read
-**[docs/HANDOFF.md](docs/HANDOFF.md)**; the forward roadmap in
-**[docs/INTENTIONS.md](docs/INTENTIONS.md)**; day-by-day log (and the current
-test count) in **[CHANGELOG.md](CHANGELOG.md)**.
+For the operating rules + philosophy read **[../CLAUDE.md](../CLAUDE.md)**; for
+current engineering state read **[docs/HANDOFF.md](docs/HANDOFF.md)**; for
+day-by-day history (and the current test count) read
+**[CHANGELOG.md](CHANGELOG.md)**. Earlier strategy / roadmap / feature docs are
+preserved in **[docs/archive/](docs/archive/)** as history, not instructions.
 
 ---
 

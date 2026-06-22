@@ -11,17 +11,26 @@ Last retyped: 2026-06-22.
 ## Where things stand (the honest summary)
 
 The project is in a **deliberate build-freeze + documentation reset** (see
-CLAUDE.md). We are NOT adding features. The active work is:
-1. Collapse the docs to the four-file canon (this reset). **Done this session.**
-2. Settle the *time-saved* usage gate with the owner (whiteboard in progress).
-3. Decide which built-but-hidden features earn re-exposure — driven by real use,
-   not by completeness.
+CLAUDE.md). The chosen first build (it passes the time-saved gate: the bosses
+review cross-project change weekly to make decisions) is the **weekly
+per-project report**. Build #1 (the deterministic delta) is done; the narration
+layer is next.
 
-**Git:** on `main`, level with `origin/main`. The feature-flag quarantine + this
-doc reset are **uncommitted working-tree changes** — GitHub still holds the full,
-fully-exposed build as the fallback. Nothing is lost.
+**Git:** on `main`, pushed to `origin/main`. The full, fully-exposed pre-reset
+build is frozen on the **`full-exposed-build`** branch as the fallback. The doc
+reset, the feature-flag quarantine, and weekly-report build #1 are committed.
 
-**Tests:** see the top of CHANGELOG (~1324 passing as last recorded).
+**Tests:** see the top of CHANGELOG (1394 passing as last recorded).
+
+**Active build — weekly report:** `report_weekly_changes` in `ai/views.py`
+(+ `weekly-changes` CLI) is the facts-only foundation: per project, what
+changed in the last N days — docs changed in Drive (`modified_at_source`), field
+notes received, proposals opened/decided, tasks completed. Documented limits:
+financial rows excluded (ledger rebuilt via delete+insert → noisy `created_at`);
+"newly filed but Drive-old" docs not caught (`created_at` is wipe-conflated, so
+only `modified_at_source` is used); all proposal statuses shown. Next slice:
+LLM narration (facts → readable weekly summary), built/tested on the mock
+provider so development costs no tokens.
 
 ---
 
