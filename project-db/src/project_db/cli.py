@@ -881,13 +881,68 @@ def _sync_sources(sources: tuple[str, ...]) -> bool:
     return True
 
 
+def _extract_recent_content(since_days: int) -> None:
+    """Extract text from Drive docs changed in the last ``since_days`` days that
+    have no DocumentText row yet.  Called automatically after ``--sync`` so the
+    narration layer has real content to work from, not just filenames.
+
+    Silent on Drive auth errors (sync already warned) and per-doc failures
+    (content is a bonus; the report works without it).
+    """
+    from datetime import datetime as _dt
+    from datetime import timedelta
+
+    from project_db.connectors.gdrive.client import GDriveClient
+    from project_db.connectors.gdrive.content_pipeline import extract_and_store
+    from project_db.db import get_session_factory
+    from project_db.db.models import DocumentText
+
+    window_start = _dt.utcnow() - timedelta(days=since_days)
+
+    try:
+        client = GDriveClient()
+    except RuntimeError:
+        return  # no credentials -- sync already surfaced this
+
+    s = get_session_factory()()
+    try:
+        docs = (
+            s.query(Document)
+            .outerjoin(DocumentText, DocumentText.document_id == Document.canonical_id)
+            .filter(
+                Document.is_trashed.is_(False),
+                Document.project_id.isnot(None),
+                Document.modified_at_source >= window_start,
+                DocumentText.document_id.is_(None),
+            )
+            .all()
+        )
+        if not docs:
+            return
+        print(f"  Extracting content from {len(docs)} recently-changed doc(s)...")
+        for doc in docs:
+            try:
+                extract_and_store(session=s, client=client, document=doc, overwrite=False)
+                s.commit()
+            except Exception:
+                pass  # per-doc failure is non-fatal
+    finally:
+        s.close()
+
+
 def cmd_weekly_changes(args: argparse.Namespace) -> int:
     """What changed per project in the last N days.
 
     Without --narrate: facts only (no LLM, zero cost).
     With    --narrate: adds a detailed prose report per project.
-    With    --sync:    runs Drive + Monday connector sync first so data is fresh.
+    With    --sync:    runs Drive + Monday connector sync + content extraction
+                       so the report has fresh data and real document text.
     """
+    # Suppress connector/resolver/httpx INFO spam -- this command's output
+    # should be clean report text, not a wall of sync log lines.
+    for _noisy in ("project_db.connectors", "project_db.identity", "httpx"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
+
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
@@ -896,9 +951,10 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
     do_sync = getattr(args, "sync", False)
 
     if do_sync:
-        print("Syncing Drive and Monday before computing delta...")
+        print("Syncing Drive and Monday...")
         if not _sync_sources(("google_drive", "monday")):
             return 2
+        _extract_recent_content(since_days=args.days)
         print()
 
     if narrate:
