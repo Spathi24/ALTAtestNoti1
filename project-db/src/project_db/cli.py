@@ -997,16 +997,27 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
         for n in proj["field_notes"]:
             cls = n["classification"] or "note"
             print(f"  [note]     {n['received_at'][:10]}  {cls}: {n['text'][:80]}")
-        for p in proj["proposals_opened"]:
-            print(
-                f"  [proposal] {p['created_at'][:10]}  opened "
-                f"{p['entity_type']}.{p['field_name']}"
-            )
-        for p in proj["proposals_decided"]:
-            print(
-                f"  [proposal] {p['decided_at'][:10]}  {p['status']} "
-                f"{p['entity_type']}.{p['field_name']}"
-            )
+        # Collapse proposal plumbing into one summary line.  The raw
+        # opened/accepted events are ALTA's internal advisor->approval
+        # mechanism, not project news a boss needs to read.  The full
+        # proposals stay in the data the LLM narrates from; the printed view
+        # just gets the count.
+        opened_n = len(proj["proposals_opened"])
+        decided = proj["proposals_decided"]
+        acc = sum(1 for p in decided if p["status"] == "ACCEPTED")
+        rej = sum(1 for p in decided if p["status"] == "REJECTED")
+        sup = sum(1 for p in decided if p["status"] == "SUPERSEDED")
+        _parts = []
+        if opened_n:
+            _parts.append(f"{opened_n} opened")
+        if acc:
+            _parts.append(f"{acc} accepted")
+        if rej:
+            _parts.append(f"{rej} rejected")
+        if sup:
+            _parts.append(f"{sup} superseded")
+        if _parts:
+            print(f"  [proposals] {', '.join(_parts)} this week")
         for t in proj["tasks_completed"]:
             print(f"  [task]     {t['completed_at'][:10]}  done: {t['title']}")
         if narrate and "narrative" in proj:

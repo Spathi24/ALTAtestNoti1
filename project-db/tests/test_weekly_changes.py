@@ -170,3 +170,25 @@ def test_narrow_window_excludes_older_changes(session, seeded):
     assert len(alpha["documents"]) == 0
     assert len(alpha["tasks_completed"]) == 0
     assert len(alpha["field_notes"]) == 1
+
+
+def test_window_start_is_day_granular(session, seeded):
+    # Regression: a field note timestamped ~7 days ago at an EARLIER clock time
+    # than `now` must still appear in a 7-day report.  Before the day-granular
+    # fix, the minute-precise boundary silently dropped it -- the report's best
+    # content flickered in/out depending on the time of day it was run.
+    late_now = datetime(2026, 6, 22, 19, 46, 0)
+    boundary_ts = datetime(2026, 6, 15, 18, 17, 0)  # 7d ago, but earlier in the day
+    session.add(
+        FieldNote(
+            raw_text="Boundary note -- must not be dropped",
+            received_at=boundary_ts,
+            channel=NoteChannel.WEB,
+            classification=NoteClass.TASK_PROGRESS,
+            project_id=seeded["alpha"].canonical_id,
+        )
+    )
+    session.commit()
+    data = report_weekly_changes(session, "Alpha", now=late_now, since_days=7)
+    texts = [n["text"] for n in data["projects"][0]["field_notes"]]
+    assert any("Boundary note" in t for t in texts)

@@ -489,7 +489,13 @@ def report_weekly_changes(
     from project_db.db.models.proposals import Proposal
 
     now = now or _dt.utcnow()
-    window_start = now - timedelta(days=since_days)
+    # Floor the window start to midnight so a "weekly" report is day-granular.
+    # With a sub-day boundary, a ~7-day-old event flickers in and out of the
+    # window depending on the clock time the command runs.  This was a confirmed
+    # bug: field notes timestamped ~7 days ago at an earlier time of day than
+    # `now` were silently dropped between two runs minutes apart -- and field
+    # notes are the report's highest-signal content.
+    window_start = _dt.combine((now - timedelta(days=since_days)).date(), _dt.min.time())
     prior_start = window_start - timedelta(days=since_days)
     start_date = window_start.date()
     end_date = now.date()

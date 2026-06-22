@@ -31,6 +31,9 @@ reset, the feature-flag quarantine, and weekly-report build #1 are committed.
 - Tasks: all schedule fields (start/end/due, group, subcontractor)
 - `events`: all items merged into one chronological list per project
 - `prior_window`: counts from the previous N days for trajectory context
+- Window start is floored to MIDNIGHT (day-granular). Earlier it used a
+  minute-precise boundary, so ~N-day-old field notes flickered in/out by the
+  clock time of the run — the report's best content. Confirmed + fixed.
 
 `narrate_weekly_report` (`ai/views.py`) — LLM narration using the events list:
 - Passes the chronological `events` list (not separate lists) to the provider
@@ -40,7 +43,21 @@ reset, the feature-flag quarantine, and weekly-report build #1 are committed.
 
 CLI: `weekly-changes [project] [--days N] [--narrate] [--sync]`
 - `--narrate`: calls fast provider (OpenAI currently, Anthropic when credits available)
-- `--sync`: runs Drive + Monday connector sync first so data is current
+- `--sync`: runs Drive + Monday sync + auto content-extraction, then narrates
+- Connector/resolver/httpx INFO logging is muted for this command (clean output)
+- Proposal events are collapsed to one summary line in the printed view
+  (e.g. "[proposals] 10 opened, 10 accepted, 17 rejected") — the full proposals
+  still go to the LLM; only the boss-facing print is summarized
+
+Known gaps a boss would notice (NOT yet built — see parked questions):
+- No money in the report (the owner's stated #1: Home Depot + labour overrun).
+  Docs like JOB COST / EXTERIOR QUOTE get named but not quantified — the
+  financial layer isn't portfolio-reliable enough to feed numbers in.
+- Comms capture (Telegram/WhatsApp) is the proven highest-signal source (the
+  best line in every real run comes from a field note) but ingestion is the
+  hard part: WhatsApp can't passively vacuum existing chats (Meta privacy);
+  Business API = paid + same friction that killed the Telegram bot. Decide the
+  platform/ingestion path BEFORE building.
 
 Documented limits: financial rows excluded (ledger rebuilt on each fill-ledger
 run → `created_at` is noisy); "newly filed but Drive-old" docs not caught
