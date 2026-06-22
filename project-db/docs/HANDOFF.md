@@ -1,704 +1,88 @@
-# ALTA / project_db — Developer Handoff
+# HANDOFF — current engineering state
 
-**For the next Claude instance.** You have NO memory of prior sessions — only
-this file and the repo docs. This document is the consolidated context so you
-don't have to re-derive it from the code. It captures what ISN'T in
-README / CHANGELOG / STRATEGY: invariants, the financial layer (the
-current centre of gravity), worked-through problems and their solutions, and
-guidance for working on this project well.
+**This file is wiped and retyped at every handoff.** It holds ONLY what is true
+*right now*. History → `../CHANGELOG.md`. Rules & philosophy → `../../CLAUDE.md`
+(read it first; it overrides everything).
 
-**Read these first, in order:** `docs/STRATEGY.md` (mission + the standing
-ALWAYS/NEVER rules + owner clarifications), `docs/FEATURES.md` (plain-language
-feature list), then this; `docs/INTENTIONS.md` is the forward roadmap.
-
-Last updated: 2026-06-15. (Current test count: see the latest CHANGELOG entry —
-it is the single source, not repeated across docs.)  The newest thing is the
-**field-note / active-adaptation pipeline** (see the block just below the budget
-note); then structured extraction + provider fallback, RAG, the briefing, and
-the financial layer.  The obligations layer is structured + live-validated too.
-
-**⚠ BUDGET / PROVIDER REALITY (read first).** The owner's **Anthropic credits
-are at $0**; **OpenAI has ~$4** left. So: `get_default_provider` / `get_fast_
-provider` now return a **FallbackProvider — Anthropic PRIMARY, OpenAI automatic
-backup** (`ai/providers/fallback.py`). A call tries Anthropic; on failure (e.g.
-"credit balance too low") it transparently retries on OpenAI instead of erroring.
-When Anthropic has no key, OpenAI is used directly. Backup model =
-`OPENAI_FALLBACK_MODEL` (default `gpt-4o-mini`), pinned to api.openai.com. So
-`ask` / `propose` / extraction all WORK today via the OpenAI fallback. Embeddings
-are OpenAI too. Develop on mocks; a live LLM run costs OpenAI cents now, not
-Anthropic.
-
-**STRUCTURED FINANCIAL EXTRACTION (newest, the big rearchitecture — read §2.0).**
-A PM found financials badly wrong (Excel not read, $millions of junk). Root
-cause: the old extractor (`ai/financials.py`) was a brittle pile of regexes
-(keyword gate, roll-up / model / market-report rules) over flattened text. It
-was REPLACED by `ai/doc_extraction.py`: the LLM **classifies** each document
-(quote / invoice / supplier-bill / budget / acquisition-model / market-report)
-+ sets `is_transactional`, then extracts via **OpenAI structured outputs**
-(strict json schema -- no malformed JSON, no hallucinated fields); deterministic
-code still verifies amounts + sums (N2 intact). NO keyword/roll-up regexes -- the
-LLM subsumes them. Spreadsheets -> markdown tables. CLI `extract-financials
-<project> --structured`. **This is now the recommended extractor.** Full-portfolio
-re-extraction done: every project 100% classified or honestly empty, 0 unknown,
-no false low-confidence (5768 $1M junk -> clean; 1364 $3.6B -> $0; 6554 dev deal
--> clean). The legacy `ai/financials.py` path + its report-time roll-up recompute
-remain as a deterministic safety net but are DEPRECATED. **Apply the same
-classify-then-extract pattern to the obligations layer next** (see below).
-
-**RAG (newest):** `ai/embeddings.py` (OpenAI `text-embedding-3-small`, mock for
-tests), `ai/chunking.py` (paragraph-aware ~500-tok), `ai/rag.py`
-(`embed_documents_for` idempotent via content_hash; `retrieve_chunks`
-brute-force numpy cosine — NOT sqlite-vec, that's the upgrade path). Vectors in
-`DocumentChunk` (float32 blob). `retrieve_chunks` is HYBRID (cosine + keyword distinct-term coverage fused via
-reciprocal rank fusion -- catches exact identifiers pure-vector blurs; `hybrid=
-False` for cosine-only). `answer_with_llm` injects retrieved excerpts as
-citable facts (mode=`rag`, `sources`). CLI `embed-documents` / `rag-search`.
-**OpenAI is used for embeddings, structured extraction, AND now as the chat
-fallback** (see the budget note above — Anthropic is primary but out of credits).
-`OPENAI_API_KEY` in `.env` (gitignored). Full corpus embedded live (462 docs / 5590 chunks /
-$0.052). Develop on `MockEmbeddingProvider` (free); a real embed run is cheap
-(~$0.02–0.06 whole corpus) and idempotent (unchanged docs skip).
-RAG also feeds the **proposal bots** (`generate_timeline_proposals` /
-`generate_scope_proposals` take `embedding_provider=`; additive RELEVANT
-DOCUMENT EXCERPTS section, conservative posture unchanged, `ProposalBatch.
-rag_chunks_used`). `retrieve_chunks` excludes trashed-doc chunks.
-
-**Refresh (`connectors/refresh.py::run_refresh`):** one call = delta-sync the
-live connectors (Monday; Drive when live) + re-embed ONLY changed docs
-(content_hash idempotent — answers "do we re-embed every change?": no). Every
-step guarded/reported, never raises. CLI `project_db refresh [--full]
-[--no-embed]`. `serve` runs it in a daemon thread on startup (opt-out
-`--no-refresh`) — BACKGROUND-only, never in `create_app` (tests stay offline);
-footer shows last-refresh via `web/refresh_state.py`. NOTE: the Drive OAuth
-token can expire (`invalid_grant`) — re-run `gdrive-auth`; the refresh reports
-it as a non-fatal step and continues.
-
-**The briefing (newest, read this):** `ai/views.py::report_attention_briefing`
-is a pure deterministic detector — no LLM, no API, recomputes free over stored
-data — that ranks cross-system truths (money risk / scope gaps / overdue tasks /
-missing contracts) into one list. Money items compose
-`report_project_financials` (never re-sum rows). Surfaced by `project_db
-briefing` and as the web `/` landing (`ui_views.attention_briefing`). Detectors
-+ thresholds live next to the function; tests in `test_attention_briefing.py` /
-`test_web_briefing.py`. It is pure-reveal (no write-back), honoring A8/N2/N8.
-
-**Money-at-Risk / commitments (`db/models/obligations.py`, `ai/obligations.py`,
-`report_commitments`):** the highest-ROI INTENTIONS #1 build. `extract-obligations
-<project>` (LLM) pulls dated/dollar obligations (payment milestones, retainage,
-penalties, deposits, settlements, insurance/permit deadlines) into
-`ContractObligation`; `report_commitments` deterministically computes status
-(overdue/due-soon/conditional) + money-at-risk; a `commitments` category on the
-briefing surfaces overdue receivables / obligations we owe. **Now rebuilt on the
-structured classify-then-extract pattern and run live (2026-06-09):**
-`ai/obligation_extraction.py` (OpenAI structured outputs, `extract-obligations
---structured`) replaces the keyword-gated batched approach; the legacy
-`ai/obligations.py` is kept but deprecated. Live-validated on 5768 (the
-"$8,000 on key return" settlement surfaces, verified). **Known limits (don't
-force):** cross-copy duplication of a settlement across EN/FR/"Copy of" file
-copies inflates the per-project panel total (the briefing aggregates + excludes
-no-date "conditional" items, so the headline stays clean); and agency-buyout
-direction (some tenant settlements come back owed_to_us instead of owed_by_us --
-a documented known-hard limit). Both are the financial layer's already-solved problem classes
-(dedup / direction-from-client-name) -- pick up only when a PM uses the layer.
-See [[project-obligations]] memory.
-
-**THE FIELD-NOTE PIPELINE IS NOW BUILT (2026-06-15 — the current centre of
-gravity).** The active-adaptation feature (INTENTIONS §0 / `docs/FIELD_NOTES_
-BRIEF.md`) shipped end-to-end: a plain-language site note -> classify
-(`ai/field_note_extraction.py`, OpenAI structured outputs) -> match against the
-project's Monday tasks -> emit **Proposals** -> human accept -> Monday
-write-back (advisor-not-actor, A1). All three Wins landed: Win 1 (channel-
-agnostic core + `FieldNote` table + `field-note` CLI + project-page text box),
-Win 2 (Gmail-API email intake, OUTBOUND-only/N7-safe, open Worker roster,
-email-as-untrusted-input), Win 3 (photos through the same vision pipe; one
-combined signal). Pilot = 923-927 Rockland. Key design points a fresh instance
-needs: the **task block** fed to the LLM is status-stratified + composite-scored
-(`_render_task_block`: status 50% / keyword-semantic 30% / temporal 20%;
-subitems annotated with parent); **`new_task` proposals carry `parent_task_index`**
-so accept creates a Monday SUBITEM (and the resolver climbs to top-level if the
-LLM picks a subitem, since Monday forbids sub-subitems); a completed-work note
-that matches nothing becomes a `new_task` rather than a silently-dropped
-`task_done`. Field-note extraction reuses RAG context, the Proposal engine, and
-the existing review queue — it did NOT reinvent them. Tests:
-`tests/test_field_note.py`, `tests/test_email_intake.py`. **Next is ADOPTION:
-put it in front of the Rockland PM (STRATEGY §9) and let their friction drive
-the next iteration — not more building.**
-
-**WHAT'S NEXT (the plan, owner-agreed 2026-06-04; #1 done 2026-06-09), in order:**
-1. ~~**Re-do the obligations extraction with the structured classify-then-extract
-   pattern** and RUN IT LIVE.~~ **DONE 2026-06-09** — `ai/obligation_extraction.py`,
-   live-validated; the $8k key-return settlement surfaces. (Residual: cross-copy
-   dedup + agency direction, documented above, deferred.)
-2. ~~**"Value caught" tally** (INTENTIONS #2).~~ **DONE 2026-06-09** —
-   `report_value_caught` + `value-caught` CLI + the `/` headline card. Live:
-   "$1,926 surfaced across 2 projects". v1 tallies commitments dollars only.
-3. ~~**Plain-English per-project money one-liner** (free).~~ **DONE 2026-06-09**
-   — `report_project_money_line` + `money-line` CLI + a project-page banner.
-   Headlines the CONFIRMED view (agrees with the Financials panel); when revenue
-   is unconfirmed quotes it says so instead of printing a quote-inflated margin.
-4a. ~~**THE CORE PURPOSE: LIVE TRANSCRIPTION / ACTIVE ADAPTATION.**~~ **BUILT
-   2026-06-15** — the field-note pipeline (see the top-of-file block). A worker
-   reports in plain language -> classify -> match -> Proposal -> Monday
-   write-back. Requirements landed 2026-06-12 (`docs/FIELD_NOTES_BRIEF.md`) and
-   all three Wins shipped (text / email / photo, one pipeline). Residual /
-   deferred: dependency-edge PROPOSALS (the graph is empty — 11/139 populated;
-   a later win lets the LLM propose edges, human-approved); man-hours are
-   capture-only (no timesheet product until data accumulates).
-4. **Then STOP building and put it in front of the PM** (STRATEGY §9 adoption
-   test) — the data is finally clean and the field-note loop is live. The PM's
-   reaction drives the next iteration. **← WE ARE HERE (2026-06-15): the
-   field-note pipeline is built; next is the Rockland adoption trial, not more
-   building.**
-5. Horizon: **acquisition / lead-gen intelligence** (INTENTIONS §5 — partner's
-   matricule->REQ->contacts pipeline), gated on the data feed + the ops brain
-   being in daily use.
-The owner's boss mandate: the software must demonstrably SAVE MONEY and be
-USABLE, not just clever. Judge every next build by that + rule N8.
+Last retyped: 2026-06-22.
 
 ---
 
-## 0. The 30-second orientation
+## Where things stand (the honest summary)
 
-ALTA pulls Monday.com + Google Drive into one canonical SQLite DB, then runs an
-LLM layer that reads the documents and reconciles them against the boards. The
-**financial reconciliation layer is the current product focus and the "draw"**:
-it reads quotes/invoices out of Drive PDFs and computes a per-project money
-picture. The sync is plumbing; the reading/reconciliation is the point.
+The project is in a **deliberate build-freeze + documentation reset** (see
+CLAUDE.md). We are NOT adding features. The active work is:
+1. Collapse the docs to the four-file canon (this reset). **Done this session.**
+2. Settle the *time-saved* usage gate with the owner (whiteboard in progress).
+3. Decide which built-but-hidden features earn re-exposure — driven by real use,
+   not by completeness.
 
-The repo root is **`ALTAtest/`**; the package is in **`project-db/`**. Edit
-under `project-db/...`. Ignore any `.claude/worktrees/...` — all real work is on
-`main` in the main checkout. Push to `origin/main` after meaningful changes.
+**Git:** on `main`, level with `origin/main`. The feature-flag quarantine + this
+doc reset are **uncommitted working-tree changes** — GitHub still holds the full,
+fully-exposed build as the fallback. Nothing is lost.
 
-```
-project-db/
-  src/project_db/
-    ai/          context.py, proposals.py, query.py, views.py, financials.py, providers/
-    connectors/  monday/, gdrive/, quickbooks/   (companycam stubbed)
-    db/          base.py, models/, migrations.py, session.py
-    identity/    resolver.py, matcher.py
-    web/         app.py, deps.py, ui_views.py, routes/, templates/, static/
-    cli.py       single entry point
-    config.py    selective .env loader
-  tests/         pytest; conftest.py has fixtures + env stubs
-  docs/          STRATEGY.md, HANDOFF.md, INTENTIONS.md, FEATURES.md, CHANGELOG.md
-                 + MONDAY_USAGE.md / adding-a-connector.md (reference)
-```
-
-**Python / running things (Windows):** the project runs on **Python 3.13**,
-invoked as `py -3.13`. The package is installed editable into that interpreter
-(`py -3.13 -c "import project_db"` works; plain `python` on PATH is 3.11 and
-does NOT have it). Run tests with `py -3.13 -m pytest <abs-path>/tests -q`.
-Console is cp1252 → **ASCII only in any `print()` that lands in scripts/CLI**
-(no `→ ✓ ✗ … —` in CLI output; `main()` forces UTF-8 stdout for LLM prose, but
-don't rely on it for ASCII-art).
+**Tests:** see the top of CHANGELOG (~1324 passing as last recorded).
 
 ---
 
-## 1. Governing invariants (do not break)
+## What's visible vs hidden right now
 
-1. **The LLM is an advisor, never an actor.** AI field changes for Monday land
-   in the `Proposal` table as PENDING; a human accepts/rejects. `accept` writes
-   to Monday FIRST, flips status only on success. **Financial extraction is the
-   exception to "advisor" only in that it writes to OUR OWN DB** (FinancialRecord
-   rows) — it never touches an external system, so it needs no approval gate.
-   The quoted excerpt + verification flag are what make extracted facts
-   trustworthy.
-2. **Identity is deterministic; uncertainty surfaces in `doctor`, not guessed.**
-   Project identity = Drive folder ancestry. Monday boards match INTO Drive
-   projects via `ProjectMatcher` (civic-number then exact-name, unique-hit-only).
-   A board matching no allowlisted rule is SKIPPED, not guessed. The deleted
-   substring matcher caused the "Rockland matches 927 Rockland" bug — never
-   reinstate it.
-3. **LLM extracts; deterministic code (SQL/Python) computes.** Sums, margins,
-   over/under, classification-where-rules-suffice — all deterministic. The LLM's
-   job is reading prose and pulling out evidence-backed facts, never arithmetic.
-   This is load-bearing for trust (hallucinated math = bad data on the money).
-4. **Every extracted amount carries verifiable evidence** (a verbatim
-   `quoted_excerpt`) and is checked against the source text (`amount_verified`).
-5. **One report chokepoint for money.** ALL financial totals (CLI, web, ask)
-   flow through `ai/views.py::report_project_financials`. Nothing else sums raw
-   `FinancialRecord` rows. If you add a consumer, call the report, don't
-   re-aggregate — otherwise the confirmed-vs-quoted / rollup / confidence logic
-   gets bypassed.
-6. **Human decisions live separately from extracted data.** The confirmed/quoted
-   status is in its OWN table (`document_financial_status`) keyed by document,
-   because `extract-financials` deletes+rebuilds FinancialRecord rows on every
-   run. Anything a human decides about financial docs must survive
-   re-extraction.
+A feature-flag layer (`src/project_db/features.py`) decides what's reachable. It
+is purely presentational — no schema, parser, or stored data was changed. Flip
+any flag with `PROJECT_DB_FEATURE_<NAME>=true`.
+
+- **Visible spine (default on):** core, `ask`, `search`, `proposals`, typed field
+  notes, finance margins (`FinancialLineItem`), ledger health.
+- **Hidden (default off, fully built, reversible):** email/photo field notes,
+  legacy financials (`FinancialRecord`), obligations / money-at-risk,
+  value-caught, project-logs, labour intake, Telegram intake, Monday Gantt,
+  roadmap, LLM PDF finance, lead-gen, admin nav, batch proposal generation,
+  manual task-date edit.
 
 ---
 
-## 2. THE FINANCIAL LAYER (the big new thing — read this fully)
+## Subsystem reality (present tense, no spin)
 
-> **⚠ BEING REDESIGNED (2026-06-16).** This section describes the *current*
-> `FinancialRecord` aggregate-net layer. It is being replaced by a
-> **division-keyed line-item ledger** (`FinancialLineItem`) that reconciles
-> profit per `(unit, CSI division)` instead of one project-wide net — the model
-> the owner's boss actually uses. The skeleton (CSI division vocabulary +
-> `FinancialLineItem` model + migration) has landed; the grid parser, the
-> `report_division_margins` report, and cutover are the next phases. **Read
-> `docs/FINANCIAL_REDESIGN.md` first** — it is the authoritative intent. The
-> current layer below stays live until the new ledger reaches parity on
-> Rockland (no big-bang migration).
-
-This is ~all the recent work and is not in README/CHANGELOG yet. Everything
-lives in **`ai/financials.py`** (extraction + helpers) and
-**`ai/views.py::report_project_financials`** (the aggregation chokepoint), with
-models in **`db/models/finance.py`**.
-
-### 2.1 The pipeline
-
-```
-Drive doc -> extract-content (DocumentText) -> extract-financials (FinancialRecord)
-          -> report_project_financials  -> CLI / web Financials panel / ask
-```
-
-**Full extraction pipeline (financials + obligations), as a diagram.** The one
-rule that makes it legible: the LLM only *classifies + extracts evidence*; every
-NUMBER is computed by deterministic code at the chokepoints
-(`report_project_financials`, `report_commitments`) — invariant N2.
-
-```mermaid
-flowchart TD
-  GD[Google Drive file] -->|gdrive connector| DOC[Document]
-  DOC -->|extract-content| DT[DocumentText: extracted_text]
-  DT -->|"extract-financials --structured"| DE["ai/doc_extraction.py<br/>OpenAI structured outputs:<br/>classify document_type + is_transactional"]
-  DE -->|"per amount: parse, VERIFY vs source text,<br/>direction, money_type (code, not LLM)"| FR[(FinancialRecord)]
-  DT -->|"extract-obligations --structured"| OE["ai/obligation_extraction.py<br/>classify + extract obligations"]
-  OE --> CO[(ContractObligation)]
-  HUMAN[Human confirmed/quoted toggle] --> DFS[(DocumentFinancialStatus)]
-  FR --> RPF["report_project_financials<br/>*** DETERMINISTIC CHOKEPOINT ***"]
-  DFS --> RPF
-  CO --> RC["report_commitments<br/>deterministic"]
-  RPF --> P1[Financials panel + money-line]
-  RPF --> BR[Attention briefing]
-  RC --> VC[value-caught tally]
-  RC --> BR
-```
-
-(Renders on GitHub / mermaid.live. Source of truth for "how extraction works" —
-update this if the pipeline changes.)
-
-Drive is the canonical financial source (per the owner: the CEO gets quotes /
-invoices by email and files them in Drive; QuickBooks will NOT have the full
-picture). `extract-content` must have run first (financial extraction reads
-`DocumentText`, not the raw file).
-
-### 2.2 Schema (`db/models/finance.py`)
-
-- **`FinancialRecord`** — one monetary amount from one document. Schema-light:
-  `direction` (`client_in` / `contractor_out` / `unknown`), `doc_role`
-  (quote/estimate/invoice/receipt/change_order/other), `record_kind`
-  (total/line_item/tax/deposit/other) are validated strings (unknown values
-  coerced to a catch-all + warned, never crash). Plus `amount` (Numeric),
-  `currency`, `counterparty`, `description`, `phase`, `quoted_excerpt`,
-  `confidence`, `amount_verified` (bool), `is_rollup` (bool), `doc_date`,
-  `prompt_version`, `source_meta_json` (raw LLM item — keep everything).
-- **`DocumentFinancialStatus`** — the human confirmed/quoted decision. Separate
-  table, keyed by `document_id`, survives re-extraction. Only docs a human
-  explicitly toggled get a row; absence => smart default.
-- Migrations for both are in `db/migrations.py::ensure_sqlite_schema` (the
-  project has no Alembic; this idempotent helper ALTERs/CREATEs on existing
-  SQLite files). Every CLI command that touches the DB calls it.
-
-### 2.3 Extraction (`ai/financials.py::extract_financials_for_project`)
-
-Mirrors the proposal engine. The non-obvious design points (each earned the
-hard way — see §4):
-
-- **Candidate selection**: bilingual keyword prior on name+folder + a
-  financial-mime gate. Cheap pre-filter; the LLM still reads content. A doc with
-  no keyword hit or a non-financial mime (image/CAD) is skipped.
-- **Batching**: documents are processed in BATCHES across multiple LLM calls
-  (char-budgeted, default ALL candidate docs). A single call over ~15 docs blew
-  past the JSON output ceiling and truncated. `_chunk_candidates` greedily fills
-  ~14k chars / ≤5 docs per batch.
-- **All-or-nothing data safety**: capture prior records, build the new set,
-  and only delete+swap on FULL success. A failed batch (rate limit, out of
-  credits) keeps the prior records and writes nothing. **Never delete prior
-  records up front** — that wiped 189 good records once when the run then 429'd.
-- **Backoff retry** only on TRANSIENT errors (`_is_transient`: 429/overloaded/
-  timeout). A 400 (billing / bad key) fails fast — don't retry it.
-- **Validate-don't-crash**: bad items go to `batch.errors`; `$0` amounts are
-  skipped (template noise).
-- The prompt: instruction at the TAIL, docs referenced by integer index,
-  conservative ("never invent an amount not in the text"), prefer totals /
-  ~20 records/doc cap (keeps output bounded so it doesn't truncate).
-- **Company identity for direction**: `COMPANY_NAME` env (default
-  `"Alta Construction Group"`) is injected so the model can read from/to and
-  decide `client_in` vs `contractor_out`. Without it, a client-facing estimate
-  on our letterhead was read as a contractor cost (inverted a margin by ~$200k).
-
-### 2.4 amount_verified — the value-based verification guard (§4 saga)
-
-`_amount_in_text(amount, text)` checks the amount's VALUE appears in the source,
-not the string. It must tolerate every way Quebec/bilingual docs write numbers:
-EN thousands `1,234.56`, FR decimal comma `923,44`, **space thousands**
-`$1 080.00` / `17 384,91`, `k`-notation `8k`/`10.5k`, signs `-250` (match abs),
-rounding (`549241.8481` → model's `549241.85`), and the qty-vs-thousands
-ambiguity (`1 500,00` = qty 1 + price 500,00). `_document_amounts` unions
-multiple locale interpretations (raw + de-spaced) and adds k/m-suffix
-expansions. **Do not regress this** — it took several real projects to get
-right, and it's the difference between meaningful flags and noise. Verified
-~99–100% on real corpora; the few remaining flags are genuinely garbled-OCR or
-model-computed values (correctly surfaced for review).
-
-### 2.5 is_rollup — deterministic, name-based (NOT the LLM)
-
-Internal summary/tracking sheets (cost trackers, payment logs, statements of
-account) restate the individual invoices, so summing both double-counts. They're
-EXCLUDED from totals and shown as a cross-check. **An earlier version asked the
-LLM to classify primary-vs-rollup; it was unreliable** — it mislabeled a $549k
-client estimate as a rollup and dropped it, swinging the margin ~$200k. Replaced
-with `_name_is_rollup` (a regex on the doc name: `costs/costing/tracker/payment
-log/listing/breakdown/etat de compte/contractors+material`). Conservative and
-fail-safe: when in doubt → PRIMARY (included). A wrong include is a visible
-cross-check gap; a wrong exclude silently deletes real money. Decision (owner):
-**individual invoices/quotes are authoritative; summary sheets are the
-cross-check.** Known gap: `budget` sheets (e.g. 3940's "C61 revamp budget.xlsx")
-aren't matched — see §5.
-
-### 2.6 money_type — deterministic buckets
-
-`classify_money_type(direction, record_kind, doc_name, folder_path)` →
-`contract_revenue / supplier_cost / buyout_cost / lease_rental / deposit / tax /
-other`. So different KINDS of money aren't blindly netted. Free (no LLM),
-derived at report time. `tenant`/`quittance`/`settlement`/`lease` name+folder
-signals drive buyout/lease classification.
-
-### 2.7 Confidence guard
-
-The report computes `classified_ratio` (share of money in interpretable
-revenue/cost buckets vs `other`) and `low_confidence` (<50%). When a project
-type isn't modeled (6554 is a real-estate DEVELOPMENT deal — asking price, loan,
-lease income), the system flags LOW CONFIDENCE instead of showing a
-confident-looking margin. This is the key generalization mechanism: it lets the
-software be honest about its limits rather than forcing every project to fit.
-
-### 2.8 Confirmed-vs-quoted toggle (built with extreme care — §4)
-
-The owner's team dumps every quote into a project folder, including ones they
-didn't go with, so totals include money that never happened. The toggle:
-
-- `document_financial_status` (separate table, survives re-extraction).
-- Smart default (owner decision): a doc with an **invoice/receipt** role is
-  confirmed (work happened); pure quotes/estimates are unconfirmed until a human
-  toggles them. `default_confirmed()` + per-doc roles drive this in the report.
-- `report_project_financials` computes BOTH all-in totals (unchanged) and
-  `confirmed_totals` / `confirmed_by_money_type` / `confirmation` counts. The
-  web panel shows the confirmed margin as the headline KPI; a per-document HTMX
-  toggle (`POST /documents/{id}/financial-status`) recalculates it live. That
-  route is the ONLY mutation on the financial surface — internal flag only,
-  idempotent, no external write, no stale guard needed.
-
-### 2.9 report_project_financials — the chokepoint
-
-Returns: `totals` (all-in direction), `by_money_type`, `money_summary`
-(construction_margin + low_confidence + classified_ratio + buyout_note),
-`confirmed_totals` / `confirmed_by_money_type` / `confirmed_construction_margin`
-/ `confirmation`, `rollup_crosscheck`, `per_document` (with confirmed flags),
-and `records` (capped, each with money_type / is_rollup / amount_verified /
-confirmed). Uses `_representative_amount` to collapse a (doc, direction) group
-so a line item and its document total aren't both counted.
-
-### 2.10 Project types seen so far (and how the system handles each)
-
-| Type | Example | Behaviour |
-|---|---|---|
-| Renovation (clean) | 1455 St. Mathieu | trustworthy end-to-end; high confidence |
-| Tenant-buyout (agency) | 5768 St-Laurent | buyout cost captured; margin needs the client-agreed price, usually NOT in docs → flagged |
-| Real-estate development | 6554 St-Hubert | not modeled (financing/acquisition/lease) → LOW CONFIDENCE flag |
-| Small / single-doc | 2150 Tupper, 927 Rockland | works on what's there |
-| Early-stage (proposed) | 25-1000, 25-1001 | docs are plans/reports/approvals → correctly extracts 0 (no hallucination) |
-
-**Agency buyout model (owner input, not fully built):** in a CLIENT buyout
-project, the client pays Alta a SET PRICE per tenant buyout; Alta keeps
-(agreed − actual). In an OWN project, a buyout is a pure cost. The agreed price
-is typically not in the Drive docs, so we capture `buyout_cost` and do NOT
-invent the revenue side. A real buyout margin needs that figure supplied.
+- **Financial / margins:** `FinancialLineItem` (division-keyed, per-unit) is the
+  current ledger; a deterministic grid parser reconciles Rockland-style quote
+  spreadsheets to the penny. **It is NOT portfolio-useful yet** — most other
+  projects' money lives in PDFs / simple-estimate / job-cost sheets the grid
+  parser doesn't read, and the **cost side is essentially absent**, so margins
+  show `revenue_only`. Legacy `FinancialRecord` remains as a transition net.
+- **Labour intake (Telegram/Gmail):** built and technically live, but **blocked
+  on adoption** — nobody is reliably logging labour, so there is nothing to
+  reconcile. Hidden.
+- **Providers / budget:** LLM calls route through a fallback provider (Anthropic
+  primary, OpenAI backup). **Confirm current credit balances with the owner
+  before any live LLM run** — last recorded as very low. Develop on mocks.
+- **Tier-1 reports + RAG + attention briefing:** built and working; the passive
+  read/reconcile story.
 
 ---
 
-## 3. The rest of the architecture (still accurate)
+## Parked / open questions (NOT a roadmap — do not build without the gate)
 
-### ExternalId + resolver
-`resolve_or_create(source, entity_class, external_key, matcher,
-create_only_attrs, **attrs)`. A MATCHED path applies attrs (a regression once
-left every doc unlinked on `rebuild`). `create_only_attrs` stops Monday from
-renaming a Drive-authoritative project. Matchers: `ExactFieldMatcher`,
-`FuzzyFieldMatcher` (clients/people only — never projects), `ProjectMatcher`
-(civic-number then exact normalized name, unique-hit-only, no substring).
-
-### Drive = project source
-`01. PROJECTS/{ACTIVE,INACTIVE,LEADS}/<name>/` — each immediate child is one
-Project keyed by folder id; two folders never merge. Files inherit `project_id`
-by ancestry. Non-project files get `Document.category` and `project_id = NULL`.
-
-### Monday mirror overlay (subtle)
-`column_values` OMITS empty columns. Per-task Status/Timeline often lives on a
-linked portfolio item (`board_relation`/`dependency`). `apply_portfolio_mirror_
-overlay` walks items + subitems, collects linked ids, fetches mirror values,
-enriches the original column_values (native wins over mirror). `_classify_board`
-fails closed.
-
-### Roadmap (Layer 2 injection was REMOVED 2026-05-29)
-`RoadmapTask` table + `import-roadmap`/`classify-roadmap` CLIs are KEPT (harmless,
-queryable via `/db`). But the prompt INJECTION into the proposal bots was
-removed: it pushed an architect design-phase workflow into contractor-execution
-prompts and produced template-derived flags the PM had to second-guess
-(flagged as slop in the former architecture review). Do NOT re-add roadmap content to
-`_build_timeline_prompt` / `_build_scope_prompt`. Versions: `timeline-v5-quoted`,
-`scope-v4-quoted`.
-
-### Proposals (timeline + scope + field-note types)
-`ai/proposals.py`. `generate_timeline_proposals` (dateless Monday tasks → dates,
-write-back-able), `generate_scope_proposals` (documented scope with no task).
-Conservative; quoted-excerpt evidence required; past-dated proposals rejected;
-`accept_proposal` writes to Monday first / flips second (A2/A3 ordering is
-sacred). `_ACCEPTABLE_FIELDS = {"timeline", "task_status", "scope_gap",
-"new_task", "scope_change"}` — accept now also flips Monday status and CREATES
-items/subitems (`_accept_create_task`), not just timeline edits. Parent
-resolution is per-project-safe: a `new_task` proposal carrying `parent_task_id`
-(set by the field-note layer from `parent_task_index`) creates a Monday SUBITEM;
-it refuses cross-project parents, ambiguous title matches, and sub-subitems.
-
-### Web UI (M5 + Financials)
-FastAPI + Jinja + HTMX + Pico.css, vendored static, no build pipeline,
-localhost-only (127.0.0.1, no auth, no CORS, no `--host`). **Service-module
-discipline**: every derived value computed in `ai/views.py` (CLI+web shared) or
-`web/ui_views.py` (web-only), never in templates/routes. Routes are thin
-adapters. Mutations re-read state before writing. The Financials panel
-(`/projects/{id}/financials`) renders `report_project_financials`; its body is a
-swappable partial (`_partials/financials_body.html`) so the toggle can
-re-render it.
-
-### AI providers
-`get_default_provider()` (deep/Sonnet, for propose + financial extraction),
-`get_fast_provider()` (Haiku, for the `ask` fallback). Resolver:
-`LLM_PROVIDER` → anthropic-if-key → mock. `complete_json` retries on bad JSON
-AND bumps `max_tokens` on truncation (`finish_reason == max_tokens`/`length`).
-
-### Prompt-philosophy boundary (load-bearing — don't converge them)
-Askbot (`answer_with_llm`, Haiku) = assertive, inferential, recommends.
-Proposal + financial-extraction bots (Sonnet) = conservative, refuse on
-uncertainty, "returning none is correct". Pinned by
-`tests/test_askbot_assertive_prompt.py::TestProposalBotsStayConservative`.
+- **The usage-gate sentence** — owner is whiteboarding it. This unblocks
+  everything. Settle it first.
+- **Which product to be:** *passive truth layer* (reads docs that already exist —
+  validatable by the owner alone, no adoption bet) vs *active operations layer*
+  (labour, field-note → Monday — depends on other people changing habits).
+  Current lean: passive first.
+- **Financial re-architecture idea** (owner + ChatGPT; reference preserved in
+  `archive/FINANCIAL_REDESIGN.md`): AI *classifies* documents/sheets first
+  (structured output), deterministic code *validates & writes* second; emit a
+  per-document audit ("what is this, can it be counted, why") BEFORE any
+  margin/money-at-risk view. **Do not start building until the gate is set and
+  this is the chosen lane.**
+- **Home Depot purchases + hourly labour** as the two budget-overrun watch
+  targets — leading value hypotheses, unvalidated.
 
 ---
 
-## 4. Worked-through problems + their solutions (the expensive lessons)
+## If you are a fresh Claude instance
 
-Read this before touching the financial layer — these cost real iterations.
-
-1. **Direction inversion.** A client estimate on our letterhead (`Quoting
-   File.xlsx`, $549k) was classified `contractor_out`, flipping the margin to
-   −$600k. Cause: the model didn't know which company is "us". Fix: inject
-   `COMPANY_NAME` + explicit from/to rules. Result: 5768 went −$600k → +$176k.
-   Remaining: genuinely ambiguous docs land as `unknown` (safe). See #12 in §5.
-
-2. **The locale-parsing saga (multiple rounds).** The verification guard kept
-   false-flagging real amounts. Each round was a NEW way Quebec docs write
-   numbers: PDF-reflow excerpts (switched from verbatim-excerpt to value-based
-   check), French decimal commas, space thousands separators, `k`-notation,
-   negative signs, rounding, qty-vs-thousands. Solution converged on
-   `_document_amounts` unioning interpretations. Lesson: **locale variety is a
-   convergent problem (fix once, works for all Quebec docs), not a treadmill.**
-
-3. **Rollup classification was an LLM job → made it deterministic.** The LLM
-   over-excluded ambiguous docs. Name-based rule is predictable, auditable,
-   cheaper (dropped the classification tokens), and fails safe. Lesson: prefer a
-   deterministic rule with a safe failure mode over an LLM guess that fails
-   silently.
-
-4. **Re-extraction destroyed data.** The first batched version deleted prior
-   records up front; a mid-run failure wiped them. Fix: all-or-nothing. And the
-   confirmed-toggle status MUST live in a separate table for the same reason.
-   Lesson: **anything humans decide, or that must persist, cannot live on rows
-   that get rebuilt.**
-
-5. **Truncation = the cost killer.** A run that truncates resends the whole
-   prompt and regenerates, 2–3×. Bounding output (prefer totals, ≤20 records/doc,
-   smaller batches) is both a quality and a COST fix. Re-running projects
-   repeatedly during dev is what actually drained credits — see §6.
-
-6. **6554 revealed a project type we don't model** (real-estate development).
-   The right response was NOT to fine-tune for it — it was the confidence guard
-   (flag low-confidence). Lesson: when a project doesn't fit, **flag it, don't
-   force it.** This is the antidote to overfitting the owner is (rightly) wary
-   of.
-
-7. **The owner is wary of a "fine-tuning treadmill."** Validated by running a
-   4th and 5th+ project: the curve flattened (6305 and the small projects needed
-   zero new rules). The general mechanisms (locale-tolerant parsing, conservative
-   direction, deterministic rules, confidence guard, the human toggle) handle
-   variety on their own. Keep choosing GENERAL mechanisms over per-project rules.
-
----
-
-## 5. Known issues / next steps (so you don't have to rediscover them)
-
-In rough priority. None are urgent; the dominant cases (renovation, buyout) work.
-
-- **#12 — Direction refinement (needs API, ~$0.5–1/project).** 5768's $549k
-  estimate + chunks of 655/3940 sit in `unknown` because the model can't always
-  tell client-vs-internal. Likely fix: inject the project's CLIENT name (from
-  the canonical Project→Client link) into the direction prompt so it can match
-  "Client ID: <name>". Needs re-extraction of the affected project to validate —
-  hence gated on API budget.
-- **#14 — Development/investment project-type money model.** 6554-style deals
-  need buckets for acquisition / financing / lease income. **CORRECTION
-  (2026-06-09 hand-audit): the confidence guard does NOT flag 6554** — its
-  `SIGNED PSA.pdf` states a $1.5M purchase price + $50k deposit that the extractor
-  SKIPS (a Purchase & Sale Agreement isn't a construction transaction), so the
-  $1.5M never reaches the `other` bucket and the guard (which only measures
-  extracted money) sees a "clean" $9k-cost project. The guard can't flag money it
-  never extracted. Full writeup + fix in INTENTIONS §7. Build when this type
-  matters enough.
-- **`budget` roll-up keyword (free, but it's keyword-tuning).** 3940's "C61
-  revamp budget.xlsx" is an internal budget tracker that isn't caught by
-  `_name_is_rollup`, so its $400k+ aggregations pollute `other` and tank 3940's
-  confidence (which the guard flags). Adding `budget` to the regex is a one-line,
-  free recompute — but weigh it against the fine-tuning concern (§4.7). Left
-  un-done deliberately; the guard already flags 3940.
-- **The strategic question worth answering: is Drive the COMPLETE financial
-  source per project?** Several projects show small/partial amounts because the
-  main contract isn't financial-readable in their Drive folder (money lives in
-  Monday/QB/un-filed email). The financial layer is bankable where Drive is
-  complete (1455) and only indicative where it isn't. The confidence flag
-  surfaces this per project — that's the right mechanism; the open question is
-  whether to invest in pulling the missing pieces from elsewhere (QB live, etc.).
-- **Adoption test (the real one, per STRATEGY §9).** The financial layer +
-  toggle are built and viewable. The highest-value next move is arguably NOT more
-  code — it's putting the Financials panel in front of a real PM and seeing if it
-  changes how they work. A PM demo happened ~2026-06-01; their feedback is the
-  signal to chase.
-- Deferred plumbing (CompanyCam, QB live, webhooks, Postgres, RAG, text-to-SQL):
-  per STRATEGY.md, not until the brain is in daily PM use.
-
----
-
-## 6. API budget reality (important — the owner is credit-constrained)
-
-The Anthropic credits are small and paid by the owner's employer; they run out.
-**Default to developing on mocks (free); treat a live extraction as an explicit,
-budgeted action.** Numbers: a clean full-project extraction is ~$0.05–0.40
-(scales with doc count); truncation retries can push it to ~$1. The whole
-21-project portfolio is now extracted (~few dollars total).
-
-**The free-recompute technique** (use it constantly): `is_rollup`, `money_type`,
-the confidence guard, and `confirmed` all recompute over already-stored
-FinancialRecord rows for FREE — change the logic, re-run the report, verify on
-real data without any API. Only **direction** changes need re-extraction (the
-LLM assigns direction at extract time). So most financial-logic iteration is
-free; reserve API for direction work and for validating on a genuinely new
-project. Validate logic via mocks/tests first; do ONE live run to confirm, not
-many.
-
----
-
-## 7. CLI + web route maps (current)
-
-Key CLI (full list: `--help`): `init-db`, `sync monday [--delta]`,
-`sync GOOGLE_DRIVE`, `gdrive-auth`, `extract-content`, `ask`, `daily`,
-`propose timelines|scope <project>`, `proposals list|show|accept|reject`,
-`doctor`, `rebuild --yes`, `serve [--port]`, `import-roadmap`,
-`classify-roadmap`, **`extract-financials <project> [--max-docs N]`**
-(batched, fresh-snapshot, prints the money-flow + confidence + roll-up
-cross-check), **`briefing [--limit N]`** (deterministic portfolio attention
-list — money/scope/schedule/docs, ranked; no LLM), **`embed-documents
-[--project] [--overwrite] [--limit]`** (chunk+embed for RAG; idempotent; prints
-cost), **`rag-search <query> [--project] [--top-k N]`** (retrieval debug), and
-**`refresh [--full] [--no-embed]`** (delta sync + re-embed only changed docs),
-**`extract-obligations <project>`** (Money-at-Risk extraction), and
-**`commitments <project>`** (read-only obligations + status).
-
-Key web routes: `/` (**Attention briefing** — the ranked truths landing),
-`/ask` (now **RAG-backed** when docs are embedded — `mode=rag`, cites sources),
-`/search` (read-only hybrid corpus search, no LLM tokens),
-`/projects`, `/projects/{id}`,
-**`/projects/{id}/financials`** (the money panel), `/documents/{id}`,
-**`POST /documents/{id}/financial-status`** (the confirmed/quoted toggle —
-returns the panel body partial), `/proposals[...]`, `/ask`, `/doctor`, `/db`.
-Localhost only.
-
----
-
-## 8. Testing patterns + footguns (carried forward, still true)
-
-**Testing:**
-- `conftest.py` stubs env vars BEFORE importing app modules (tests think
-  `LLM_PROVIDER=anthropic`). Any test that could hit `.complete()` must mock the
-  provider. `MockLLMProvider(responses=[...])` (sticks on last) or
-  `on_call=lambda **kw: ...`. Financial tests build `FinancialRecord`s directly
-  for report tests and use `MockLLMProvider` returning `{"records":[...]}` for
-  extraction tests.
-- Web tests override `db_engine` with `StaticPool` + `check_same_thread=False`
-  (FastAPI TestClient dispatches sync routes through a threadpool; SQLite's
-  default refuses cross-thread). `patched_session_factory` binds the web
-  `session_scope` to the test engine.
-- `expire_on_commit=False` → after a CLI/route commits via its own session, the
-  outer test `session` has stale attrs; call `session.expire_all()`.
-
-**Footguns that have bitten us (the financial ones first):**
-- Don't put human decisions / persistent flags on `FinancialRecord` — it's
-  deleted+rebuilt on re-extraction (use a side table).
-- Don't sum raw FinancialRecord rows anywhere but `report_project_financials`.
-- Don't delete prior records before a batched extraction succeeds (all-or-nothing).
-- Don't regress the locale number parsing (`_document_amounts` / `_amount_in_text`).
-- `extract-financials` resolves a status-table FK to Document — resolve the
-  document BEFORE writing a status row (a bad id would raise instead of 404).
-- (Older, still true) Starlette `TemplateResponse(request, name, ctx)` new
-  signature; `hx-indicator` inherits down the DOM (put it on the specific
-  button); `complete_json` must detect truncation; `markdown` passes raw HTML
-  (askbot pre-escapes); `get_default_provider` silently builds Anthropic if a
-  key is set; `rebuild` is destructive (preflights connectors first); never
-  `git add -A` (the egg-info trap — stage specific files).
-
----
-
-## 9. How to work on this well (guidance, not rigid rules)
-
-The owner's words: "be sure of yourself but not hardheaded… don't get stuck in
-your own rules and sacrifice actual quality of decisions." Take that seriously —
-these are defaults, not a cage.
-
-- **Prefer general mechanisms over per-project rules.** Every keyword you add to
-  fix one project is a small step onto the fine-tuning treadmill the owner fears.
-  When a project breaks, first ask: can the confidence guard / a human control
-  handle this, rather than a new rule? (It usually can.)
-- **Be honest in the output.** Flag low-confidence, badge unverified amounts,
-  return 0 rather than hallucinate. The product's trust comes from knowing what
-  it doesn't know. A confident-but-wrong number is far worse than a flagged one.
-- **Develop on mocks; budget the API.** Validate logic for free; spend a live
-  run only to confirm, and tell the owner the cost.
-- **Keep the chokepoints.** One report function for money; one resolver for
-  identity; service modules for derived values. These are what keep the codebase
-  reviewable as it grows (the owner has flagged rising complexity).
-- **Verify against the real data, not just tests.** Because we can recompute over
-  stored records for free, prove financial changes on the actual 1455/5768/6554
-  data, not only on mocks. That's how every real bug here was caught.
-- **When you change something, run the suite and push.** `py -3.13 -m pytest
-  <abs>/tests -q` must stay green; commit to `main` (Co-Authored-By trailer);
-  `git push origin main`. Don't accumulate uncommitted work.
-- **Read STRATEGY.md's "Standing Rules (ALWAYS/NEVER)" section** — they encode the
-  load-bearing decisions (advisor-not-actor, deterministic identity, read-value-
-  before-write-value, no premature connectors). Don't re-litigate them without
-  the owner.
-
-Don't over-index on any one of these if it's making a decision worse. Use
-judgment. The owner values quality of decisions over rule-following.
-
----
-
-## 10. Tracking conventions
-
-- Test count in README/this doc is hand-maintained; update when you add tests.
-- CHANGELOG newest-on-top; one entry per work session (date + theme + what +
-  tests + state).
-- Commit messages: imperative, group by concern, mention test count.
-- Strategic docs to keep current: **STRATEGY.md** (mission + standing rules),
-  **INTENTIONS.md** (forward roadmap), **FEATURES.md** (plain-language features).
-- **Doc set is intentionally lean** (consolidated 2026-06-09): STRATEGY, HANDOFF,
-  INTENTIONS, FEATURES, CHANGELOG + two reference how-tos. Don't add a new
-  top-level doc — fold into one of these. The test count lives ONLY in the latest
-  CHANGELOG entry.
+1. Read `../../CLAUDE.md`. Honor the build freeze.
+2. Read the top CHANGELOG entry for "what works today."
+3. Do not resurrect anything in `archive/` as instructions.
+4. Before building anything, answer: *whose time does this save, and how will we
+   know?* If you can't, stop and ask.

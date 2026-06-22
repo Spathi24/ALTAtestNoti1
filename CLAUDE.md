@@ -1,334 +1,151 @@
-# CLAUDE.md — Working Rules for the ALTAtest / project_db Repo
+# CLAUDE.md — Operating Rules for ALTA / project_db
 
-This file is read at the start of every session. **Read it before touching code.**
-
----
-
-## Strategic Direction (READ FIRST)
-
-The full strategic mission lives in
-[`project-db/docs/STRATEGY.md`](project-db/docs/STRATEGY.md). Read it before
-any non-trivial planning conversation. The short version:
-
-**ALTA is a contractor operations brain, not a sync tool.** Framed as
-"centralize Monday + Drive," this project is redundant with Zapier. Framed as
-"use LLMs to reconcile what contracts promised against what Monday says is
-happening, and propose corrections" — it is genuinely novel and worth
-building.
-
-**Operating principles** (the 10-point list from STRATEGY.md — apply these
-when choosing what to build):
-
-1. The schema is right. Don't redesign it.
-2. `Project` is the join nucleus. Never merge a Monday item with a Drive file —
-   link them via shared `project_id`.
-3. One source of truth per entity type for writes (Monday → Tasks/Projects/CRM,
-   Drive → Documents, QB → Invoices). Reads everywhere; writes one direction.
-4. Keep everything. Promote queryable fields to columns; dump the rest in
-   `source_meta_json`.
-5. The LLM is an advisor, never an actor. All AI proposals go to a
-   `Proposal` table for human approval before any write-back.
-6. Tier-one (canned reports) before tier-two (LLM).
-7. No new connectors until Monday+Drive produce daily PM-facing value.
-   CompanyCam and live QuickBooks are deferred.
-8. No new tech yet — no graph DB, no Elasticsearch, no Postgres, no pgvector,
-   no text-to-SQL. Add them when SQL limits actually bite.
-9. The success test is **adoption**, not feature count. If a PM opens this
-   system before opening Monday, it's working.
-10. Stop building plumbing. Start building the brain.
-
-**Current focus per STRATEGY.md:** content extraction from Drive documents
-(PDFs, Docs, DOCX, Excel) into a `DocumentText` sidecar table, then an LLM
-layer that proposes task timelines and scope reconciliations, gated by a
-`Proposal` table with human approval before write-back to Monday.
+Read this first, every session, before touching code or docs. **This file
+overrides every other doc.** If another file contradicts it, this wins — fix or
+archive the other file.
 
 ---
 
-## What this project is
+## The one metric: time saved
 
-**ALTAtest / `project_db`** is a centralized data platform that pulls live data
-from the company's SaaS tools (Monday.com, QuickBooks, CompanyCam, Google Drive)
-into a single canonical Postgres/SQLite database, so we can answer cross-tool
-questions — and eventually have an AI assistant answer them in plain English.
+ALTA exists to **save real people real hours.** That is the only success metric.
+Not feature count. Not data completeness. Not "centralize Monday + Drive" — that
+is a sync problem Zapier solves for $20/mo, and if that's all we're doing we
+should stop.
 
-**Why it exists:** work, money, and photos are siloed across four tools. There
-is no single place to ask things like *"what's the margin on Project X?"* or
-*"show me everything for 923 Rockland — tasks, photos, invoices, documents."*
+The owner's words, kept verbatim because they are the north star:
 
-**What it really is** (per STRATEGY.md): an LLM-powered operations brain that
-reconciles the contract (Drive) against the operational state (Monday) and
-proposes corrections. The sync is plumbing; the reconciliation is the product.
+> "The point is that the AI needs to advance automation and time saving... How
+> much time can we save? We need to isolate what people spend most of their time
+> on."
 
-**Architecture in three pieces:**
+So before any work, the question is: **whose time does this save, on what task,
+and how would we know?** If you can't answer concretely, don't build it.
 
-1. **Canonical schema** — 13 entities (Organization, User, Client, Vendor,
-   Property, Lead, Deal, Project, Task, DailyLog, Invoice, Document,
-   ExternalId). Every entity has a UUID we own (`canonical_id`). Source-system
-   IDs live in the `ExternalId` table, which maps any canonical UUID to one or
-   more source records.
-2. **Connectors** — one per source system. Each subclasses `BaseConnector` and
-   is registered in `connectors/registry.py`. Adding a new source = writing a
-   new connector. Currently: Monday (full read + write-back), QuickBooks
-   (read).
-3. **Identity Resolver** — `resolve_or_create(source, external_key, attrs,
-   matcher)` returns the canonical entity, deduping across sources via
-   `ExactFieldMatcher`/`FuzzyFieldMatcher`. The matcher is pluggable per
-   entity type.
-
-**The repo lives at `C:\Users\nsaro\Documents\VScode\ALTAtest\project-db`.**
-That's the only path you write to. Worktrees are off — see below.
+**Leading value hypotheses** (to validate against real usage, NOT a mandate to
+build a subsystem for each): the two biggest variable-cost leaks the owner wants
+watched are (1) **Home Depot daily purchases** (Home Depot Pro account) and
+(2) **hourly labour** — both overrunning project budget.
 
 ---
 
-## Hard rules (the user has asked for these explicitly)
+## The usage gate (definition of done)
 
-### 1. Edit `main` directly. No worktrees.
+Work is "done" when **a real person uses ALTA for a real task and comes back to
+it** — not when the code is complete or the tests pass.
 
-The user got burned multiple times by changes living on a `claude/*` branch in
-`.claude/worktrees/` while `main` was out of sync. **Stop doing that.**
-
-- `git status` should show you on `main` in
-  `C:\Users\nsaro\Documents\VScode\ALTAtest`.
-- If you find yourself in `.claude/worktrees/...`, `cd` back to the main repo.
-- Never create a new worktree unless the user explicitly asks for one.
-
-### 2. Push to `origin/main` after every meaningful change.
-
-After every fix, feature, or test addition:
-
-```bash
-git add <specific files, never -A>
-git commit -m "..."     # HEREDOC, include Co-Authored-By
-git push origin main
-```
-
-Don't accumulate uncommitted work. If `main` falls behind `origin/main` because
-the user committed from the GitHub UI or another machine, **pull first** before
-making more changes:
-
-```bash
-git fetch origin
-git pull --ff-only origin main
-```
-
-A merge conflict at push time is a failure of this rule.
-
-### 3. Keep the test suite green.
-
-There are **340+ tests** in `project-db/tests/` (the count grows; check
-the latest pass line in CHANGELOG.md if you need a precise number).
-Before pushing anything that touches `src/`:
-
-```bash
-cd project-db && python -m pytest tests/ -q
-```
-
-Expected: every test passes. Anything less is a regression — fix it before you push.
-
-If you add a feature, add a test for it. If you change an API surface (renamed
-function, new required arg, dropped enum value), update the test that exercises
-it.
-
-### 4. Run things on the user's actual system, not on assumptions.
-
-When validating a fix, **actually run the command** the user would run, from
-the main repo path, against the real Monday workspace. Don't just `pytest` and
-declare victory — the user has called this out by name.
-
-### 5. Windows console output is hardened — but prefer ASCII for clean display.
-
-The default Windows code page is cp1252, which historically CRASHED
-(`UnicodeEncodeError`) on the accented French dataset and on Unicode arrows /
-bullets / box-drawing chars. **Fixed once (2026-06-09):
-`cli.force_utf8_output()` reconfigures stdout/stderr to UTF-8 with
-`errors="replace"` and is called at every entry point (CLI + `monday_demo.py`),
-so non-ASCII no longer crashes** — it renders as UTF-8 or degrades to `?`. So you
-no longer need to be paranoid about every `print()`. Still prefer ASCII (`->`,
-`OK:`, `FAIL:`, `-`, `...`) for box-drawing / arrows so output renders cleanly on
-any terminal — but a stray accent or em-dash is no longer a crash.
-**One-off scripts you write (`py -3.13 - <<…`) do NOT inherit this** — call
-`force_utf8_output()` (or `sys.stdout.reconfigure(encoding="utf-8")`) at the top
-if they print DB text.
-
-### 6. Don't make redundant API calls.
-
-If we already know something (because we synced it), **don't ask the source
-system for it again**. Concrete patterns this project uses:
-
-- `ExternalId.external_url` embeds `board_id` for Monday items
-  (`https://view.monday.com/boards/{board_id}/pulses/{item_id}`) so `sync_back`
-  parses it locally instead of hitting `items(ids: [...]) { board { id } }`.
-- `MondayClient.list_board_columns` is cached per-instance — push N times on
-  the same board, fetch columns once.
-- Logical column-name resolution (`status` -> `project_status`) lives in
-  `MondayConnector._resolve_column_id` and uses the cached column metadata.
-
-When you add a new feature: if it queries an external API for data we already
-hold canonically, that's a smell. Cache it or store it during sync.
-
-### 7. Never commit secrets, `.env`, or `*.pyc`.
-
-`.env` is gitignored. If `git status` shows it, something is wrong. Same for
-`__pycache__/` and `.sqlite` files — they're already in `.gitignore`.
-
-### 8. Commits and PRs always credit Claude.
-
-Every commit body ends with:
-
-```
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-```
-
-Pass commit messages via HEREDOC, never via flags with embedded newlines.
+> ⚠ The exact gate sentence is being set with the owner (whiteboard in
+> progress). Until it's written here, the working gate is: *"the owner opens
+> ALTA instead of Drive/Monday to answer one real question, it's right, and they
+> do it again next week unprompted."* **Fill this in — don't leave it vague.**
 
 ---
 
-## Project layout (where to look)
+## BUILD FREEZE (the rule that breaks the loop)
+
+This project has a documented failure mode: limitation found → new authoritative
+doc → new subsystem → partial success → new limitation → repeat. Half-working
+features pile onto a half-working product. **We are breaking that loop.**
+
+- **No new features or subsystems** until the current visible spine meets the
+  usage gate. The only allowed work is making the existing path *trustworthy*.
+- **When you hit a limitation: note it in HANDOFF's "Parked" section and STOP.**
+  A limitation is not a mandate to build. Ask: does the current user need this
+  for the current task? Usually no.
+- **Self-scrutiny (required after every change):** ask *"did this save someone
+  time, or did I just make the code more complete?"* If the latter, you're in
+  the loop — stop and say so out loud.
+- Hidden features (`src/project_db/features.py`) stay hidden until a real user
+  asks for one by name. Hiding is reversible (env var); it is not deletion.
+
+---
+
+## Documentation discipline (so docs stop steering us wrong)
+
+The docs became a steering wheel: every entry declared itself "the new core / the
+next build," and each session patched toward the latest one. Fixed by collapsing
+to **four canonical files, present-tense only:**
+
+| File | Role | Lifecycle |
+|---|---|---|
+| `CLAUDE.md` (this) | Rules + philosophy + the gate | Edit deliberately, rarely |
+| `project-db/README.md` | What it is + how to set up & run | Update when setup changes |
+| `project-db/docs/HANDOFF.md` | Current engineering state only | **Wiped & retyped every handoff** |
+| `project-db/CHANGELOG.md` | Dated history, newest on top | **Never wiped — append only** |
+
+Rules:
+- **Write present-tense facts, not "next build" declarations.** No roadmaps, no
+  "this is now the headline," no new strategy/authority docs. Forward ideas go in
+  HANDOFF's "Parked / open questions" section — which gets wiped, so they don't
+  ossify into commitments.
+- **`project-db/docs/archive/` is history, NOT instructions.** Do not steer from
+  it. It exists so nothing is lost, not so future sessions obey it.
+- If a doc contradicts reality, fix it or archive it. **Do not add a fifth doc**
+  to reconcile the other four.
+
+---
+
+## Hard rules (still load-bearing)
+
+1. **Edit `main` directly. No worktrees.** Be on `main` in
+   `C:\Users\nsaro\Documents\VScode\ALTAtest`. If you find yourself in
+   `.claude/worktrees/...`, `cd` back. Never create a worktree unless asked.
+2. **Keep the test suite green.** `cd project-db && python -m pytest tests/ -q`.
+   Current count lives at the top of CHANGELOG — do not hardcode it here. Add a
+   test with every behavior change; update tests when an API surface changes.
+3. **Push to `origin/main` after every meaningful, *approved* change** — not
+   mid-planning. `git add <specific files, never -A>`, HEREDOC commit, `git push
+   origin main`. If behind, `git fetch origin && git pull --ff-only origin main`
+   first. (During a planning/freeze discussion, don't commit until told to.)
+4. **Validate on the real system** — from the real repo path, against the real
+   workspace. Don't just `pytest` and declare victory.
+5. **Windows console:** stdout is UTF-8-hardened via `cli.force_utf8_output()`,
+   but prefer ASCII (`->`, `OK:`, `FAIL:`, `-`, `...`) for clean rendering.
+   One-off scripts you write must call `force_utf8_output()` themselves.
+6. **No redundant API calls.** If we synced it, we hold it — query the DB, not
+   the source. (e.g. `board_id` is embedded in `ExternalId.external_url`;
+   `MondayClient.list_board_columns` is cached per-instance.)
+7. **Never commit secrets, `.env`, `*.pyc`, `*.sqlite`.** They're gitignored;
+   if `git status` shows them, something is wrong.
+8. **Every commit credits Claude:** end the body (via HEREDOC) with
+   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+---
+
+## Architecture invariants (don't relitigate)
+
+- **The schema is right** (13 entities + `ExternalId` bridge). Don't redesign it.
+- **`Project` is the join nucleus.** Never merge a Monday item with a Drive file;
+  link them by shared `project_id`. The Drive folder is the source of truth for
+  *which project* a document belongs to.
+- **The LLM is an advisor, never an actor.** Every AI suggestion goes to the
+  `Proposal` table for human approval before any write-back. One source of truth
+  per entity for writes (Monday → Tasks/Projects, Drive → Documents).
+- **Stay relational / SQL + SQLite.** No graph DB, no vector DB service, no
+  Postgres, no new tech until SQL actually limits us.
+
+---
+
+## Layout & common commands
 
 ```
 ALTAtest/
-├── CLAUDE.md                        ← you are here
-├── README.md                        ← top-level project overview
-├── docs/                            ← top-level design + planning docs
-└── project-db/                      ← the actual Python package
-    ├── README.md                    ← user-facing setup + usage docs
-    ├── docs/                        ← lean set: STRATEGY, HANDOFF, INTENTIONS,
-    │   │                              FEATURES (+ MONDAY_USAGE / adding-a-connector)
-    │   ├── STRATEGY.md              ← mission + standing ALWAYS/NEVER rules
-    │   ├── HANDOFF.md               ← engineering state + extraction pipeline diagram
-    │   ├── INTENTIONS.md            ← forward roadmap
-    │   ├── MONDAY_USAGE.md          ← push/pull/add workflow for Monday
-    │   ├── adding-a-connector.md
-    │   └── ...
-    ├── scripts/
-    │   └── monday_demo.py           ← interactive push/pull demo CLI
-    ├── src/project_db/
-    │   ├── cli.py                   ← `project_db ...` entry point
-    │   ├── config.py                ← .env loading
-    │   ├── db/                      ← SQLAlchemy models + session
-    │   ├── identity/                ← resolver + matchers
-    │   ├── connectors/
-    │   │   ├── base.py              ← abstract BaseConnector
-    │   │   ├── registry.py
-    │   │   ├── monday/              ← client.py, connector.py, column_extractor.py
-    │   │   └── quickbooks/
-    │   └── ai/                      ← canned reports + (stub) text-to-SQL
-    └── tests/                       ← pytest suite (343 tests)
+├── CLAUDE.md                     ← this file (rules + philosophy)
+├── docs/                         ← external API references (Monday, Drive) — keep
+└── project-db/                   ← the Python package
+    ├── README.md                 ← what it is + setup/usage
+    ├── CHANGELOG.md              ← dated history (never wipe)
+    ├── docs/
+    │   ├── HANDOFF.md            ← current state (wiped each handoff)
+    │   ├── adding-a-connector.md ← how-to
+    │   └── archive/              ← history, NOT instructions
+    ├── scripts/monday_demo.py    ← interactive Monday push/pull CLI
+    └── src/project_db/           ← cli.py, db/, identity/, connectors/, ai/, web/, features.py
 ```
 
----
-
-## Common tasks
-
-### Run the test suite
 ```bash
-cd project-db && python -m pytest tests/ -q
+cd project-db && python -m pytest tests/ -q     # tests
+project_db serve --no-refresh                    # web UI, no background sync/spend
+python scripts/monday_demo.py pull               # full Monday sync
+# Feature flags: src/project_db/features.py — override with PROJECT_DB_FEATURE_<NAME>=true
 ```
-
-### Sync Monday data
-```bash
-cd project-db
-project_db init-db                   # one-time
-python scripts/monday_demo.py pull   # full Monday sync
-python scripts/monday_demo.py inspect
-```
-
-See [`project-db/docs/MONDAY_USAGE.md`](project-db/docs/MONDAY_USAGE.md) for
-the complete Monday push/pull workflow including writing changes back to
-Monday.
-
-### Add a new connector
-See [`project-db/docs/adding-a-connector.md`](project-db/docs/adding-a-connector.md).
-Pattern: subclass `BaseConnector`, register in `connectors/registry.py`, add an
-entry to `SourceSystem` enum, write tests, run `pytest`, push.
-
----
-
-## Status (v0.2, as of 2026-05-14)
-
-Done:
-- Canonical schema (13 entities) + identity resolver (exact + fuzzy).
-- Monday connector: full board/item read + column extraction + push (`sync_back`).
-- Mirror-column overlay: pulls status/timeline from portfolio items that
-  proxy task-board values.
-- QuickBooks connector code complete (live test still pending real creds).
-- **Google Drive connector live**: 750 documents synced with full metadata
-  (folder_path, modified_time, size, md5, owner, etc.), 300 linked to
-  canonical Projects via civic-number + name matching.
-- One consolidated SQLite location (`project-db/project_db.sqlite`,
-  absolute path in `.env`).
-- **Phase 1 (Brain foundation) done:** DocumentText sidecar + Proposal
-  table + content extractors (PDF / DOCX / XLSX / Google Docs+Sheets),
-  `extract-content` CLI, Drive sync reconciliation. 463/751 documents
-  have non-empty extracted text in the live DB.
-- **Phase 2 (Tier-1 reports) done:** `project_overview`,
-  `docs_for_project`, `tasks_without_dates`, `missing_documents`,
-  `budget_vs_contract` reachable via `project_db ask "..."`.
-  Run `project_db ask "help"` to see all routed patterns.
-- **Phase 3a (LLM scaffolding) done:** `LLMProvider` abstraction with
-  three concrete backends (`MockLLMProvider`, `AnthropicProvider`,
-  `OpenAICompatibleProvider` — local Ollama / vLLM / llama.cpp etc.).
-  `assemble_project_context()` builds the structured prompt block.
-  `project_db llm-test <project>` exercises the full pipeline.
-- **Monday delta sync done:** `project_db sync monday --delta` uses
-  `Board.activity_logs` to skip boards with no activity since cursor.
-  6× speedup on quiet days.
-- 340+-test suite (see CHANGELOG.md for precise current count).
-- Demo CLI: `list-boards`, `pull`, `inspect`, `push`, `add-item`,
-  `gdrive-auth`, `extract-content`, `ask`, `llm-test`,
-  `sync monday --delta`.
-
-Known limits / non-features (do not pretend otherwise):
-- **Sync is full-pull only for Monday — but not because delta is impossible.**
-  Monday API-Version 2026-07 removed `updated_after` from `items_page` (that
-  specific shortcut is gone), but two viable alternatives exist in the live
-  schema and we just haven't built either:
-    * **Poll-based:** `Board.activity_logs(from, to, ...)` returns timestamped
-      change events. Pattern: query the log since `last_sync_at`, dedupe
-      `item_id`s, refetch those items by ID. No hosting required, lightweight.
-    * **Push-based:** `create_webhook(board_id, url, event)` is a scriptable
-      mutation (20+ event types). Needs a public HTTPS endpoint for Monday
-      to POST to — blocked until we have hosting (Mac mini / VPS).
-  At current scale (154 tasks, ~20s full pull) neither is urgent, but **stop
-  saying "Monday has no delta sync."** Say "Monday delta-sync code is not
-  yet built; activity_logs is the viable path."
-  Drive does have genuine `changes.list` delta sync via stored cursor.
-- **QB connector has never been run live.** Invoice table is empty in dev.
-  **Deferred per STRATEGY.md** — do not pick this up until Monday+Drive are
-  in daily PM use.
-- **Task data is sparse.** Only ~11% of Monday tasks have a date/duration
-  filled in. This is the *exact problem the AI layer is meant to solve*
-  (read Drive contracts → propose dates for Monday tasks). Not a bug to
-  fix in Monday; a feature to build in ALTA.
-- **AI assistant is canned-reports only.** Tier 2 (LLM-driven proposals) is
-  the next big build, per STRATEGY.md.
-
-Next (in priority order per STRATEGY.md):
-1. **`DocumentText` sidecar table + content extraction** for PDFs, Google
-   Docs, DOCX, Excel. Cap at 10 MB per file. Skip HEIC, DWG, audio.
-2. **`Proposal` table** for LLM-generated suggestions (entity_type,
-   entity_id, field, proposed_value, confidence, source_doc_ids, status).
-   All AI writes flow through here, gated by human approval.
-3. **LLM timeline-filling**: given a Project + its `DocumentText`, propose
-   `start_date` / `end_date` / `duration_days` for tasks lacking them.
-4. **LLM scope reconciliation**: compare contract scope (Drive text) to
-   Monday task list, flag missing items.
-5. **Approval workflow CLI**: `project_db proposals list`, `accept`,
-   `reject`. Accepted proposals → write back to Monday via existing
-   `sync_back`.
-
-Explicitly NOT next (per STRATEGY.md):
-- CompanyCam connector
-- QB live integration
-- Text-to-SQL natural language layer
-- Postgres migration / Alembic
-- Webhook receivers (Monday `create_webhook` IS scriptable — the blocker
-  is hosting, not API support; revisit when Mac mini / hosting exists)
-- Any new source system
-
-Worth-doing-soon but not yet:
-- Monday `activity_logs`-based delta sync. Lightweight (no hosting needed),
-  pairs naturally with Phase-3 "re-propose when something changes."
-  Reasonable to fold into a Phase-3 session rather than its own phase.
-
-These are real items but they're plumbing. The brain (#1-5 above) comes first.
