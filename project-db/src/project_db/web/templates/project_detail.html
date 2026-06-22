@@ -12,7 +12,7 @@
   </p>
 </hgroup>
 
-{% if d.money_line and d.money_line.line %}
+{% if feature_enabled("finance_legacy") and d.money_line and d.money_line.line %}
 <p data-testid="money-line"
    class="money-line{% if d.money_line.low_confidence %} money-line-warn{% endif %}">
   <strong>Money:</strong>
@@ -27,12 +27,24 @@
     <li><a href="#tasks">Tasks ({{ d.dateless_count }} dateless)</a></li>
     <li><a href="#documents">Documents ({{ d.documents_total }})</a></li>
     <li><a href="#proposals">Proposals ({{ d.proposals_total }})</a></li>
-    <li><a href="#propose-result">Generate</a></li>
-    <li><a href="/projects/{{ d.project.canonical_id }}/gantt">Timeline</a></li>
-    <li><a href="/projects/{{ d.project.canonical_id }}/financials">Financials</a></li>
-    <li><a href="/projects/{{ d.project.canonical_id }}/margins">Margins (by trade)</a></li>
-    <li><a href="/projects/{{ d.project.canonical_id }}/ledger-health">Ledger health</a></li>
-    <li><a href="/projects/{{ d.project.canonical_id }}/labour">Labour</a></li>
+    {% if feature_enabled("proposal_generation") %}
+      <li><a href="#propose-result">Generate</a></li>
+    {% endif %}
+    {% if feature_enabled("monday_gantt") %}
+      <li><a href="/projects/{{ d.project.canonical_id }}/gantt">Timeline</a></li>
+    {% endif %}
+    {% if feature_enabled("finance_legacy") %}
+      <li><a href="/projects/{{ d.project.canonical_id }}/financials">Legacy financial summary</a></li>
+    {% endif %}
+    {% if feature_enabled("finance_margins") %}
+      <li><a href="/projects/{{ d.project.canonical_id }}/margins">Margins (by trade)</a></li>
+    {% endif %}
+    {% if feature_enabled("ledger_health") %}
+      <li><a href="/projects/{{ d.project.canonical_id }}/ledger-health">Ledger health</a></li>
+    {% endif %}
+    {% if feature_enabled("labour_intake") %}
+      <li><a href="/projects/{{ d.project.canonical_id }}/labour">Labour</a></li>
+    {% endif %}
   </ul>
 </nav>
 
@@ -81,39 +93,42 @@
       <p style="font-size: 1.5rem; margin: 0">{{ d.stats.invoice_count or 0 }}</p>
       <small>total: ${{ "%.2f"|format(d.stats.invoice_total or 0) }}</small>
     </article>
-    <article>
-      <header>
-        <strong>Budget vs Contract</strong>
-        <span class="pill pill-pending" style="font-size:0.7rem">reference</span>
-      </header>
-      {% if d.budget.error %}
-        <small><em>{{ d.budget.error }}</em></small>
-      {% else %}
-        <small>
-          Monday budget:
-          {% if d.budget.monday_budget is not none %}
-            ${{ "%.2f"|format(d.budget.monday_budget) }}
-          {% else %}<em>unset</em>{% endif %}
-          <br>
-          Contract est.:
-          {% if d.budget.contract_amount_estimate is not none %}
-            ${{ "%.2f"|format(d.budget.contract_amount_estimate) }}
-          {% else %}<em>none extracted</em>{% endif %}
-          {% if d.budget.divergence_pct is not none %}
-            <br>divergence:
-            <span class="pill {% if d.budget.flagged %}pill-warn{% endif %}">
-              {{ "%.0f"|format(d.budget.divergence_pct * 100) }}%
-            </span>
-          {% endif %}
-        </small>
-      {% endif %}
-      <p style="margin:0.4rem 0 0"><small>
-        These are <strong>reference</strong> figures: a number typed into
-        Monday and a rough text scan. For the real money picture see
-        <a href="/projects/{{ d.project.canonical_id }}/financials">
-          &#10003; Financials</a> (reconciled from the actual documents).
-      </small></p>
-    </article>
+    {% if feature_enabled("finance_legacy") %}
+      <article>
+        <header>
+          <strong>Legacy financial summary</strong>
+          <span class="pill pill-pending" style="font-size:0.7rem">transition view</span>
+        </header>
+        {% if d.budget.error %}
+          <small><em>{{ d.budget.error }}</em></small>
+        {% else %}
+          <small>
+            Monday budget:
+            {% if d.budget.monday_budget is not none %}
+              ${{ "%.2f"|format(d.budget.monday_budget) }}
+            {% else %}<em>unset</em>{% endif %}
+            <br>
+            Contract est.:
+            {% if d.budget.contract_amount_estimate is not none %}
+              ${{ "%.2f"|format(d.budget.contract_amount_estimate) }}
+            {% else %}<em>none extracted</em>{% endif %}
+            {% if d.budget.divergence_pct is not none %}
+              <br>divergence:
+              <span class="pill {% if d.budget.flagged %}pill-warn{% endif %}">
+                {{ "%.0f"|format(d.budget.divergence_pct * 100) }}%
+              </span>
+            {% endif %}
+          </small>
+        {% endif %}
+        <p style="margin:0.4rem 0 0"><small>
+          This transition view uses the older aggregate financial layer. For
+          demo finance, use
+          <a href="/projects/{{ d.project.canonical_id }}/margins">Margins</a>
+          and
+          <a href="/projects/{{ d.project.canonical_id }}/ledger-health">Ledger health</a>.
+        </small></p>
+      </article>
+    {% endif %}
   </div>
   {% include "_partials/money_glossary.html" %}
 </section>
@@ -123,12 +138,14 @@
   <h3>C. Tasks
     <small>({{ d.tasks_full|length }} total, {{ d.dateless_count }} dateless)</small>
   </h3>
-  <p><small>
-    Dateless tasks listed first.  Click <em>Edit</em> on any row to set
-    or change dates -- the change writes to Monday FIRST via
-    <code>sync_back</code> (same path Accept uses), then mirrors onto
-    the canonical Task on success.
-  </small></p>
+  {% if feature_enabled("task_date_edit") %}
+    <p><small>
+      Dateless tasks listed first.  Click <em>Edit</em> on any row to set
+      or change dates -- the change writes to Monday FIRST via
+      <code>sync_back</code> (same path Accept uses), then mirrors onto
+      the canonical Task on success.
+    </small></p>
+  {% endif %}
 
   {% if d.tasks_full %}
   <table>
@@ -293,6 +310,7 @@
 Submit a plain-language site note.  The brain classifies it, matches it
 to a task, and creates PENDING proposals for review in section E above.
 ================================================================ -->
+{% if feature_enabled("field_notes_typed") %}
 <section id="field-note">
   <h3>F. Field note <small>(submit a site observation)</small></h3>
   <p><small>
@@ -308,17 +326,20 @@ to a task, and creates PENDING proposals for review in section E above.
     <button type="submit" style="margin-top:0.5rem">Submit note (uses OpenAI)</button>
   </form>
 </section>
+{% endif %}
 
 <!-- ============================ GENERATE PROPOSALS ============================
 The two LLM-spending actions.  Each carries an hx-confirm dialog so the
 user has to explicitly acknowledge the token cost before each click.
 ================================================================ -->
+{% if feature_enabled("proposal_generation") %}
 <section id="propose-result">
-  <h3>F. Generate proposals</h3>
+  <h3>Generate proposals</h3>
   {% with project_id=d.project.canonical_id %}
     {% include "_partials/propose_buttons.html" %}
   {% endwith %}
 </section>
+{% endif %}
 
 <!-- ============================ RAW DATA ============================
 Dev affordance: the full data dict the template was rendered from.

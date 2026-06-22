@@ -27,6 +27,7 @@ from project_db.ai.proposals import (
 )
 from project_db.db.models import Project, Proposal
 from project_db.db.models.proposals import ProposalStatus
+from project_db.features import feature_enabled
 from project_db.web import deps, ui_views
 from project_db.web.deps import db
 
@@ -39,6 +40,11 @@ def _coerce_uuid(value: str):
         return uuid.UUID(str(value))
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _require_feature(name: str) -> None:
+    if not feature_enabled(name):
+        raise HTTPException(404, "Feature disabled")
 
 
 def _fresh_pending_proposal(session: Session, proposal_id: str) -> Proposal | None:
@@ -163,6 +169,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         kind: str | None = Query(default=None),
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposals")
         data = ui_views.proposal_queue(session, status=status, kind=kind)
         return templates.TemplateResponse(request, "proposal_list.html", {"d": data})
 
@@ -173,6 +180,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposals")
         detail = ui_views.proposal_detail(session, proposal_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Proposal not found")
@@ -185,6 +193,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposals")
         """Re-render the idle decision panel (GET /decision).
 
         If the proposal has already been decided, returns the decided partial
@@ -206,6 +215,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposals")
         """Write the change to Monday, then flip the proposal to ACCEPTED.
 
         ORDER IS LOAD-BEARING (mirrors ai.proposals.accept_proposal):
@@ -265,6 +275,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         reason: str = Form(default=""),
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposals")
         """Flip status to REJECTED.  Pure DB; no external system touched."""
         p = _fresh_pending_proposal(session, proposal_id)
         if p is None:
@@ -299,6 +310,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposal_generation")
         """Generate timeline proposals (spends LLM tokens).
 
         Thin adapter over ``generate_timeline_proposals``.  Uses the
@@ -365,6 +377,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("proposal_generation")
         """Generate scope-gap proposals (spends LLM tokens).  Same shape
         as the timelines route -- thin adapter; hx-confirm in the template."""
         project = _resolve_project_uuid(session, project_id)

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from project_db.ai.query import AiAssistant, AiResponse
+from project_db.features import feature_enabled
 from project_db.web.deps import db
 
 
@@ -70,6 +71,8 @@ def _format_answer(answer) -> tuple[str, str]:
 def register(router: APIRouter, templates: Jinja2Templates) -> None:
     @router.get("/ask", response_class=HTMLResponse)
     def ask_index(request: Request) -> HTMLResponse:
+        if not feature_enabled("ask"):
+            raise HTTPException(404, "Feature disabled")
         return templates.TemplateResponse(
             request,
             "ask.html",
@@ -82,6 +85,8 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         question: str = Form(default=""),
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        if not feature_enabled("ask"):
+            raise HTTPException(404, "Feature disabled")
         question = (question or "").strip()
         if not question:
             return templates.TemplateResponse(

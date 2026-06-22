@@ -41,7 +41,17 @@
           0
         {% endif %}
       </td>
-      <td><a href="/projects/{{ r.canonical_id }}/financials">Financials &rarr;</a></td>
+      <td>
+        {% if feature_enabled("finance_margins") %}
+          <a href="/projects/{{ r.canonical_id }}/margins">Margins &rarr;</a>
+        {% elif feature_enabled("ledger_health") %}
+          <a href="/projects/{{ r.canonical_id }}/ledger-health">Ledger health &rarr;</a>
+        {% elif feature_enabled("finance_legacy") %}
+          <a href="/projects/{{ r.canonical_id }}/financials">Legacy financial summary &rarr;</a>
+        {% else %}
+          -
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>

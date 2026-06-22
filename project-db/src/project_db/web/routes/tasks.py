@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from project_db.ai.proposals import set_task_timeline
 from project_db.db.models import Task
+from project_db.features import feature_enabled
 from project_db.web import deps
 from project_db.web.deps import db
 
@@ -29,6 +30,11 @@ def _coerce_uuid(value: str):
         return _uuid.UUID(str(value))
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _require_task_date_edit() -> None:
+    if not feature_enabled("task_date_edit"):
+        raise HTTPException(404, "Feature disabled")
 
 
 def _task_row_payload(task: Task) -> dict:
@@ -53,6 +59,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         session: Session = Depends(db),
     ) -> HTMLResponse:
         """Render the inline edit form for one task row."""
+        _require_task_date_edit()
         tid = _coerce_uuid(task_id)
         if tid is None:
             raise HTTPException(404, "Task not found")
@@ -72,6 +79,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         session: Session = Depends(db),
     ) -> HTMLResponse:
         """Render the static row.  Used by the form's Cancel button."""
+        _require_task_date_edit()
         tid = _coerce_uuid(task_id)
         if tid is None:
             raise HTTPException(404, "Task not found")
@@ -97,6 +105,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         On any failure (validation, connector unavailable, Monday refused),
         the row stays as-is and the form re-renders with an inline error.
         """
+        _require_task_date_edit()
         tid = _coerce_uuid(task_id)
         if tid is None:
             raise HTTPException(404, "Task not found")

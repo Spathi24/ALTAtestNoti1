@@ -140,6 +140,50 @@ class TestCliListSources:
         assert "quickbooks" in names
 
 
+class TestCliFeatureGuards:
+    def test_quarantined_command_is_blocked_by_default(self, capsys):
+        from project_db.cli import main
+
+        result = main(["project-logs", "Rockland"])
+
+        err = capsys.readouterr().err
+        assert result == 2
+        assert "project_logs" in err
+        assert "PROJECT_DB_FEATURE_PROJECT_LOGS=true" in err
+
+    def test_quarantined_command_runs_when_enabled(self, monkeypatch):
+        import project_db.cli as cli
+
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROJECT_LOGS", "true")
+        monkeypatch.setattr(cli, "cmd_project_logs", lambda args: 17)
+
+        assert cli.main(["project-logs", "Rockland"]) == 17
+
+    def test_admin_cli_command_is_not_blocked(self, monkeypatch):
+        import project_db.cli as cli
+
+        monkeypatch.setattr(cli, "cmd_doctor", lambda args: 23)
+
+        assert cli.main(["doctor"]) == 23
+
+    def test_daily_read_only_allowed_but_propose_timelines_quarantined(self, monkeypatch, capsys):
+        import project_db.cli as cli
+
+        monkeypatch.setattr(cli, "cmd_daily", lambda args: 0)
+
+        assert cli.main(["daily", "Rockland"]) == 0
+        assert cli.main(["daily", "Rockland", "--propose-timelines"]) == 2
+        assert "proposal_generation" in capsys.readouterr().err
+
+    def test_daily_propose_timelines_runs_when_enabled(self, monkeypatch):
+        import project_db.cli as cli
+
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROPOSAL_GENERATION", "true")
+        monkeypatch.setattr(cli, "cmd_daily", lambda args: 19)
+
+        assert cli.main(["daily", "Rockland", "--propose-timelines"]) == 19
+
+
 class TestCliAsk:
     def test_ask_runs_against_seeded_db(self, patched_session_factory):
         from project_db.cli import cmd_ask, cmd_init_db

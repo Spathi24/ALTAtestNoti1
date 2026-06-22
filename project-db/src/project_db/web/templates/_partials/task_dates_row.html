@@ -24,13 +24,17 @@ Variables expected:
     {% endif %}
   </td>
   <td>
-    <button type="button"
-            class="secondary outline"
-            hx-get="/tasks/{{ t.canonical_id }}/dates-form"
-            hx-target="#task-row-{{ t.canonical_id }}"
-            hx-swap="outerHTML"
-            style="padding: 0.1rem 0.4rem; font-size: 0.75rem;">
-      Edit
-    </button>
+    {% if feature_enabled("task_date_edit") %}
+      <button type="button"
+              class="secondary outline"
+              hx-get="/tasks/{{ t.canonical_id }}/dates-form"
+              hx-target="#task-row-{{ t.canonical_id }}"
+              hx-swap="outerHTML"
+              style="padding: 0.1rem 0.4rem; font-size: 0.75rem;">
+        Edit
+      </button>
+    {% else %}
+      -
+    {% endif %}
   </td>
 </tr>

@@ -58,6 +58,11 @@ def client(patched_session_factory):
 
 
 @pytest.fixture
+def legacy_finance_enabled(monkeypatch):
+    monkeypatch.setenv("PROJECT_DB_FEATURE_FINANCE_LEGACY", "true")
+
+
+@pytest.fixture
 def fin_project(session, org: Organization):
     c = Client(name="Acme", organization_id=org.canonical_id)
     session.add(c)
@@ -117,21 +122,33 @@ class TestMoneyClarity:
         assert all(s["blurb"].strip() for s in g["sources"])
         assert any(t["key"] == "contract_revenue" for t in g["money_types"])
 
-    def test_financials_panel_marks_authoritative(self, client, fin_project):
+    def test_financials_panel_marks_authoritative(
+        self, client, fin_project, legacy_finance_enabled
+    ):
         body = client.get(f"/projects/{fin_project.canonical_id}/financials").text
         assert "AUTHORITATIVE" in body
         assert 'data-testid="money-glossary"' in body
         assert "money picture to trust" in body
 
-    def test_project_page_marks_reference_and_links_out(self, client, fin_project):
+    def test_project_page_marks_reference_and_links_out(
+        self, client, fin_project, legacy_finance_enabled
+    ):
         body = client.get(f"/projects/{fin_project.canonical_id}").text
         assert "reference" in body
         assert 'data-testid="money-glossary"' in body
         assert f"/projects/{fin_project.canonical_id}/financials" in body
 
+    def test_project_page_hides_legacy_financial_link_by_default(self, client, fin_project):
+        body = client.get(f"/projects/{fin_project.canonical_id}").text
+        assert f"/projects/{fin_project.canonical_id}/financials" not in body
+
 
 class TestFinancialsPanel:
-    def test_renders_buckets_and_excludes_rollup(self, client, fin_project):
+    def test_disabled_by_default(self, client, fin_project):
+        r = client.get(f"/projects/{fin_project.canonical_id}/financials")
+        assert r.status_code == 404
+
+    def test_renders_buckets_and_excludes_rollup(self, client, fin_project, legacy_finance_enabled):
         r = client.get(f"/projects/{fin_project.canonical_id}/financials")
         assert r.status_code == 200
         body = r.text
@@ -145,19 +162,21 @@ class TestFinancialsPanel:
         r = client.get("/projects/00000000-0000-0000-0000-000000000000/financials")
         assert r.status_code == 404
 
-    def test_project_detail_links_to_financials(self, client, fin_project):
+    def test_project_detail_links_to_financials(self, client, fin_project, legacy_finance_enabled):
         r = client.get(f"/projects/{fin_project.canonical_id}")
         assert r.status_code == 200
         assert f"/projects/{fin_project.canonical_id}/financials" in r.text
 
-    def test_panel_is_read_only(self, client, fin_project):
+    def test_panel_is_read_only(self, client, fin_project, legacy_finance_enabled):
         # No mutation verb on the financials VIEW surface (the toggle lives on
         # the document, not the project financials page).
         url = f"/projects/{fin_project.canonical_id}/financials"
         assert client.post(url).status_code in (404, 405)
         assert client.delete(url).status_code in (404, 405)
 
-    def test_confirmed_toggle_updates_total(self, client, fin_project, session):
+    def test_confirmed_toggle_updates_total(
+        self, client, fin_project, session, legacy_finance_enabled
+    ):
         from project_db.db.models import Document
 
         geller = session.query(Document).filter_by(name="Geller Quote.xlsx").one()

@@ -182,7 +182,26 @@ def web_client(web_engine, monkeypatch):
 
 
 class TestGanttRoute:
-    def test_gantt_page_renders(self, web_client):
+    def test_gantt_disabled_by_default(self, web_client):
+        client, factory = web_client
+        s = factory()
+        org = Organization(name="Co")
+        s.add(org)
+        s.flush()
+        cli = Client(name="Owner", organization_id=org.canonical_id)
+        s.add(cli)
+        s.flush()
+        p = Project(name="Rockland", status=ProjectStatus.ACTIVE, client_id=cli.canonical_id)
+        s.add(p)
+        s.commit()
+        pid = str(p.canonical_id)
+        s.close()
+
+        resp = client.get(f"/projects/{pid}/gantt")
+        assert resp.status_code == 404
+
+    def test_gantt_page_renders_when_enabled(self, web_client, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_MONDAY_GANTT", "true")
         client, factory = web_client
         s = factory()
         org = Organization(name="Co")

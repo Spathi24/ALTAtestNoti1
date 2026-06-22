@@ -312,8 +312,13 @@ class TestFooterAndChrome:
 
     def test_nav_links_present(self, client):
         resp = client.get("/")
-        for href in ("/projects", "/proposals", "/doctor"):
+        for href in ("/projects", "/proposals"):
             assert f'href="{href}"' in resp.text
+
+    def test_pm_nav_hides_admin_links_by_default(self, client):
+        resp = client.get("/")
+        for href in ("/doctor", "/db", "/docs"):
+            assert f'href="{href}"' not in resp.text
 
 
 class TestDeps:

@@ -193,6 +193,10 @@ def patched_writeback(monkeypatch):
 
 
 class TestProposeTimelines:
+    @pytest.fixture(autouse=True)
+    def _enable_proposal_generation(self, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROPOSAL_GENERATION", "true")
+
     def test_happy_path_creates_proposal_returns_fragment(
         self, client, session, world, patched_default_provider
     ):
@@ -246,6 +250,10 @@ class TestProposeTimelines:
 
 
 class TestProposeScope:
+    @pytest.fixture(autouse=True)
+    def _enable_proposal_generation(self, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROPOSAL_GENERATION", "true")
+
     def test_happy_path_creates_scope_gap_proposal(
         self, client, session, world, patched_default_provider
     ):
@@ -371,6 +379,10 @@ class TestAsk:
 
 
 class TestTaskDateEdits:
+    @pytest.fixture(autouse=True)
+    def _enable_task_date_edit(self, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_TASK_DATE_EDIT", "true")
+
     def test_dates_form_returns_inline_form(self, client, world):
         tid = str(world["task"].canonical_id)
         resp = client.get(f"/tasks/{tid}/dates-form")
@@ -610,12 +622,30 @@ class TestProjectDetailTasksPanel:
         # The single seeded task is dateless -> pill should render
         assert "dateless" in resp.text.lower()
 
-    def test_tasks_panel_has_edit_buttons(self, client, world):
+    def test_tasks_panel_hides_edit_buttons_by_default(self, client, world):
         pid = str(world["project"].canonical_id)
         resp = client.get(f"/projects/{pid}")
         tid = str(world["task"].canonical_id)
-        # The Edit button is wired via HTMX to /tasks/{id}/dates-form
+        assert f"/tasks/{tid}/dates-form" not in resp.text
+
+    def test_tasks_panel_has_edit_buttons_when_enabled(self, client, world, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_TASK_DATE_EDIT", "true")
+        pid = str(world["project"].canonical_id)
+        resp = client.get(f"/projects/{pid}")
+        tid = str(world["task"].canonical_id)
         assert f"/tasks/{tid}/dates-form" in resp.text
+
+
+class TestQuarantinedRoutesDefault:
+    def test_proposal_generation_disabled_by_default(self, client, world):
+        pid = str(world["project"].canonical_id)
+        resp = client.post(f"/projects/{pid}/propose/timelines")
+        assert resp.status_code == 404
+
+    def test_task_date_edit_disabled_by_default(self, client, world):
+        tid = str(world["task"].canonical_id)
+        resp = client.get(f"/tasks/{tid}/dates-form")
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

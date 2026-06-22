@@ -9,8 +9,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from project_db.features import feature_enabled
 from project_db.web import ui_views
 from project_db.web.deps import db
+
+
+def _require_feature(name: str) -> None:
+    if not feature_enabled(name):
+        raise HTTPException(status_code=404, detail="Feature disabled")
 
 
 def register(router: APIRouter, templates: Jinja2Templates) -> None:
@@ -36,6 +42,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("finance_legacy")
         data = ui_views.project_financials(session, project_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -69,6 +76,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("labour_intake")
         data = ui_views.project_labour(session, project_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -80,6 +88,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         request: Request,
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("monday_gantt")
         data = ui_views.project_gantt(session, project_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -92,6 +101,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         confirmed: str = Form("true"),
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("finance_legacy")
         """Toggle a document's confirmed/quoted status; re-render the panel body.
 
         The only mutation on the financial surface.  It writes nothing external
@@ -134,6 +144,7 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         note_text: str = Form(""),
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        _require_feature("field_notes_typed")
         """Accept a plain-language field note, classify it, create PENDING proposals.
 
         Returns a small HTML fragment (HTMX swap target) reporting the outcome.

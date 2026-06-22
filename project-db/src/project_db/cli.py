@@ -42,6 +42,7 @@ from project_db.db.models import (  # noqa: F401 — needed for metadata to know
     User,
     Vendor,
 )
+from project_db.features import env_var_for_feature, feature_enabled
 
 
 def cmd_init_db(_: argparse.Namespace) -> int:
@@ -812,6 +813,57 @@ def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
                 print(batch.summary())
         print(f"\nDone: {grand_rows} LLM ledger row(s) written.")
         print("  View per-project: project_db division-margins <project>")
+    return 0
+
+
+def cmd_weekly_changes(args: argparse.Namespace) -> int:
+    """What changed per project in the last N days -- facts only, no LLM.
+
+    The deterministic delta the weekly report is built on.  Omit the project
+    argument for an all-projects rollup; pass a name/UUID to focus one project.
+    """
+    from project_db.ai.views import report_weekly_changes
+
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    with session_scope() as s:
+        data = report_weekly_changes(s, args.project, since_days=args.days)
+        if "error" in data:
+            print(f"FAIL: {data['error']}", file=sys.stderr)
+            return 2
+
+        print(
+            f"Changes in the last {data['since_days']} day(s) "
+            f"({data['window_start'][:10]} -> {data['window_end'][:10]})"
+        )
+        print(
+            f"  {data['total_changes']} change(s) across "
+            f"{data['project_count']} project(s)."
+        )
+        if not data["projects"]:
+            print("  Nothing changed in this window.")
+            return 0
+        for proj in data["projects"]:
+            print(f"\n{proj['name']}  ({proj['change_count']} change(s))")
+            for d in proj["documents"]:
+                print(f"  [doc]      {d['modified_at_source'][:10]}  {d['name']}")
+            for n in proj["field_notes"]:
+                cls = n["classification"] or "note"
+                print(f"  [note]     {n['received_at'][:10]}  {cls}: {n['excerpt'][:80]}")
+            for p in proj["proposals_opened"]:
+                print(
+                    f"  [proposal] {p['created_at'][:10]}  opened "
+                    f"{p['entity_type']}.{p['field_name']}"
+                )
+            for p in proj["proposals_decided"]:
+                print(
+                    f"  [proposal] {p['decided_at'][:10]}  {p['status']} "
+                    f"{p['entity_type']}.{p['field_name']}"
+                )
+            for t in proj["tasks_completed"]:
+                print(f"  [task]     {t['completed_at'][:10]}  done: {t['title']}")
     return 0
 
 
@@ -3118,6 +3170,22 @@ def build_parser() -> argparse.ArgumentParser:
     dm.add_argument("project", help="Project canonical UUID or name fragment")
     dm.set_defaults(func=cmd_division_margins)
 
+    wc = sub.add_parser(
+        "weekly-changes",
+        help="What changed per project in the last N days (facts only, no LLM). "
+        "Foundation for the weekly report.",
+    )
+    wc.add_argument(
+        "project",
+        nargs="?",
+        default=None,
+        help="Optional project UUID or name fragment; omit for all projects",
+    )
+    wc.add_argument(
+        "--days", type=int, default=7, help="Look-back window in days (default 7)"
+    )
+    wc.set_defaults(func=cmd_weekly_changes)
+
     ed = sub.add_parser(
         "embed-documents",
         help="Embed document text into vectors for RAG (OpenAI embeddings). "
@@ -3316,11 +3384,55 @@ def force_utf8_output() -> None:
             pass
 
 
+_CLI_FEATURES: dict[str, str] = {
+    "propose": "proposal_generation",
+    "extract-financials": "finance_legacy",
+    "money-line": "finance_legacy",
+    "extract-obligations": "obligations",
+    "commitments": "obligations",
+    "value-caught": "value_caught",
+    "fill-ledger-llm": "llm_pdf_finance",
+    "import-roadmap": "roadmap",
+    "classify-roadmap": "roadmap",
+    "poll-mail": "field_notes_email",
+    "gmail-auth": "field_notes_email",
+    "retry-quarantined": "field_notes_email",
+    "project-logs": "project_logs",
+    "telegram-invite-worker": "telegram_intake",
+    "poll-telegram": "telegram_intake",
+    "labour-claims": "labour_intake",
+    "labour-consolidate": "labour_intake",
+}
+
+
+def _disabled_cli_feature(args: argparse.Namespace) -> str | None:
+    """Return the disabled feature blocking this parsed command, if any."""
+    command = getattr(args, "cmd", None)
+    if command == "daily" and getattr(args, "propose_timelines", False):
+        return None if feature_enabled("proposal_generation") else "proposal_generation"
+    feature = _CLI_FEATURES.get(str(command))
+    if feature and not feature_enabled(feature):
+        return feature
+    return None
+
+
+def _print_disabled_cli_message(command: str, feature: str) -> None:
+    print(
+        f"Command '{command}' is quarantined by feature flag '{feature}'.",
+        file=sys.stderr,
+    )
+    print(f"Set {env_var_for_feature(feature)}=true to enable it.", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     force_utf8_output()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)
+    disabled_feature = _disabled_cli_feature(args)
+    if disabled_feature:
+        _print_disabled_cli_message(args.cmd, disabled_feature)
+        return 2
     return args.func(args)
 
 

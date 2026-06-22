@@ -7,11 +7,12 @@ so results are shareable/bookmarkable.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from project_db.features import feature_enabled
 from project_db.web import ui_views
 from project_db.web.deps import db
 
@@ -24,6 +25,8 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
         project: str = "",
         session: Session = Depends(db),
     ) -> HTMLResponse:
+        if not feature_enabled("search"):
+            raise HTTPException(404, "Feature disabled")
         data = ui_views.search_documents(session, q, project_ref=(project or None))
         return templates.TemplateResponse(
             request,

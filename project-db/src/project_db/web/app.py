@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from project_db.features import enabled_features, feature_enabled
 from project_db.web import ui_views
 from project_db.web.deps import (
     app_version,
@@ -59,6 +60,8 @@ def create_app() -> FastAPI:
     from project_db.web import refresh_state
 
     templates.env.globals["last_refresh"] = refresh_state.get_last
+    templates.env.globals["feature_enabled"] = feature_enabled
+    templates.env.globals["enabled_features"] = enabled_features
 
     # Plain-language money glossary -- rendered by the project page and the
     # Financials panel so the "which number do I trust?" story is consistent.

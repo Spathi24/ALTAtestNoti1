@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ d.project.name }} - Financials{% endblock %}
+{% block title %}{{ d.project.name }} - Legacy Financial Summary{% endblock %}
 
 {% block content %}
 <hgroup>
-  <h2>{{ d.project.name }} &mdash; Financials</h2>
+  <h2>{{ d.project.name }} &mdash; Legacy financial summary</h2>
   <p><small>Totals sum PRIMARY transaction documents only; internal roll-up
-     sheets are excluded. The Confirmed total counts only documents you went
-     with (invoices in / quotes out by default; toggle below).</small></p>
+     sheets are excluded. This is a transition view from the older aggregate
+     layer; the default demo finance story is Margins + Ledger health.</small></p>
 </hgroup>
 
 {% include "_partials/financials_body.html" %}

@@ -114,9 +114,10 @@ class TestBriefingLanding:
 
 
 class TestValueCaughtCard:
-    def test_card_shows_total(self, client, session, project_factory):
+    def test_card_shows_total_when_enabled(self, client, session, project_factory, monkeypatch):
         from project_db.db.models import ContractObligation
 
+        monkeypatch.setenv("PROJECT_DB_FEATURE_VALUE_CAUGHT", "true")
         p = project_factory(name="VC Proj")
         session.add(
             ContractObligation(
@@ -133,6 +134,24 @@ class TestValueCaughtCard:
         assert 'data-testid="value-caught"' in body
         assert 'data-testid="vc-total"' in body
         assert "12,345" in body
+
+    def test_card_hidden_by_default_even_with_money(self, client, session, project_factory):
+        from project_db.db.models import ContractObligation
+
+        p = project_factory(name="VC Hidden Proj")
+        session.add(
+            ContractObligation(
+                project_id=p.canonical_id,
+                kind="payment_milestone",
+                direction="owed_to_us",
+                amount=Decimal("12345"),
+                due_date=date.today() - timedelta(days=4),
+            )
+        )
+        session.commit()
+
+        body = client.get("/").text
+        assert 'data-testid="value-caught"' not in body
 
     def test_card_absent_when_no_money(self, client, session, project_factory):
         project_factory(name="No Money Proj")

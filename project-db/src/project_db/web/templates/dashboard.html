@@ -2,7 +2,7 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-{% if value_caught.headline_total %}
+{% if feature_enabled("value_caught") and value_caught.headline_total %}
 <article data-testid="value-caught" class="vc-card">
   <header><strong>Money ALTA has surfaced</strong>
     <small>&mdash; as of {{ value_caught.generated_on }}</small></header>
@@ -64,8 +64,12 @@
 
 <div class="quick-links">
   <a href="/projects" role="button">Browse projects &rarr;</a>
-  <a href="/proposals" role="button" class="secondary">Review proposals</a>
-  <a href="/ask" role="button" class="secondary outline">Ask a question</a>
+  {% if feature_enabled("proposals") %}
+    <a href="/proposals" role="button" class="secondary">Review proposals</a>
+  {% endif %}
+  {% if feature_enabled("ask") %}
+    <a href="/ask" role="button" class="secondary outline">Ask a question</a>
+  {% endif %}
 </div>
 
 <section>
@@ -106,18 +110,20 @@
       </small>
     </article>
 
-    <article class="dash-card">
-      <header><strong>Proposals</strong></header>
-      <p class="dash-number" data-testid="proposals-total">
-        {{ summary.proposals.total }}
-      </p>
-      <small class="dash-breakdown">
-        PENDING: <strong data-testid="proposals-pending">{{ summary.proposals.PENDING }}</strong> &middot;
-        ACC: {{ summary.proposals.ACCEPTED }} &middot;
-        REJ: {{ summary.proposals.REJECTED }} &middot;
-        SUP: {{ summary.proposals.SUPERSEDED }}
-      </small>
-    </article>
+    {% if feature_enabled("proposals") %}
+      <article class="dash-card">
+        <header><strong>Proposals</strong></header>
+        <p class="dash-number" data-testid="proposals-total">
+          {{ summary.proposals.total }}
+        </p>
+        <small class="dash-breakdown">
+          PENDING: <strong data-testid="proposals-pending">{{ summary.proposals.PENDING }}</strong> &middot;
+          ACC: {{ summary.proposals.ACCEPTED }} &middot;
+          REJ: {{ summary.proposals.REJECTED }} &middot;
+          SUP: {{ summary.proposals.SUPERSEDED }}
+        </small>
+      </article>
+    {% endif %}
 
     <article class="dash-card">
       <header><strong>CRM</strong></header>
@@ -132,6 +138,7 @@
   </div>
 </section>
 
+{% if feature_enabled("proposals") %}
 <section>
   <h3>Pending proposals
     <small>(newest {{ pending|length }})</small>
@@ -171,4 +178,5 @@
     <p><em>No pending proposals — nothing awaiting review.</em></p>
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}

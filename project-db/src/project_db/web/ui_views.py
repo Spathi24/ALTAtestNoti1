@@ -31,6 +31,7 @@ from project_db.db.models import (
 from project_db.db.models.docs import DocumentText
 from project_db.db.models.proposals import ProposalStatus
 from project_db.db.models.work import ProjectStatus
+from project_db.features import feature_enabled
 
 
 def project_financials(session: Session, project_id: str) -> dict[str, Any] | None:
@@ -102,7 +103,35 @@ def attention_briefing(session: Session, *, limit: int = 25) -> dict[str, Any]:
     """
     from project_db.ai.views import report_attention_briefing
 
-    return report_attention_briefing(session, limit=limit)
+    out = report_attention_briefing(session, limit=limit)
+
+    hidden_categories = set()
+    if not feature_enabled("obligations"):
+        hidden_categories.add("commitments")
+    if not feature_enabled("finance_legacy"):
+        hidden_categories.add("money")
+
+    items = [it for it in out.get("items", []) if it.get("category") not in hidden_categories]
+    by_category: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    project_ids: set[str] = set()
+    for item in items:
+        category = item.get("category") or "unknown"
+        severity = item.get("severity") or "unknown"
+        by_category[category] = by_category.get(category, 0) + 1
+        by_severity[severity] = by_severity.get(severity, 0) + 1
+        if item.get("project_id"):
+            project_ids.add(str(item["project_id"]))
+
+    out = dict(out)
+    out["items"] = items[:limit]
+    out["item_count"] = len(items)
+    out["shown_count"] = min(len(items), limit)
+    out["truncated"] = len(items) > limit
+    out["project_count"] = len(project_ids)
+    out["by_category"] = by_category
+    out["by_severity"] = by_severity
+    return out
 
 
 def submit_field_note(
