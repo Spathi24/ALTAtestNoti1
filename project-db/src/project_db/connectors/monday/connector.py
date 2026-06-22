@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -976,6 +976,15 @@ class MondayConnector(BaseConnector):
         if fields.supplier:
             attrs["supplier"] = fields.supplier
 
+        # Capture the prior status BEFORE the upsert overwrites it, so we can
+        # detect a real transition into "done".  Monday tracks status but never
+        # records WHEN a task became done -- without this the weekly report's
+        # "tasks completed this week" signal is permanently empty.
+        prior = self.resolver.lookup_external(
+            source=self.source, entity_class=Task, external_key=str(item["id"])
+        )
+        prior_status = prior.status if prior is not None else None
+
         result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=str(item["id"]),
@@ -983,6 +992,23 @@ class MondayConnector(BaseConnector):
             entity_class=Task,
             attrs=attrs,
         )
+
+        # Completion timestamp (see above).  Three cases:
+        #  - Real transition INTO done -> stamp today (the date we first observed
+        #    it complete): the honest "what changed this week" signal.
+        #  - Already done before we tracked completion (completed_at still null)
+        #    but with a scheduled finish -> backfill from end_date so historical
+        #    completions aren't lost (end_date ~= actual for finished work).
+        #  - Moved back OUT of done -> clear the stale stamp.
+        task = result.entity
+        if task.status == TaskStatus.DONE:
+            if prior_status != TaskStatus.DONE:
+                task.completed_at = date.today()
+            elif task.completed_at is None and task.end_date is not None:
+                task.completed_at = task.end_date
+        elif task.completed_at is not None:
+            task.completed_at = None
+
         self._record_result(result.was_created, result.was_matched)
         return result.entity.canonical_id
 

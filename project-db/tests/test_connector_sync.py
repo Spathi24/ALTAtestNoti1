@@ -320,3 +320,122 @@ class TestSyncReport:
         assert "processed=5" in summary
         assert "created=3" in summary
         assert "matched=2" in summary
+
+
+class TestTaskCompletionTimestamp:
+    """Monday records task status but never WHEN a task became done. The
+    connector derives completed_at so the weekly report's 'tasks completed this
+    week' signal is not permanently empty (it was: 34 DONE tasks, 0 dated)."""
+
+    def _connector(self, session, org):
+        from project_db.connectors.monday import MondayConnector
+
+        with patch("project_db.connectors.monday.connector.MondayClient"):
+            return MondayConnector(session=session, organization_id=org.canonical_id)
+
+    def _fields(self, status, end_date=None):
+        from project_db.connectors.monday.column_extractor import ExtractedFields
+
+        return ExtractedFields(task_status=status, end_date=end_date)
+
+    def test_completed_at_stamped_on_transition_into_done(
+        self, session: Session, org, project_factory
+    ):
+        from datetime import date
+
+        from project_db.db.models import Task
+
+        conn = self._connector(session, org)
+        proj = project_factory(name="Alpha")
+        board = {"id": 1}
+        item = {"id": "t1", "name": "Pour slab", "group": {"title": "Site"}, "column_values": []}
+
+        # IN_PROGRESS -> no completion date yet
+        tid = conn._upsert_task(board, item, self._fields(TaskStatus.IN_PROGRESS), proj.canonical_id)
+        session.commit()
+        task = session.query(Task).filter_by(canonical_id=tid).one()
+        assert task.completed_at is None
+
+        # transitions to DONE -> stamped today (first observed complete)
+        conn._upsert_task(board, item, self._fields(TaskStatus.DONE), proj.canonical_id)
+        session.commit()
+        session.refresh(task)
+        assert task.completed_at == date.today()
+
+    def test_completed_at_preserved_while_still_done(self, session: Session, org, project_factory):
+        from datetime import date
+
+        from project_db.db.models import Task
+
+        conn = self._connector(session, org)
+        proj = project_factory(name="Bravo")
+        board = {"id": 1}
+        item = {"id": "t2", "name": "Frame walls", "column_values": []}
+
+        conn._upsert_task(board, item, self._fields(TaskStatus.DONE), proj.canonical_id)
+        session.commit()
+        task = session.query(Task).filter_by(canonical_id=item_uuid(session, "t2")).one()
+        # Pin to a past date, then re-sync still-DONE: must NOT be re-stamped.
+        task.completed_at = date(2026, 1, 1)
+        session.commit()
+        conn._upsert_task(board, item, self._fields(TaskStatus.DONE), proj.canonical_id)
+        session.commit()
+        session.refresh(task)
+        assert task.completed_at == date(2026, 1, 1)
+
+    def test_completed_at_cleared_when_reopened(self, session: Session, org, project_factory):
+        from project_db.db.models import Task
+
+        conn = self._connector(session, org)
+        proj = project_factory(name="Charlie")
+        board = {"id": 1}
+        item = {"id": "t3", "name": "Tiling", "column_values": []}
+
+        conn._upsert_task(board, item, self._fields(TaskStatus.DONE), proj.canonical_id)
+        session.commit()
+        task = session.query(Task).filter_by(canonical_id=item_uuid(session, "t3")).one()
+        assert task.completed_at is not None
+        # Reopened -> stale completion stamp cleared.
+        conn._upsert_task(board, item, self._fields(TaskStatus.TODO), proj.canonical_id)
+        session.commit()
+        session.refresh(task)
+        assert task.completed_at is None
+
+    def test_completed_at_backfilled_from_end_date(self, session: Session, org, project_factory):
+        from datetime import date
+
+        from project_db.db.models import Task
+
+        conn = self._connector(session, org)
+        proj = project_factory(name="Delta")
+        board = {"id": 1}
+        item = {"id": "t4", "name": "Plaster", "column_values": []}
+
+        # Create it DONE (stamps today), then simulate a pre-existing done task
+        # with no recorded completion but a known scheduled finish.
+        conn._upsert_task(board, item, self._fields(TaskStatus.DONE), proj.canonical_id)
+        session.commit()
+        task = session.query(Task).filter_by(canonical_id=item_uuid(session, "t4")).one()
+        task.completed_at = None
+        task.end_date = date(2026, 5, 1)
+        session.commit()
+
+        # Re-sync still-DONE with the end_date present -> backfilled from end_date.
+        conn._upsert_task(
+            board, item, self._fields(TaskStatus.DONE, end_date=date(2026, 5, 1)), proj.canonical_id
+        )
+        session.commit()
+        session.refresh(task)
+        assert task.completed_at == date(2026, 5, 1)
+
+
+def item_uuid(session, external_key):
+    """Resolve a Monday item's external_key to its canonical Task id (test helper)."""
+    from project_db.db.models import ExternalId
+
+    row = (
+        session.query(ExternalId)
+        .filter_by(source=SourceSystem.MONDAY, entity_type="Task", external_key=external_key)
+        .one()
+    )
+    return row.canonical_id

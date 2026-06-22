@@ -49,15 +49,39 @@ CLI: `weekly-changes [project] [--days N] [--narrate] [--sync]`
   (e.g. "[proposals] 10 opened, 10 accepted, 17 rejected") — the full proposals
   still go to the LLM; only the boss-facing print is summarized
 
-Known gaps a boss would notice (NOT yet built — see parked questions):
-- No money in the report (the owner's stated #1: Home Depot + labour overrun).
-  Docs like JOB COST / EXTERIOR QUOTE get named but not quantified — the
+**Task completion dates (fixed 2026-06-22):** Monday tracks status but never
+records WHEN a task became DONE — the live DB had 34 DONE tasks, 0 dated, so the
+report's "tasks completed this week" was permanently empty (the real cause of
+"nothing done last week", NOT the Drive timestamps, which are correct). The
+Monday connector (`_upsert_task`) now derives `completed_at`: today on a real
+transition into DONE (first-observed-complete), backfilled from `end_date` for
+tasks already DONE with a scheduled finish, cleared if reopened. After one live
+sync, 8/34 are dated (the rest have no Monday end_date → stay null, honestly
+undated until they next transition).
+
+Telegram generalization — NEXT BUILD (owner-directed, in progress):
+- Why: the bosses ARE the GDrive/Monday admins, so that data is low-marginal-
+  value. Field comms (Telegram) are the untapped signal — the best line in every
+  real report already comes from a field note.
+- Current Telegram system: every message is already captured raw in
+  `LabourSourceEvent` (real send time, sender, text) even for unbound senders
+  (quarantined); a bound-sender gate blocks processing; everything funnels to
+  LABOUR only; the weekly report reads `FieldNote`, NOT `LabourSourceEvent`, so
+  Telegram never reaches the report today.
+- Plan: strip the bound-sender gate (auto-ingest anyone); resolve project per
+  message via a RECENCY-WEIGHTED heuristic (most of sender's recent messages →
+  that project; PMs who switch constantly → general section / review); keep
+  labour as the specialized downstream; teach `report_weekly_changes` to read
+  `LabourSourceEvent` as a "communications" event source. No new tables.
+- Unresolved-project decision (owner): smart recency-weighted attribution;
+  fall back to a project-less "Site communications" section, not blind default.
+
+Other known gaps (NOT yet built):
+- No money in the report (owner's stated #1: Home Depot + labour overrun). The
   financial layer isn't portfolio-reliable enough to feed numbers in.
-- Comms capture (Telegram/WhatsApp) is the proven highest-signal source (the
-  best line in every real run comes from a field note) but ingestion is the
-  hard part: WhatsApp can't passively vacuum existing chats (Meta privacy);
-  Business API = paid + same friction that killed the Telegram bot. Decide the
-  platform/ingestion path BEFORE building.
+- Proposals appear in the timeline by AI-run time (created_at clusters on ~6
+  generation days), not the real-world event date — chronology is approximate
+  for proposals (docs/notes/task-completions are real).
 
 Documented limits: financial rows excluded (ledger rebuilt on each fill-ledger
 run → `created_at` is noisy); "newly filed but Drive-old" docs not caught
