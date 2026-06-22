@@ -458,37 +458,42 @@ def report_weekly_changes(
 ) -> dict[str, Any]:
     """Deterministic "what changed in the last ``since_days`` days", per project.
 
-    Facts only -- no LLM.  This is the delta the weekly report is built on:
-      - documents added or changed in Drive  (``Document.modified_at_source``)
-      - field notes received                 (``FieldNote.received_at``)
-      - proposals opened                     (``Proposal.created_at``)
-      - proposals decided                    (``Proposal.decided_at``)
-      - tasks completed                      (``Task.completed_at``)
+    Returns rich, content-complete data -- not just metadata -- so the narration
+    layer has real signal to write from:
 
-    ``FinancialLineItem`` rows are deliberately NOT a source: the ledger is
-    rebuilt via delete+insert (ledger-health replays the populator), so
-    ``created_at`` there means "last parsed", not "first seen" -- too noisy for
-    a report people are meant to trust.  Add it once financial rows carry a
-    stable first-seen stamp.
+      - Documents changed in Drive: includes ``DocumentText.extracted_text``
+        where available (cap 3 000 chars per doc).
+      - Field notes: full ``raw_text``, not a truncated excerpt.
+      - Proposals opened/decided: includes ``proposed_value`` (the actual
+        suggested date/amount/label) and confidence.
+      - Tasks completed: includes all schedule fields (start, end, due, group,
+        subcontractor).
+      - ``events``: every item above merged into one chronological list so the
+        AI can read the timeline in order.
+      - ``prior_window``: change counts for the *previous* ``since_days`` period
+        so the AI can report trajectory ("3 tasks done this week vs 7 last week").
 
-    Proposals have no ``project_id`` (they are polymorphic); they are attributed
-    via ``entity_type == "Project"`` -> ``entity_id`` or
-    ``entity_type == "Task"`` -> the task's ``project_id``.  Proposals targeting
-    other entity types are skipped.
+    ``FinancialLineItem`` is deliberately excluded: the ledger is delete+inserted
+    on every fill-ledger run, so ``created_at`` means "last parsed", not "first
+    seen".  Add it once rows carry a stable first-seen stamp.
 
-    With ``project_ref`` only that project is returned -- shown even with zero
-    changes, so the reader sees "nothing moved" rather than a blank.  Without it,
-    only projects that actually changed appear, ranked by change volume.
+    Proposals have no ``project_id``; they are attributed via
+    ``entity_type == "Project"`` -> ``entity_id`` or
+    ``entity_type == "Task"`` -> the task's ``project_id``.  Other entity types
+    are skipped.
     """
     from datetime import datetime as _dt
 
+    from project_db.db.models.docs import DocumentText
     from project_db.db.models.field_notes import FieldNote
     from project_db.db.models.proposals import Proposal
 
     now = now or _dt.utcnow()
     window_start = now - timedelta(days=since_days)
+    prior_start = window_start - timedelta(days=since_days)
     start_date = window_start.date()
     end_date = now.date()
+    prior_start_date = prior_start.date()
 
     target: Project | None = None
     if project_ref:
@@ -497,7 +502,10 @@ def report_weekly_changes(
             return {"error": f"no project matched {project_ref!r}"}
     target_id = target.canonical_id if target else None
 
-    buckets: dict[Any, dict[str, list]] = {}
+    # _EPOCH is used to sort Date-only task events alongside DateTime events.
+    _EPOCH = _dt(1970, 1, 1)
+
+    buckets: dict[Any, dict[str, Any]] = {}
 
     def _bucket(pid):
         if pid is None:
@@ -509,11 +517,12 @@ def report_weekly_changes(
                 "proposals_opened": [],
                 "proposals_decided": [],
                 "tasks_completed": [],
+                "_events_raw": [],  # (sortable_datetime, event_dict) -- removed before output
             }
         return buckets[pid]
 
     if target_id is not None:
-        _bucket(target_id)  # the requested project always appears
+        _bucket(target_id)
 
     # --- Documents touched in Drive within the window ---
     doc_q = session.query(Document).filter(
@@ -525,37 +534,67 @@ def report_weekly_changes(
     )
     if target_id is not None:
         doc_q = doc_q.filter(Document.project_id == target_id)
-    for d in doc_q.all():
-        b = _bucket(d.project_id)
-        if b is not None:
-            b["documents"].append(
-                {
-                    "name": d.name,
-                    "mime_type": d.mime_type,
-                    "folder_path": d.folder_path,
-                    "url": d.url,
-                    "modified_at_source": _ser(d.modified_at_source),
-                }
-            )
+    docs_in_window = doc_q.all()
 
-    # --- Field notes received within the window ---
+    # Bulk-fetch extracted text for all in-window docs (one query, not N).
+    doc_ids_in_window = [d.canonical_id for d in docs_in_window]
+    doc_text_map: dict[Any, str] = {}
+    if doc_ids_in_window:
+        for dt_row in (
+            session.query(DocumentText)
+            .filter(
+                DocumentText.document_id.in_(doc_ids_in_window),
+                ~DocumentText.extraction_method.like("skipped-%"),
+            )
+            .all()
+        ):
+            if dt_row.extracted_text:
+                doc_text_map[dt_row.document_id] = dt_row.extracted_text
+
+    _DOC_CONTENT_CAP = 3000
+    for d in docs_in_window:
+        b = _bucket(d.project_id)
+        if b is None:
+            continue
+        content = doc_text_map.get(d.canonical_id)
+        doc_entry = {
+            "name": d.name,
+            "mime_type": d.mime_type,
+            "folder_path": d.folder_path,
+            "url": d.url,
+            "modified_at_source": _ser(d.modified_at_source),
+            "content": content[:_DOC_CONTENT_CAP] if content else None,
+            "content_available": content is not None,
+        }
+        b["documents"].append(doc_entry)
+        b["_events_raw"].append((
+            d.modified_at_source,
+            {"timestamp": _ser(d.modified_at_source), "type": "document_updated", **doc_entry},
+        ))
+
+    # --- Field notes received within the window (full raw text) ---
     note_q = session.query(FieldNote).filter(
         FieldNote.received_at >= window_start,
         FieldNote.received_at <= now,
     )
     if target_id is not None:
         note_q = note_q.filter(FieldNote.project_id == target_id)
+    _NOTE_TEXT_CAP = 2000
     for n in note_q.all():
         b = _bucket(n.project_id)
-        if b is not None:
-            excerpt = n.quoted_excerpt or (n.raw_text or "")
-            b["field_notes"].append(
-                {
-                    "received_at": _ser(n.received_at),
-                    "classification": _ser(n.classification),
-                    "excerpt": excerpt[:200],
-                }
-            )
+        if b is None:
+            continue
+        text = (n.raw_text or n.quoted_excerpt or "")[:_NOTE_TEXT_CAP]
+        note_entry = {
+            "received_at": _ser(n.received_at),
+            "classification": _ser(n.classification),
+            "text": text,
+        }
+        b["field_notes"].append(note_entry)
+        b["_events_raw"].append((
+            n.received_at,
+            {"timestamp": _ser(n.received_at), "type": "field_note", **note_entry},
+        ))
 
     # --- Proposals opened / decided within the window ---
     opened = (
@@ -595,36 +634,53 @@ def report_weekly_changes(
             return task_project.get(prop.entity_id)
         return None
 
+    def _parse_proposed_value(raw: str) -> Any:
+        import json as _j
+        try:
+            return _j.loads(raw)
+        except Exception:
+            return raw
+
     for p in opened:
         pid = _proposal_pid(p)
         if target_id is not None and pid != target_id:
             continue
         b = _bucket(pid)
-        if b is not None:
-            b["proposals_opened"].append(
-                {
-                    "entity_type": p.entity_type,
-                    "field_name": p.field_name,
-                    "status": _ser(p.status),
-                    "confidence": _ser(p.confidence),
-                    "created_at": _ser(p.created_at),
-                }
-            )
+        if b is None:
+            continue
+        entry = {
+            "entity_type": p.entity_type,
+            "field_name": p.field_name,
+            "proposed_value": _parse_proposed_value(p.proposed_value),
+            "status": _ser(p.status),
+            "confidence": _ser(p.confidence),
+            "created_at": _ser(p.created_at),
+        }
+        b["proposals_opened"].append(entry)
+        b["_events_raw"].append((
+            p.created_at,
+            {"timestamp": _ser(p.created_at), "type": "proposal_opened", **entry},
+        ))
 
     for p in decided:
         pid = _proposal_pid(p)
         if target_id is not None and pid != target_id:
             continue
         b = _bucket(pid)
-        if b is not None:
-            b["proposals_decided"].append(
-                {
-                    "entity_type": p.entity_type,
-                    "field_name": p.field_name,
-                    "status": _ser(p.status),
-                    "decided_at": _ser(p.decided_at),
-                }
-            )
+        if b is None:
+            continue
+        entry = {
+            "entity_type": p.entity_type,
+            "field_name": p.field_name,
+            "proposed_value": _parse_proposed_value(p.proposed_value),
+            "status": _ser(p.status),
+            "decided_at": _ser(p.decided_at),
+        }
+        b["proposals_decided"].append(entry)
+        b["_events_raw"].append((
+            p.decided_at,
+            {"timestamp": _ser(p.decided_at), "type": "proposal_decided", **entry},
+        ))
 
     # --- Tasks completed within the window (completed_at is a Date) ---
     task_q = session.query(Task).filter(
@@ -636,23 +692,84 @@ def report_weekly_changes(
         task_q = task_q.filter(Task.project_id == target_id)
     for t in task_q.all():
         b = _bucket(t.project_id)
-        if b is not None:
-            b["tasks_completed"].append(
-                {"title": t.title, "completed_at": _ser(t.completed_at)}
-            )
+        if b is None:
+            continue
+        # Convert Date to a sortable datetime (midnight UTC) for the events list.
+        sort_dt = _dt.combine(t.completed_at, _dt.min.time()) if t.completed_at else _EPOCH
+        entry = {
+            "title": t.title,
+            "completed_at": _ser(t.completed_at),
+            "start_date": _ser(t.start_date),
+            "end_date": _ser(t.end_date),
+            "due_date": _ser(t.due_date),
+            "status": _ser(t.status),
+            "group": t.group_title,
+            "subcontractor": t.subcontractor,
+        }
+        b["tasks_completed"].append(entry)
+        b["_events_raw"].append((
+            sort_dt,
+            {"timestamp": _ser(t.completed_at), "type": "task_completed", **entry},
+        ))
 
-    # --- Assemble, attaching project identity ---
+    # --- Prior-window counts (no content -- just trajectory signal) ---
+    def _prior_counts(pids_list: list[Any]) -> dict[Any, dict[str, int]]:
+        """Return {project_id: {docs, notes, proposals, tasks}} for the prior window."""
+        counts: dict[Any, dict[str, int]] = {
+            pid: {"docs": 0, "notes": 0, "proposals_opened": 0, "tasks_completed": 0}
+            for pid in pids_list
+        }
+        if not pids_list:
+            return counts
+        for d in session.query(Document).filter(
+            Document.project_id.in_(pids_list),
+            Document.is_trashed.is_(False),
+            Document.modified_at_source >= prior_start,
+            Document.modified_at_source < window_start,
+        ).all():
+            if d.project_id in counts:
+                counts[d.project_id]["docs"] += 1
+        for n in session.query(FieldNote).filter(
+            FieldNote.project_id.in_(pids_list),
+            FieldNote.received_at >= prior_start,
+            FieldNote.received_at < window_start,
+        ).all():
+            if n.project_id in counts:
+                counts[n.project_id]["notes"] += 1
+        # Prior proposals are harder (polymorphic), so we include a simple opened count.
+        for p in session.query(Proposal).filter(
+            Proposal.created_at >= prior_start,
+            Proposal.created_at < window_start,
+        ).all():
+            ppid = _proposal_pid(p)
+            if ppid in counts:
+                counts[ppid]["proposals_opened"] += 1
+        for t in session.query(Task).filter(
+            Task.project_id.in_(pids_list),
+            Task.completed_at.isnot(None),
+            Task.completed_at >= prior_start_date,
+            Task.completed_at < start_date,
+        ).all():
+            if t.project_id in counts:
+                counts[t.project_id]["tasks_completed"] += 1
+        return counts
+
+    # --- Assemble output ---
     pids = list(buckets.keys())
     name_map: dict[Any, Project] = {}
     if pids:
         for proj in session.query(Project).filter(Project.canonical_id.in_(pids)).all():
             name_map[proj.canonical_id] = proj
 
+    prior = _prior_counts(pids)
+
     projects_out: list[dict[str, Any]] = []
     for pid, bucket in buckets.items():
+        events_raw = bucket.pop("_events_raw")
         change_count = sum(len(v) for v in bucket.values())
         if change_count == 0 and target_id is None:
-            continue  # all-projects view: only show what moved
+            continue
+        events_sorted = [ev for _, ev in sorted(events_raw, key=lambda x: x[0])]
         proj = name_map.get(pid)
         projects_out.append(
             {
@@ -660,6 +777,8 @@ def report_weekly_changes(
                 "name": proj.name if proj else None,
                 "code": proj.code if proj else None,
                 "change_count": change_count,
+                "events": events_sorted,
+                "prior_window": prior.get(pid, {}),
                 **bucket,
             }
         )
@@ -684,19 +803,15 @@ def narrate_weekly_report(
     since_days: int = 7,
     now: "datetime | None" = None,
 ) -> dict[str, Any]:
-    """Add a short LLM narrative to each project in the weekly delta.
+    """Produce a full project report by feeding the enriched delta to the LLM.
 
-    Calls ``report_weekly_changes`` for the deterministic facts, then asks the
-    provider to write 2-4 prose sentences per project: what moved, what to act
-    on.  Projects with zero changes get a hard-coded "nothing moved" line --
-    no LLM call, because the model would just hallucinate filler.
+    Calls ``report_weekly_changes`` (which now carries document content, full
+    field-note text, and proposed values) and passes the chronological ``events``
+    list to the provider so it can write a real narrative -- not a metadata
+    summary -- for each project.
 
-    The return shape mirrors ``report_weekly_changes`` with a ``narrative`` key
-    added to each project dict.  Errors (unknown project, etc.) pass through
-    unchanged.
-
-    Safe to call with ``MockLLMProvider`` in tests -- zero token cost, zero
-    network calls.
+    Projects with zero changes get a hard-coded "nothing moved" line (no LLM
+    call).  Errors pass through unchanged.  Safe with ``MockLLMProvider``.
     """
     import json as _json
 
@@ -707,12 +822,21 @@ def narrate_weekly_report(
         return data
 
     _SYSTEM = (
-        "You write concise weekly project updates for a construction company. "
-        "You receive structured facts about one project for the past week. "
-        "Write 2-4 plain-prose sentences: "
-        "(1) what actually moved -- name specific documents, tasks, or field notes by title; "
-        "(2) anything worth acting on (pending proposals, key milestones just completed, etc.). "
-        "Do not invent anything not present in the facts. No bullet points. No headers."
+        "You are a project reporting assistant for a construction company. "
+        "You receive a JSON object describing everything that happened on one "
+        "construction project in the past week, in chronological order. "
+        "The data includes the full text of any changed documents (where "
+        "available), complete field notes, proposed schedule/scope changes, "
+        "and task completions. "
+        "Write a concise but complete project status report: "
+        "- What was accomplished this week (name specific deliverables and tasks). "
+        "- What the field notes say is happening on site. "
+        "- Any schedule or scope proposals that need a decision. "
+        "- Trajectory compared to last week (prior_window counts are provided). "
+        "- What needs attention or follow-up. "
+        "Write in plain prose paragraphs (no bullet lists, no headers). "
+        "Cite document names, task titles, and field-note content by name. "
+        "Do not invent anything not present in the data."
     )
 
     for proj in data["projects"]:
@@ -720,20 +844,17 @@ def narrate_weekly_report(
             proj["narrative"] = f"No new activity was recorded for {proj['name']} this week."
             continue
 
-        facts = {
+        context = {
             "project": proj["name"],
             "window_days": since_days,
-            "documents_changed": proj["documents"],
-            "field_notes": proj["field_notes"],
-            "proposals_opened": proj["proposals_opened"],
-            "proposals_decided": proj["proposals_decided"],
-            "tasks_completed": proj["tasks_completed"],
+            "prior_week": proj.get("prior_window", {}),
+            "events": proj["events"],  # chronological -- this is the primary signal
         }
         resp = provider.complete(
-            messages=[LLMMessage(role="user", content=_json.dumps(facts, indent=2))],
+            messages=[LLMMessage(role="user", content=_json.dumps(context, indent=2))],
             system=_SYSTEM,
             temperature=0.2,
-            max_tokens=300,
+            max_tokens=2000,
         )
         proj["narrative"] = resp.content.strip()
 

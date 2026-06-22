@@ -22,15 +22,30 @@ reset, the feature-flag quarantine, and weekly-report build #1 are committed.
 
 **Tests:** see the top of CHANGELOG (1394 passing as last recorded).
 
-**Active build — weekly report:** `report_weekly_changes` in `ai/views.py`
-(+ `weekly-changes` CLI) is the facts-only foundation: per project, what
-changed in the last N days — docs changed in Drive (`modified_at_source`), field
-notes received, proposals opened/decided, tasks completed. Documented limits:
-financial rows excluded (ledger rebuilt via delete+insert → noisy `created_at`);
-"newly filed but Drive-old" docs not caught (`created_at` is wipe-conflated, so
-only `modified_at_source` is used); all proposal statuses shown. Next slice:
-LLM narration (facts → readable weekly summary), built/tested on the mock
-provider so development costs no tokens.
+**Active build — weekly report:** Both layers complete and tested.
+
+`report_weekly_changes` (`ai/views.py`) — content-complete deterministic delta:
+- Documents: `DocumentText.extracted_text` included (3 000-char cap per doc)
+- Field notes: full `raw_text` (was truncated to 200 chars)
+- Proposals: `proposed_value` parsed from JSON (the actual suggested value)
+- Tasks: all schedule fields (start/end/due, group, subcontractor)
+- `events`: all items merged into one chronological list per project
+- `prior_window`: counts from the previous N days for trajectory context
+
+`narrate_weekly_report` (`ai/views.py`) — LLM narration using the events list:
+- Passes the chronological `events` list (not separate lists) to the provider
+- Includes `prior_week` counts for trajectory narrative
+- 2 000-token budget (was 300 -- that was a metadata stub, not a report)
+- Zero-change projects get hard-coded text, no LLM call
+
+CLI: `weekly-changes [project] [--days N] [--narrate] [--sync]`
+- `--narrate`: calls fast provider (OpenAI currently, Anthropic when credits available)
+- `--sync`: runs Drive + Monday connector sync first so data is current
+
+Documented limits: financial rows excluded (ledger rebuilt on each fill-ledger
+run → `created_at` is noisy); "newly filed but Drive-old" docs not caught
+(only `modified_at_source` used, which is wipe-proof); prior-window counts for
+proposals are approximate (polymorphic attribution at prior-window time).
 
 ---
 

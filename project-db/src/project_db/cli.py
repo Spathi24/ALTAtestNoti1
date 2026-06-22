@@ -816,17 +816,48 @@ def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sync_sources(sources: tuple[str, ...]) -> bool:
+    """Programmatically run connector syncs.  Returns False on hard failure."""
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+    with session_scope() as s:
+        org = s.query(Organization).first()
+        if org is None:
+            print("FAIL: no organization found -- run init-db first.", file=sys.stderr)
+            return False
+        for src_name in sources:
+            try:
+                src = SourceSystem[src_name.upper()]
+                cls = get_connector_class(src)
+            except (KeyError, NotImplementedError) as exc:
+                print(f"  WARN: skipping {src_name}: {exc}", file=sys.stderr)
+                continue
+            connector = cls(session=s, organization_id=org.canonical_id)
+            report = connector.sync()
+            print(f"  sync {src_name}: {report.summary()}")
+    return True
+
+
 def cmd_weekly_changes(args: argparse.Namespace) -> int:
     """What changed per project in the last N days.
 
     Without --narrate: facts only (no LLM, zero cost).
-    With    --narrate: adds a 2-4 sentence prose summary per project.
+    With    --narrate: adds a detailed prose report per project.
+    With    --sync:    runs Drive + Monday connector sync first so data is fresh.
     """
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
 
     narrate = getattr(args, "narrate", False)
+    do_sync = getattr(args, "sync", False)
+
+    if do_sync:
+        print("Syncing Drive and Monday before computing delta...")
+        if not _sync_sources(("drive", "monday")):
+            return 2
+        print()
 
     if narrate:
         from project_db.ai.providers import get_fast_provider
@@ -3206,7 +3237,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--narrate",
         action="store_true",
         default=False,
-        help="Add a short LLM prose summary per project (uses the fast provider)",
+        help="Add a detailed LLM prose report per project (uses the fast provider)",
+    )
+    wc.add_argument(
+        "--sync",
+        action="store_true",
+        default=False,
+        help="Run Drive + Monday sync before computing the delta (requires credentials)",
     )
     wc.set_defaults(func=cmd_weekly_changes)
 
