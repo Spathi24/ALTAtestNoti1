@@ -449,6 +449,233 @@ def report_missing_documents(session: Session) -> dict[str, Any]:
     }
 
 
+def report_weekly_changes(
+    session: Session,
+    project_ref: str | None = None,
+    *,
+    since_days: int = 7,
+    now: "datetime | None" = None,
+) -> dict[str, Any]:
+    """Deterministic "what changed in the last ``since_days`` days", per project.
+
+    Facts only -- no LLM.  This is the delta the weekly report is built on:
+      - documents added or changed in Drive  (``Document.modified_at_source``)
+      - field notes received                 (``FieldNote.received_at``)
+      - proposals opened                     (``Proposal.created_at``)
+      - proposals decided                    (``Proposal.decided_at``)
+      - tasks completed                      (``Task.completed_at``)
+
+    ``FinancialLineItem`` rows are deliberately NOT a source: the ledger is
+    rebuilt via delete+insert (ledger-health replays the populator), so
+    ``created_at`` there means "last parsed", not "first seen" -- too noisy for
+    a report people are meant to trust.  Add it once financial rows carry a
+    stable first-seen stamp.
+
+    Proposals have no ``project_id`` (they are polymorphic); they are attributed
+    via ``entity_type == "Project"`` -> ``entity_id`` or
+    ``entity_type == "Task"`` -> the task's ``project_id``.  Proposals targeting
+    other entity types are skipped.
+
+    With ``project_ref`` only that project is returned -- shown even with zero
+    changes, so the reader sees "nothing moved" rather than a blank.  Without it,
+    only projects that actually changed appear, ranked by change volume.
+    """
+    from datetime import datetime as _dt
+
+    from project_db.db.models.field_notes import FieldNote
+    from project_db.db.models.proposals import Proposal
+
+    now = now or _dt.utcnow()
+    window_start = now - timedelta(days=since_days)
+    start_date = window_start.date()
+    end_date = now.date()
+
+    target: Project | None = None
+    if project_ref:
+        target = _resolve_project(session, project_ref)
+        if target is None:
+            return {"error": f"no project matched {project_ref!r}"}
+    target_id = target.canonical_id if target else None
+
+    buckets: dict[Any, dict[str, list]] = {}
+
+    def _bucket(pid):
+        if pid is None:
+            return None
+        if pid not in buckets:
+            buckets[pid] = {
+                "documents": [],
+                "field_notes": [],
+                "proposals_opened": [],
+                "proposals_decided": [],
+                "tasks_completed": [],
+            }
+        return buckets[pid]
+
+    if target_id is not None:
+        _bucket(target_id)  # the requested project always appears
+
+    # --- Documents touched in Drive within the window ---
+    doc_q = session.query(Document).filter(
+        Document.project_id.isnot(None),
+        Document.is_trashed.is_(False),
+        Document.modified_at_source.isnot(None),
+        Document.modified_at_source >= window_start,
+        Document.modified_at_source <= now,
+    )
+    if target_id is not None:
+        doc_q = doc_q.filter(Document.project_id == target_id)
+    for d in doc_q.all():
+        b = _bucket(d.project_id)
+        if b is not None:
+            b["documents"].append(
+                {
+                    "name": d.name,
+                    "mime_type": d.mime_type,
+                    "folder_path": d.folder_path,
+                    "url": d.url,
+                    "modified_at_source": _ser(d.modified_at_source),
+                }
+            )
+
+    # --- Field notes received within the window ---
+    note_q = session.query(FieldNote).filter(
+        FieldNote.received_at >= window_start,
+        FieldNote.received_at <= now,
+    )
+    if target_id is not None:
+        note_q = note_q.filter(FieldNote.project_id == target_id)
+    for n in note_q.all():
+        b = _bucket(n.project_id)
+        if b is not None:
+            excerpt = n.quoted_excerpt or (n.raw_text or "")
+            b["field_notes"].append(
+                {
+                    "received_at": _ser(n.received_at),
+                    "classification": _ser(n.classification),
+                    "excerpt": excerpt[:200],
+                }
+            )
+
+    # --- Proposals opened / decided within the window ---
+    opened = (
+        session.query(Proposal)
+        .filter(Proposal.created_at >= window_start, Proposal.created_at <= now)
+        .all()
+    )
+    decided = (
+        session.query(Proposal)
+        .filter(
+            Proposal.decided_at.isnot(None),
+            Proposal.decided_at >= window_start,
+            Proposal.decided_at <= now,
+        )
+        .all()
+    )
+
+    # Resolve Task-targeted proposals to their project in one query.
+    task_ids = {
+        p.entity_id
+        for p in (opened + decided)
+        if p.entity_type == "Task" and p.entity_id is not None
+    }
+    task_project: dict[Any, Any] = {}
+    if task_ids:
+        for tid, pid in (
+            session.query(Task.canonical_id, Task.project_id)
+            .filter(Task.canonical_id.in_(task_ids))
+            .all()
+        ):
+            task_project[tid] = pid
+
+    def _proposal_pid(prop):
+        if prop.entity_type == "Project":
+            return prop.entity_id
+        if prop.entity_type == "Task":
+            return task_project.get(prop.entity_id)
+        return None
+
+    for p in opened:
+        pid = _proposal_pid(p)
+        if target_id is not None and pid != target_id:
+            continue
+        b = _bucket(pid)
+        if b is not None:
+            b["proposals_opened"].append(
+                {
+                    "entity_type": p.entity_type,
+                    "field_name": p.field_name,
+                    "status": _ser(p.status),
+                    "confidence": _ser(p.confidence),
+                    "created_at": _ser(p.created_at),
+                }
+            )
+
+    for p in decided:
+        pid = _proposal_pid(p)
+        if target_id is not None and pid != target_id:
+            continue
+        b = _bucket(pid)
+        if b is not None:
+            b["proposals_decided"].append(
+                {
+                    "entity_type": p.entity_type,
+                    "field_name": p.field_name,
+                    "status": _ser(p.status),
+                    "decided_at": _ser(p.decided_at),
+                }
+            )
+
+    # --- Tasks completed within the window (completed_at is a Date) ---
+    task_q = session.query(Task).filter(
+        Task.completed_at.isnot(None),
+        Task.completed_at >= start_date,
+        Task.completed_at <= end_date,
+    )
+    if target_id is not None:
+        task_q = task_q.filter(Task.project_id == target_id)
+    for t in task_q.all():
+        b = _bucket(t.project_id)
+        if b is not None:
+            b["tasks_completed"].append(
+                {"title": t.title, "completed_at": _ser(t.completed_at)}
+            )
+
+    # --- Assemble, attaching project identity ---
+    pids = list(buckets.keys())
+    name_map: dict[Any, Project] = {}
+    if pids:
+        for proj in session.query(Project).filter(Project.canonical_id.in_(pids)).all():
+            name_map[proj.canonical_id] = proj
+
+    projects_out: list[dict[str, Any]] = []
+    for pid, bucket in buckets.items():
+        change_count = sum(len(v) for v in bucket.values())
+        if change_count == 0 and target_id is None:
+            continue  # all-projects view: only show what moved
+        proj = name_map.get(pid)
+        projects_out.append(
+            {
+                "canonical_id": _ser(pid),
+                "name": proj.name if proj else None,
+                "code": proj.code if proj else None,
+                "change_count": change_count,
+                **bucket,
+            }
+        )
+
+    projects_out.sort(key=lambda r: (-r["change_count"], (r["name"] or "")))
+
+    return {
+        "since_days": since_days,
+        "window_start": _ser(window_start),
+        "window_end": _ser(now),
+        "project_count": len(projects_out),
+        "total_changes": sum(r["change_count"] for r in projects_out),
+        "projects": projects_out,
+    }
+
+
 # Picks up "$123,456.78" / "$123,456" / "$123.45" (with optional decimals + commas).
 _MONEY_RE = _re.compile(r"\$\s?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?")
 
