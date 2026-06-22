@@ -816,26 +816,68 @@ def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sync_sources(sources: tuple[str, ...]) -> bool:
-    """Programmatically run connector syncs.  Returns False on hard failure."""
+def _sync_one_source(src_name: str) -> bool:
+    """Sync a single named source.  Handles Drive auth errors inline.
+
+    Returns True on success or graceful skip, False on hard failure.
+    ``src_name`` must match a SourceSystem enum key (case-insensitive).
+    """
     engine = get_engine()
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
-    with session_scope() as s:
-        org = s.query(Organization).first()
-        if org is None:
-            print("FAIL: no organization found -- run init-db first.", file=sys.stderr)
-            return False
-        for src_name in sources:
-            try:
-                src = SourceSystem[src_name.upper()]
-                cls = get_connector_class(src)
-            except (KeyError, NotImplementedError) as exc:
-                print(f"  WARN: skipping {src_name}: {exc}", file=sys.stderr)
-                continue
+
+    try:
+        src = SourceSystem[src_name.upper()]
+        cls = get_connector_class(src)
+    except (KeyError, NotImplementedError) as exc:
+        print(f"  WARN: skipping {src_name}: {exc}", file=sys.stderr)
+        return True  # not a hard failure -- just an unconfigured source
+
+    def _attempt() -> str:
+        """Run the sync in its own session and return the summary line."""
+        with session_scope() as s:
+            org = s.query(Organization).first()
+            if org is None:
+                raise RuntimeError("no organization found -- run init-db first")
             connector = cls(session=s, organization_id=org.canonical_id)
             report = connector.sync()
-            print(f"  sync {src_name}: {report.summary()}")
+            return report.summary()
+
+    try:
+        summary = _attempt()
+        print(f"  sync {src_name}: {summary}")
+        return True
+    except RuntimeError as exc:
+        msg = str(exc)
+        # Drive auth error: token missing or expired.  Launch the OAuth flow
+        # inline so the user doesn't have to run a second command.
+        if "gdrive-auth" in msg or "No valid Google Drive token" in msg:
+            print(
+                "\n  Drive auth token is missing or expired. "
+                "Launching the OAuth flow now -- a browser window will open.\n"
+            )
+            import argparse as _ap
+            rc = cmd_gdrive_auth(_ap.Namespace())
+            if rc != 0:
+                print("  WARN: auth not completed -- Drive sync skipped.", file=sys.stderr)
+                return True  # soft skip, not a fatal error for the overall report
+            print("\n  Auth done. Retrying Drive sync...")
+            try:
+                summary = _attempt()
+                print(f"  sync {src_name}: {summary}")
+                return True
+            except RuntimeError as exc2:
+                print(f"  WARN: Drive sync still failed after auth: {exc2}", file=sys.stderr)
+                return True
+        print(f"  WARN: {src_name} sync error: {exc}", file=sys.stderr)
+        return True  # don't block the rest of the report on a sync failure
+
+
+def _sync_sources(sources: tuple[str, ...]) -> bool:
+    """Sync each named source in order.  Returns False only on a hard pre-flight failure."""
+    for src_name in sources:
+        if not _sync_one_source(src_name):
+            return False
     return True
 
 
@@ -855,7 +897,7 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
 
     if do_sync:
         print("Syncing Drive and Monday before computing delta...")
-        if not _sync_sources(("drive", "monday")):
+        if not _sync_sources(("google_drive", "monday")):
             return 2
         print()
 
@@ -898,7 +940,7 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
             print(f"  [doc]      {d['modified_at_source'][:10]}  {d['name']}")
         for n in proj["field_notes"]:
             cls = n["classification"] or "note"
-            print(f"  [note]     {n['received_at'][:10]}  {cls}: {n['excerpt'][:80]}")
+            print(f"  [note]     {n['received_at'][:10]}  {cls}: {n['text'][:80]}")
         for p in proj["proposals_opened"]:
             print(
                 f"  [proposal] {p['created_at'][:10]}  opened "
