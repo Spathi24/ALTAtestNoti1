@@ -141,9 +141,10 @@ class TestCliListSources:
 
 
 class TestCliFeatureGuards:
-    def test_quarantined_command_is_blocked_by_default(self, capsys):
+    def test_quarantined_command_is_blocked_by_default(self, monkeypatch, capsys):
         from project_db.cli import main
 
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROJECT_LOGS", "false")
         result = main(["project-logs", "Rockland"])
 
         err = capsys.readouterr().err
@@ -169,6 +170,7 @@ class TestCliFeatureGuards:
     def test_daily_read_only_allowed_but_propose_timelines_quarantined(self, monkeypatch, capsys):
         import project_db.cli as cli
 
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROPOSAL_GENERATION", "false")
         monkeypatch.setattr(cli, "cmd_daily", lambda args: 0)
 
         assert cli.main(["daily", "Rockland"]) == 0

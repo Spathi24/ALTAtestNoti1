@@ -169,7 +169,8 @@ class TestLedgerHealthPage:
 
 
 class TestLabourPage:
-    def test_disabled_by_default(self, client, margin_project):
+    def test_disabled_when_feature_off(self, client, margin_project, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_LABOUR_INTAKE", "false")
         r = client.get(f"/projects/{margin_project.canonical_id}/labour")
         assert r.status_code == 404
 
@@ -192,4 +193,4 @@ class TestNavLinks:
         assert f"/projects/{margin_project.canonical_id}/margins" in body
         assert f"/projects/{margin_project.canonical_id}/ledger-health" in body
         assert f"/projects/{margin_project.canonical_id}/financials" not in body
-        assert f"/projects/{margin_project.canonical_id}/labour" not in body
+        assert f"/projects/{margin_project.canonical_id}/labour" in body

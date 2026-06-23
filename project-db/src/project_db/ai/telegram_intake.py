@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import uuid
 from dataclasses import dataclass, field
@@ -189,8 +190,16 @@ def _attribute_project(
         frag = text.lower()
         for p in session.query(Project).filter(Project.name.isnot(None)).all():
             pname = (p.name or "").lower().strip()
-            if pname and pname in frag:
+            if not pname:
+                continue
+            # Full name match (highest confidence).
+            if pname in frag:
                 return p.canonical_id, "text_match", 0.9
+            # Word-token match: e.g. "Rockland" from "923-927 Rockland" (address-format names).
+            for token in re.split(r"[\s\-/]+", pname):
+                token = token.strip(".,:()")
+                if len(token) >= 4 and re.search(r"\b" + re.escape(token) + r"\b", frag):
+                    return p.canonical_id, "text_match_word", 0.75
 
     # 2) Bound worker's default project.
     if worker is not None and getattr(worker, "default_project_id", None):
@@ -232,7 +241,7 @@ def poll_telegram(
     client: BaseTelegramClient,
     extractor: TelegramLabourExtractor | None = None,
     *,
-    general_intake: bool = False,
+    general_intake: bool = True,
 ) -> TelegramPollBatch:
     """One-shot poll: fetch new updates and process each. Mirrors poll_mailbox.
 

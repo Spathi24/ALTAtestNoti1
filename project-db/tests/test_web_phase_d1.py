@@ -622,7 +622,8 @@ class TestProjectDetailTasksPanel:
         # The single seeded task is dateless -> pill should render
         assert "dateless" in resp.text.lower()
 
-    def test_tasks_panel_hides_edit_buttons_by_default(self, client, world):
+    def test_tasks_panel_hides_edit_buttons_when_feature_off(self, client, world, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_TASK_DATE_EDIT", "false")
         pid = str(world["project"].canonical_id)
         resp = client.get(f"/projects/{pid}")
         tid = str(world["task"].canonical_id)
@@ -637,12 +638,14 @@ class TestProjectDetailTasksPanel:
 
 
 class TestQuarantinedRoutesDefault:
-    def test_proposal_generation_disabled_by_default(self, client, world):
+    def test_proposal_generation_blocked_when_feature_off(self, client, world, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_PROPOSAL_GENERATION", "false")
         pid = str(world["project"].canonical_id)
         resp = client.post(f"/projects/{pid}/propose/timelines")
         assert resp.status_code == 404
 
-    def test_task_date_edit_disabled_by_default(self, client, world):
+    def test_task_date_edit_blocked_when_feature_off(self, client, world, monkeypatch):
+        monkeypatch.setenv("PROJECT_DB_FEATURE_TASK_DATE_EDIT", "false")
         tid = str(world["task"].canonical_id)
         resp = client.get(f"/tasks/{tid}/dates-form")
         assert resp.status_code == 404

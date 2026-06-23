@@ -224,7 +224,9 @@ class TestFreeTextIntake:
     def test_unbound_sender_quarantined(self, db_session):
         _project(db_session)
         client = MockTelegramClient([_update(1, "worked rockland 8h", from_id=777)])
-        batch = poll_telegram(db_session, client, MockTelegramLabourExtractor(_labour_result()))
+        batch = poll_telegram(
+            db_session, client, MockTelegramLabourExtractor(_labour_result()), general_intake=False
+        )
         assert batch.quarantined == 1
         ev = db_session.query(LabourSourceEvent).one()
         assert ev.ingestion_status == "quarantined"
@@ -499,6 +501,17 @@ class TestProjectAttribution:
         )
         assert pid == p.canonical_id
         assert method == "text_match"
+
+    def test_word_token_match_address_format(self, db_session):
+        """'Flooding at Rockland' should match '923-927 Rockland' via word token."""
+        from project_db.ai.telegram_intake import _attribute_project
+
+        p = _project(db_session)
+        pid, method, _ = _attribute_project(
+            db_session, "999", "Flooding at Rockland over the weekend. Work progressing to fix it."
+        )
+        assert pid == p.canonical_id
+        assert method == "text_match_word"
 
     def test_worker_default_used_when_no_text_match(self, db_session):
         from project_db.ai.telegram_intake import _attribute_project

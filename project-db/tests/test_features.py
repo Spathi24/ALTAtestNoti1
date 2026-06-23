@@ -35,18 +35,26 @@ def test_non_demo_defaults_quarantined():
         "finance_legacy",
         "obligations",
         "value_caught",
-        "project_logs",
-        "labour_intake",
-        "telegram_intake",
-        "telegram_general_intake",
         "monday_gantt",
         "roadmap",
         "llm_pdf_finance",
         "lead_gen",
+    ):
+        assert flags[name] is False
+
+
+def test_operational_features_enabled_by_default():
+    flags = enabled_features(env={})
+
+    for name in (
+        "project_logs",
+        "labour_intake",
+        "telegram_intake",
+        "telegram_general_intake",
         "proposal_generation",
         "task_date_edit",
     ):
-        assert flags[name] is False
+        assert flags[name] is True
 
 
 def test_admin_nav_hidden_but_cli_enabled_by_default():
@@ -71,7 +79,7 @@ def test_invalid_env_value_preserves_default():
         "field_notes_typed", env={"PROJECT_DB_FEATURE_FIELD_NOTES_TYPED": "maybe"}
     )
     assert not feature_enabled(
-        "telegram_intake", env={"PROJECT_DB_FEATURE_TELEGRAM_INTAKE": "maybe"}
+        "obligations", env={"PROJECT_DB_FEATURE_OBLIGATIONS": "maybe"}
     )
 
 
@@ -85,9 +93,9 @@ def test_env_var_for_feature_normalizes_name():
 
 def test_require_feature_raises_clear_error():
     with pytest.raises(FeatureDisabled) as exc:
-        require_feature("telegram_intake", env={})
+        require_feature("obligations", env={})
 
-    assert "PROJECT_DB_FEATURE_TELEGRAM_INTAKE=true" in str(exc.value)
+    assert "PROJECT_DB_FEATURE_OBLIGATIONS=true" in str(exc.value)
 
 
 def test_demo_project_ref_prefers_id_over_name():
