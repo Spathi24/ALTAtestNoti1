@@ -281,6 +281,24 @@ def test_unidentifiable_jobs_stay_unresolved(session, project_factory, job):
     assert method == "unresolved"
 
 
+@pytest.mark.parametrize("job", ["0", "00", "000"])
+def test_numeric_placeholder_job_does_not_match_street_number(session, project_factory, job):
+    """Regression: job '0' must NOT match '3940 Cote des Neiges' via the digit in 3940."""
+    project_factory(name="3940 Cote des Neiges", code=None)
+    project_factory(name="25-1001 580 Rue Viau", code=None)
+    pid, method, _ = link_job_to_project(session, job)
+    assert pid is None, job
+    assert method == "unresolved"
+
+
+def test_real_street_number_job_still_matches(session, project_factory):
+    """A whole street-number typed as the job DOES resolve (token-boundary match)."""
+    proj = project_factory(name="3940 Cote des Neiges", code=None)
+    pid, method, _ = link_job_to_project(session, "3940")
+    assert pid == proj.canonical_id
+    assert method == "job_name"
+
+
 def test_relink_after_adding_project(session, tmp_path, project_factory):
     # Import an STL transaction with NO matching project yet -> unresolved.
     tf = _txn_file(

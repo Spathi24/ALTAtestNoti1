@@ -39,6 +39,19 @@ def _normalize_job(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
 
 
+def _phrase_in(needle_norm: str, haystack_norm: str) -> bool:
+    """True if *needle* appears in *haystack* on WHOLE-TOKEN boundaries.
+
+    Guards against the digit-fragment trap: raw ``"0" in "3940 cote des neiges"``
+    is True (the char in "3940"), wrongly matching job "0" to that project.
+    Token-boundary matching rejects that but still matches a real street-number
+    job (``"3940"`` -> ``"3940 Cote des Neiges"``) or a phrase (``"st laurent"``).
+    """
+    if not needle_norm or not haystack_norm:
+        return False
+    return f" {needle_norm} " in f" {haystack_norm} "
+
+
 def _street_tokens(value: str | None) -> list[str]:
     """Significant street-name tokens: drop numbers + street-type words; saint->st."""
     out: list[str] = []
@@ -97,14 +110,14 @@ def link_job_to_project(
         if jn and jn in (_normalize_job(p.name), _normalize_job(p.code)):
             return (p.canonical_id, "job_name", 1.0)
 
-    # Pass 2: substring either direction (name first, then code).
+    # Pass 2: whole-token phrase match either direction (name first, then code).
     for p in projects:
         pname = _normalize_job(p.name)
-        if pname and (jn in pname or pname in jn):
+        if _phrase_in(jn, pname) or _phrase_in(pname, jn):
             return (p.canonical_id, "job_name", 0.8)
     for p in projects:
         pcode = _normalize_job(p.code)
-        if pcode and (jn in pcode or pcode in jn):
+        if _phrase_in(jn, pcode) or _phrase_in(pcode, jn):
             return (p.canonical_id, "job_name", 0.85)
 
     # Pass 3: street-acronym / prefix match for till abbreviations. Require a

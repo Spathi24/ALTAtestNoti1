@@ -131,14 +131,19 @@ any flag with `PROJECT_DB_FEATURE_<NAME>=true`.
   projects' money lives in PDFs / simple-estimate / job-cost sheets the grid
   parser doesn't read, and the **cost side is essentially absent**, so margins
   show `revenue_only`. Legacy `FinancialRecord` remains as a transition net.
-- **Home Depot Pro purchases (variable-cost leak #1):** the deterministic import
-  spine is BUILT and validated on the real 24-month export — 190 transactions
-  ($58,997.52 net of refunds), job names resolved to projects (155/190; till
-  register codes like `STL`/`STMAT` mapped to the single St-Laurent / St-Mathieu
-  project via a unique street-prefix pass), tax re-derived, the line-item sum
-  reconciled against the header subtotal. The gap is line-item coverage: only
-  the transaction *headers* export in bulk; per-receipt line items must be
-  exported one transaction at a time (the manual chore the Phase-2 bot targets).
+- **Home Depot Pro purchases (variable-cost leak #1):** import spine BUILT +
+  validated on the real export — 190 transactions ($58,997.52 net), tax
+  re-derived, line-item sum reconciled to the header. After a by-hand audit +
+  digit-fragment matcher fix (job `"0"` was wrongly matching street number
+  `"3940"`), attribution is **105/190 linked**: St-Laurent $27,437 is the only
+  well-covered project (Rockland $2,088, St-Mathieu $1,555); **$27,917 / 47% is
+  UNRESOLVED** because no usable job was typed at the till — `"0"` ($13.7k) and
+  online `BODFS/ONLINE ORDER` ($16k). Cote-des-Neiges has NO real HD spend (its
+  old $13.7k was the bug). Per-project HD costing is capped by till discipline.
+  Two known data issues left to owner judgement: HD's detail export leaves
+  `Product Name` blank (we keep SKU+qty+price, not descriptions); and suspected
+  duplicate in-store/online transaction pairs (~$4.7k, same amount+date) are NOT
+  auto-deduped. Line items backfilled manually (19/190 so far).
   CLI: `homedepot import|status|report|queue|relink`. Visible behind `homedepot`.
 - **Labour intake (Telegram/Gmail):** built and technically live, but **blocked
   on adoption** — nobody is reliably logging labour, so there is nothing to

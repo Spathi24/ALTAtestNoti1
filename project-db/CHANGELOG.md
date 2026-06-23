@@ -9,6 +9,33 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-23 -- Home Depot: by-hand audit fixes a digit-fragment mis-link
+
+A hand audit of the loaded ledger (after the owner backfilled 19 detail exports)
+caught a real attribution bug. The job->project substring pass matched on raw
+characters, so the register-default job ``"0"`` matched ``"3940 Cote des Neiges"``
+via the ``0`` inside ``3940`` -- silently filing 49 untagged transactions
+($13,689.39) under Cote-des-Neiges, which actually has NO identifiable Home Depot
+spend. ``"00"`` likewise hit ``"...1001..."``.
+
+Fix: ``link_job_to_project`` now matches on WHOLE-TOKEN boundaries
+(``_phrase_in``), so a real street-number job (``"3940"``) still resolves but a
+digit fragment never does. After re-link: 105/190 linked (was a false 155).
+Honest portfolio picture now: St-Laurent $27,437 (the only well-covered
+project), Rockland $2,088, St-Mathieu $1,555, and **$27,917 (47%) UNRESOLVED** --
+dominated by ``"0"`` ($13.7k, no job entered) and online ``BODFS/ONLINE ORDER``
+($16k). Per-project Home Depot costing is only as good as the job code typed at
+the till; ~half of spend currently has none.
+
+Also surfaced (not auto-changed -- needs owner judgement): (1) Home Depot's
+detail export leaves ``Product Name`` blank for most rows -- we capture SKU + qty
++ price, not descriptions. (2) Suspected duplicate transaction pairs where one
+in-store transaction number and one online order number (``0616.../0641...``)
+carry the identical amount/date -- one purchase ($3,408.78) + several refunds,
+~$4.7k+. Flagged for the owner; the ledger does not dedupe them automatically.
+
+---
+
 ## 2026-06-23 -- Home Depot Pro purchase ledger: import spine (variable-cost leak #1)
 
 The owner's #1 named cost leak gets its spine. The Home Depot Pro site exports
