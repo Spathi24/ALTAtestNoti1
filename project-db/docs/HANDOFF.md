@@ -140,11 +140,12 @@ any flag with `PROJECT_DB_FEATURE_<NAME>=true`.
   UNRESOLVED** because no usable job was typed at the till — `"0"` ($13.7k) and
   online `BODFS/ONLINE ORDER` ($16k). Cote-des-Neiges has NO real HD spend (its
   old $13.7k was the bug). Per-project HD costing is capped by till discipline.
-  Two known data issues left to owner judgement: HD's detail export leaves
-  `Product Name` blank (we keep SKU+qty+price, not descriptions); and suspected
-  duplicate in-store/online transaction pairs (~$4.7k, same amount+date) are NOT
-  auto-deduped. Line items backfilled manually (19/190 so far).
-  CLI: `homedepot import|status|report|queue|relink`. Visible behind `homedepot`.
+  In-store/online duplicate pairs (HD lists BODFS events twice) are detected by
+  `homedepot dedupe` and the online twin is flagged out of totals: 5 pairs
+  applied, net is now **$57,188.31** (was $58,997.52), St-Laurent $24,028. One
+  open data caveat: HD's detail export leaves `Product Name` blank (we keep
+  SKU+qty+price, not descriptions). Line items backfilled manually (19/185 txns).
+  CLI: `homedepot import|status|report|queue|relink|dedupe`. Behind `homedepot`.
 - **Labour intake (Telegram/Gmail):** built and technically live, but **blocked
   on adoption** — nobody is reliably logging labour, so there is nothing to
   reconcile. Hidden.

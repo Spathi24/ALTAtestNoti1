@@ -638,11 +638,18 @@ CREATE TABLE home_depot_transaction (
     detail_attempts INTEGER NOT NULL DEFAULT 0,
     detail_last_error TEXT,
     detail_fetched_at DATETIME,
+    duplicate_of_id TEXT,
     source_export_file VARCHAR,
     source_meta_json TEXT,
-    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (duplicate_of_id) REFERENCES home_depot_transaction(canonical_id)
 )
 """
+
+# Columns added to home_depot_transaction after the initial DDL shipped.
+SQLITE_HOME_DEPOT_TRANSACTION_COLUMNS: dict[str, str] = {
+    "duplicate_of_id": "TEXT",
+}
 
 SQLITE_HOME_DEPOT_TRANSACTION_INDEXES = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_home_depot_transaction_number "
@@ -795,6 +802,10 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(
             conn, tables, "home_depot_transaction", SQLITE_HOME_DEPOT_TRANSACTION_DDL
         )
+        if "home_depot_transaction" in tables:
+            _add_missing_columns(
+                conn, inspector, "home_depot_transaction", SQLITE_HOME_DEPOT_TRANSACTION_COLUMNS
+            )
         for _idx_ddl in SQLITE_HOME_DEPOT_TRANSACTION_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(

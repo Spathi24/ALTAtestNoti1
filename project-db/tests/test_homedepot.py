@@ -13,6 +13,8 @@ import openpyxl
 import pytest
 
 from project_db.connectors.homedepot import (
+    apply_duplicates,
+    find_duplicate_candidates,
     import_details,
     import_transactions,
     link_job_to_project,
@@ -342,6 +344,75 @@ def test_import_links_and_propagates_project_to_line_items(session, tmp_path, pr
 
 
 # --- reports ----------------------------------------------------------------
+
+
+# --- duplicate detection (in-store / online pairs) --------------------------
+
+
+def test_dedupe_flags_online_twin_and_excludes_from_totals(session, tmp_path, project_factory):
+    project_factory(name="5768 St-Laurent", code="M1")
+    f = _txn_file(
+        tmp_path,
+        [
+            ("13/03/2026", "7149-00035-92581-20260313", "X", "ST LAURENT", "Paid", "L", "$2965.00", "$3408.78"),
+            ("13/03/2026", "0616058032", "X", "Saint-Laurent", "Paid", "L", "$2965.00", "$3408.78"),
+        ],
+    )
+    import_transactions(session, parse_export(f))
+    session.commit()
+
+    pairs = find_duplicate_candidates(session)
+    assert len(pairs) == 1
+    assert pairs[0]["primary"].transaction_number == "7149-00035-92581-20260313"  # in-store kept
+    assert pairs[0]["duplicate"].transaction_number == "0616058032"  # online flagged
+
+    apply_duplicates(session, pairs)
+    session.commit()
+    c = hd_reports.coverage_summary(session)
+    assert c["duplicates_excluded"] == 1
+    assert c["transactions"] == 1  # only the in-store row counts now
+    assert c["gross_spend"] == Decimal("3408.78")  # not doubled
+
+    # Re-running finds nothing new (already flagged).
+    assert find_duplicate_candidates(session) == []
+
+
+def test_dedupe_leaves_standalone_online_alone(session, tmp_path, project_factory):
+    f = _txn_file(
+        tmp_path,
+        [("11/02/2026", "0240839777", "X", "BODFS Order", "Paid", "L", "$7285.00", "$8377.68")],
+    )
+    import_transactions(session, parse_export(f))
+    session.commit()
+    assert find_duplicate_candidates(session) == []  # no in-store twin -> untouched
+
+
+def test_dedupe_does_not_pair_purchase_with_refund(session, tmp_path, project_factory):
+    project_factory(name="5768 St-Laurent", code="M1")
+    f = _txn_file(
+        tmp_path,
+        [
+            ("13/03/2026", "7149-00030-39914-20260313", "X", "ST LAURENT", "Paid", "L", "$628.00", "$722.43"),
+            ("13/03/2026", "0641960928", "X", "ST LAURENT", "Refunded", "L", "-$628.00", "-$722.43"),
+        ],
+    )
+    import_transactions(session, parse_export(f))
+    session.commit()
+    assert find_duplicate_candidates(session) == []  # opposite signs -> not a pair
+
+
+def test_dedupe_respects_date_window(session, tmp_path, project_factory):
+    project_factory(name="5768 St-Laurent", code="M1")
+    f = _txn_file(
+        tmp_path,
+        [
+            ("01/03/2026", "7149-00001-00001-20260301", "X", "ST LAURENT", "Paid", "L", "$100.00", "$114.98"),
+            ("20/03/2026", "0610000001", "X", "ST LAURENT", "Paid", "L", "$100.00", "$114.98"),
+        ],
+    )
+    import_transactions(session, parse_export(f))
+    session.commit()
+    assert find_duplicate_candidates(session) == []  # 19 days apart -> not a pair
 
 
 def test_coverage_summary(session, tmp_path, project_factory):

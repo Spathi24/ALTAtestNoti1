@@ -171,6 +171,77 @@ def relink_transactions(session: Session) -> dict[str, int]:
     return stats
 
 
+def _is_online_order_number(num: str | None) -> bool:
+    """Online/order numbers are plain digits (e.g. 0641960928); in-store numbers
+    are the dashed store-register-txn-date form (e.g. 7149-00035-92581-20260313).
+    """
+    if not num:
+        return False
+    s = num.strip()
+    return "-" not in s and s.isdigit()
+
+
+def find_duplicate_candidates(session: Session, *, day_window: int = 2) -> list[dict[str, Any]]:
+    """Find in-store/online transaction pairs that are the same event listed twice.
+
+    A candidate = one in-store transaction (dashed number) + one online order
+    (plain-digit number) with the SAME absolute total, same refund sign, same
+    resolved project (None==None allowed), and sales dates within ``day_window``
+    days. The in-store row is the primary (kept); the online row is the
+    duplicate. Standalone online orders with no in-store twin are NOT returned.
+
+    Already-flagged rows are skipped, so this is safe to re-run.
+    """
+    txns = (
+        session.query(HomeDepotTransaction)
+        .filter(HomeDepotTransaction.duplicate_of_id.is_(None))
+        .all()
+    )
+    instore = [t for t in txns if not _is_online_order_number(t.transaction_number)]
+    online = [t for t in txns if _is_online_order_number(t.transaction_number)]
+
+    pairs: list[dict[str, Any]] = []
+    used: set[Any] = set()
+    for ins in instore:
+        if ins.total is None:
+            continue
+        for onl in online:
+            if onl.canonical_id in used or onl.total is None:
+                continue
+            if abs(Decimal(str(ins.total))) != abs(Decimal(str(onl.total))):
+                continue
+            if bool(ins.is_refund) != bool(onl.is_refund):
+                continue
+            if ins.project_id != onl.project_id:
+                continue
+            if ins.sales_date is None or onl.sales_date is None:
+                continue
+            days = abs((ins.sales_date - onl.sales_date).days)
+            if days > day_window:
+                continue
+            used.add(onl.canonical_id)
+            pairs.append(
+                {
+                    "primary": ins,
+                    "duplicate": onl,
+                    "total": Decimal(str(ins.total)),
+                    "days_apart": days,
+                }
+            )
+            break
+    return pairs
+
+
+def apply_duplicates(session: Session, pairs: list[dict[str, Any]]) -> int:
+    """Point each pair's online row at the in-store primary via duplicate_of_id."""
+    n = 0
+    for p in pairs:
+        p["duplicate"].duplicate_of_id = p["primary"].canonical_id
+        n += 1
+    session.flush()
+    return n
+
+
 # Reconciliation tolerance: penny rounding per line plus a small per-receipt slack.
 def _reconcile_tolerance(n_items: int) -> Decimal:
     return Decimal("0.01") * n_items + Decimal("0.02")

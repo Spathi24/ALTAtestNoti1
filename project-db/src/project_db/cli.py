@@ -3101,6 +3101,11 @@ def _homedepot_status(_: argparse.Namespace) -> int:
         print(f"  Projects:       {c['linked']} linked, {c['unresolved']} unresolved")
         if c["unbalanced"]:
             print(f"  ! Unbalanced:   {c['unbalanced']} (line sum != subtotal -- review)")
+        if c.get("duplicates_excluded"):
+            print(
+                f"  Duplicates:     {c['duplicates_excluded']} excluded from totals "
+                f"(${c['duplicates_amount']:,.2f})"
+            )
         print("  Detail status:")
         for k, v in sorted(c["by_detail_status"].items()):
             print(f"    {k:<12} {v}")
@@ -3183,6 +3188,35 @@ def _homedepot_relink(_: argparse.Namespace) -> int:
     return 0
 
 
+def _homedepot_dedupe(args: argparse.Namespace) -> int:
+    from project_db.connectors.homedepot import apply_duplicates, find_duplicate_candidates
+    from project_db.db.models import Project
+
+    with session_scope() as s:
+        pairs = find_duplicate_candidates(s)
+        if not pairs:
+            print("No duplicate in-store/online pairs found.")
+            return 0
+        projects = {p.canonical_id: p.name for p in s.query(Project).all()}
+        print(f"{len(pairs)} candidate duplicate pair(s) -- in-store KEPT, online FLAGGED:\n")
+        for p in pairs:
+            pr, du = p["primary"], p["duplicate"]
+            proj = projects.get(pr.project_id, "(unresolved)")
+            kind = "REFUND" if pr.is_refund else "purchase"
+            print(f"  ${p['total']:>9,.2f}  {kind:<8} -> {proj}")
+            print(f"      keep  in-store {pr.transaction_number}  {pr.sales_date}  job={pr.job_name_raw!r}")
+            print(
+                f"      flag  online   {du.transaction_number}  {du.sales_date}  "
+                f"job={du.job_name_raw!r}  ({p['days_apart']}d apart)"
+            )
+        if args.apply:
+            n = apply_duplicates(s, pairs)
+            print(f"\nOK: flagged {n} online order(s) as duplicates (excluded from totals).")
+        else:
+            print("\nDry run -- nothing changed. Re-run with --apply to flag these.")
+    return 0
+
+
 def cmd_homedepot(args: argparse.Namespace) -> int:
     """Home Depot Pro purchase ledger: import exports, report spend, see the queue."""
     engine = get_engine()
@@ -3195,6 +3229,7 @@ def cmd_homedepot(args: argparse.Namespace) -> int:
         "report": _homedepot_report,
         "queue": _homedepot_queue,
         "relink": _homedepot_relink,
+        "dedupe": _homedepot_dedupe,
     }
     handler = dispatch.get(args.homedepot_action)
     if handler is None:
@@ -3377,6 +3412,15 @@ def build_parser() -> argparse.ArgumentParser:
     hd_sub.add_parser(
         "relink",
         help="Re-run job -> project linking over imported transactions (after adding projects)",
+    )
+    hd_dd = hd_sub.add_parser(
+        "dedupe",
+        help="Find in-store/online duplicate pairs; --apply flags the online twin",
+    )
+    hd_dd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Flag the online twins as duplicates (default is a dry-run preview)",
     )
     hd.set_defaults(func=cmd_homedepot)
 

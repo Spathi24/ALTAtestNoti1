@@ -22,9 +22,23 @@ def _d(value: Any) -> Decimal:
     return Decimal(str(value)) if value is not None else _ZERO
 
 
+def _active_txns(session: Session) -> list[HomeDepotTransaction]:
+    """All transactions EXCEPT those flagged as duplicates (excluded from totals)."""
+    return (
+        session.query(HomeDepotTransaction)
+        .filter(HomeDepotTransaction.duplicate_of_id.is_(None))
+        .all()
+    )
+
+
 def coverage_summary(session: Session) -> dict[str, Any]:
     """Counts, spend, and line-item backfill coverage across all transactions."""
-    txns = session.query(HomeDepotTransaction).all()
+    txns = _active_txns(session)
+    dup_rows = (
+        session.query(HomeDepotTransaction)
+        .filter(HomeDepotTransaction.duplicate_of_id.isnot(None))
+        .all()
+    )
     purchases = [t for t in txns if not t.is_refund]
     refunds = [t for t in txns if t.is_refund]
 
@@ -57,6 +71,8 @@ def coverage_summary(session: Session) -> dict[str, Any]:
         "backfilled_spend_pct": (float(backfilled_spend / gross * 100) if gross else 0.0),
         "unbalanced": by_status.get("unbalanced", 0),
         "line_items": int(line_item_total),
+        "duplicates_excluded": len(dup_rows),
+        "duplicates_amount": sum((_d(t.total) for t in dup_rows), _ZERO),
     }
 
 
@@ -64,7 +80,7 @@ def spend_by_project(session: Session) -> list[dict[str, Any]]:
     """Net spend per resolved project (plus an 'unresolved' bucket), ranked."""
     projects = {p.canonical_id: p for p in session.query(Project).all()}
     buckets: dict[Any, dict[str, Any]] = {}
-    for t in session.query(HomeDepotTransaction).all():
+    for t in _active_txns(session):
         key = t.project_id
         b = buckets.setdefault(
             key,
@@ -111,7 +127,8 @@ def backfill_queue(
     the top ~50 transactions are ~80% of gross spend.
     """
     q = session.query(HomeDepotTransaction).filter(
-        HomeDepotTransaction.detail_status == "pending"
+        HomeDepotTransaction.detail_status == "pending",
+        HomeDepotTransaction.duplicate_of_id.is_(None),
     )
     if not include_refunds:
         q = q.filter(HomeDepotTransaction.is_refund.is_(False))

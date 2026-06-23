@@ -116,6 +116,17 @@ class HomeDepotTransaction(Base, CanonicalMixin):
     detail_last_error = Column(Text, nullable=True)
     detail_fetched_at = Column(DateTime, nullable=True)
 
+    # Set when this row is a confirmed duplicate of another transaction -- e.g.
+    # the online-order twin (`0641...`) of an in-store transaction (`7149-...`)
+    # for the same amount/date/project, which Home Depot's export lists twice.
+    # A flagged row is EXCLUDED from every total but kept intact (reversible,
+    # evidence preserved) -- the dedupe twin of the financial reconcile gate.
+    duplicate_of_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("home_depot_transaction.canonical_id"),
+        nullable=True,
+    )
+
     # Provenance.
     source_export_file = Column(String, nullable=True)
     source_meta_json = Column(Text, nullable=True)  # untouched export row

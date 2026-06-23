@@ -11,6 +11,8 @@ Two pieces:
 """
 
 from project_db.connectors.homedepot.importer import (
+    apply_duplicates,
+    find_duplicate_candidates,
     import_details,
     import_transactions,
     link_job_to_project,
@@ -27,7 +29,9 @@ from project_db.connectors.homedepot.parse import (
 __all__ = [
     "HomeDepotParseError",
     "ParsedExport",
+    "apply_duplicates",
     "detect_format",
+    "find_duplicate_candidates",
     "import_details",
     "import_transactions",
     "link_job_to_project",

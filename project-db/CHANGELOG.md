@@ -9,6 +9,24 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-23 -- Home Depot: in-store/online duplicate flagging
+
+Home Depot's export lists BODFS / online-pickup events twice -- once as an
+in-store transaction number (``7149-...``) and once as an online order number
+(``0641...`` / ``0616...``), same amount and date. New ``homedepot dedupe``
+detects these pairs (equal ``|total|``, same refund sign, same project, sales
+dates within 2 days, one dashed + one plain-digit number), previews them, and
+with ``--apply`` flags the online twin via a new ``duplicate_of_id`` column so it
+is EXCLUDED from every total -- the row is kept (reversible, evidence intact),
+mirroring the dedupe philosophy of the financial reconcile gate. Standalone
+online orders with no in-store twin are left untouched.
+
+On the real ledger this caught 5 pairs (1 purchase $3,408.78 + 4 refunds),
+correcting net spend $58,997.52 -> $57,188.31, gross -> $61,210.43, and
+St-Laurent $27,437 -> $24,028. 4 new tests; full suite green.
+
+---
+
 ## 2026-06-23 -- Home Depot: by-hand audit fixes a digit-fragment mis-link
 
 A hand audit of the loaded ledger (after the owner backfilled 19 detail exports)
