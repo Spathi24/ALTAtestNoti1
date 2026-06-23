@@ -43,11 +43,8 @@ DEFAULT_FEATURES: dict[str, bool] = {
     # intake can be piloted without enabling labour write-back.
     "telegram_general_intake": True,
     # Home Depot Pro purchase ledger (variable-cost leak #1 in CLAUDE.md).
-    # Deterministic import of the transaction + line-item Excel exports. The
-    # browser backfill bot is gated separately under `homedepot_browser` because
-    # it drives a logged-in session and needs one-time operator setup.
+    # Deterministic import of the transaction + line-item Excel exports.
     "homedepot": True,
-    "homedepot_browser": False,
     "monday_gantt": False,
     "roadmap": False,
     "llm_pdf_finance": False,

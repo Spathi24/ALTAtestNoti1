@@ -45,15 +45,20 @@ gross / $58,997.52 net**; linking resolves 155/190 (unresolved $14.2k is the
 genuinely project-less online/BODFS/blank rows). The one real detail export
 (STL-GIFT-K) reconciles to the penny ($111.58 = 23.27 + 44.97 + 43.34).
 
-**CLI** (`homedepot` flag on; `homedepot_browser` off): `homedepot
-import <files|dirs>`, `status` (spend + backfill coverage), `report [--by-item]`
-(spend by project / top SKUs), `queue` (pending txns ranked by $ -- the backfill
-work-list), `relink`. 40 new tests; full suite green (1467).
+**CLI** (behind the `homedepot` flag): `homedepot import <files|dirs>`,
+`status` (spend + backfill coverage), `report [--by-item]` (spend by project /
+top SKUs), `queue` (pending txns ranked by $ -- the manual-export work-list),
+`relink`. 40 new tests; full suite green (1467).
 
-**Parked (Phase 2, needs owner setup):** a logged-in Playwright bot to replay the
-per-receipt detail export so line-item backfill stops being a hundreds-of-clicks
-chore -- driven by `homedepot queue`, throttled, resumable, NOT a stealth
-scraper. See HANDOFF "Parked".
+**Line-item backfill = manual, by design (Phase-2 bot abandoned).** A logged-in
+Playwright bot to auto-replay the per-receipt detail export was prototyped and
+**dropped**: Home Depot's Akamai bot-protection reset/stalled the automated
+browser at page load (ERR_HTTP2_PROTOCOL_ERROR / ERR_CONNECTION_RESET), and the
+owner (rightly) would not risk the company Pro account on a scraper. The line
+items the owner cares about are exported **by hand** -- `homedepot queue` ranks
+which receipts are worth the clicks (top ~50 txns ≈ 80% of spend), and
+`homedepot import <folder>` ingests the exported xlsx in bulk. No browser
+automation in the product.
 
 ---
 

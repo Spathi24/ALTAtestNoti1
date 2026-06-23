@@ -165,15 +165,16 @@ any flag with `PROJECT_DB_FEATURE_<NAME>=true`.
   per-document audit ("what is this, can it be counted, why") BEFORE any
   margin/money-at-risk view. **Do not start building until the gate is set and
   this is the chosen lane.**
-- **Home Depot line-item backfill bot (Phase 2):** the import spine exists (see
-  Subsystem reality), but ~189 transactions still have header-only data because
-  the per-receipt detail export is buried behind ~5 clicks each. A logged-in
-  Playwright bot to replay that export — driven by the value-ranked `homedepot
-  queue`, throttled, resumable, NOT a stealth scraper — is the open question.
-  Needs owner setup: Playwright install + one-time login, and a look at the live
-  detail-export click path so selectors are reliable. Gated behind the
-  `homedepot_browser` flag (off). Hourly labour remains the other unvalidated
-  watch target.
+- **Home Depot line items are backfilled MANUALLY (bot abandoned).** ~189
+  transactions still have header-only data; the per-receipt detail export is
+  ~5 clicks each. A logged-in Playwright bot to automate that was prototyped and
+  **dropped** — Home Depot's Akamai bot-protection reset/stalled the automated
+  browser at page load, and the owner won't risk the company Pro account on a
+  scraper (he flagged that risk up front; it was the correct call). The workflow
+  is: `homedepot queue` ranks which receipts are worth exporting (top ~50 ≈ 80%
+  of spend) → export those by hand → `homedepot import <folder>`. Do NOT revive a
+  browser bot without an explicit owner decision. Hourly labour remains the other
+  unvalidated watch target.
 
 ---
 
