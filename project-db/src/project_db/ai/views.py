@@ -733,7 +733,10 @@ def report_weekly_changes(
     from project_db.db.models import LabourSourceEvent, TelegramIdentity, Worker
 
     _COMMS_TEXT_CAP = 2000
-    _ACCEPTED_COMMS = ("received", "extracted")
+    # Only GENERAL content (status 'received') -- NOT 'extracted' (those are
+    # labour messages, already surfaced via tasks/claims; including them would
+    # double-count and dump labour chatter into the comms timeline).
+    _ACCEPTED_COMMS = ("received",)
     # received_at (poll time) is always >= source_created_at (send time), so a
     # received_at prefilter is a safe superset; effective_ts refines in Python.
     comms_rows = (

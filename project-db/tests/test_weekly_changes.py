@@ -228,6 +228,29 @@ def test_telegram_communications_surface_per_project_and_site_section(session, s
     assert "QUARANTINEDSPAM" not in json.dumps(data)
 
 
+def test_labour_extracted_events_not_surfaced_as_communications(session, seeded):
+    """A labour message (status 'extracted') is surfaced via tasks/claims, NOT as
+    a raw communication -- otherwise it would double-count in the report."""
+    from project_db.db.models import LabourSourceEvent
+
+    alpha = seeded["alpha"]
+    session.add(
+        LabourSourceEvent(
+            source_channel="telegram",
+            source_kind="telegram_text",
+            ingestion_status="extracted",  # labour, not general content
+            received_at=NOW - timedelta(days=1),
+            source_created_at=NOW - timedelta(days=1),
+            source_sender_key="555",
+            raw_text="LABOURCHATTER worked rockland 7-4",
+            project_id_hint=alpha.canonical_id,
+        )
+    )
+    session.commit()
+    data = report_weekly_changes(session, now=NOW, since_days=7)
+    assert "LABOURCHATTER" not in json.dumps(data)
+
+
 def test_telegram_comm_effective_ts_falls_back_to_received_at(session, seeded):
     from project_db.db.models import LabourSourceEvent
 
