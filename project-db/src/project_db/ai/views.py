@@ -523,12 +523,17 @@ def report_weekly_changes(
                 "proposals_opened": [],
                 "proposals_decided": [],
                 "tasks_completed": [],
+                "communications": [],
                 "_events_raw": [],  # (sortable_datetime, event_dict) -- removed before output
             }
         return buckets[pid]
 
     if target_id is not None:
         _bucket(target_id)
+
+    # Project-less Telegram messages (auto-attribution couldn't place them) land
+    # here so anonymous/ambiguous field comms are never silently dropped.
+    site_communications: list[dict[str, Any]] = []
 
     # --- Documents touched in Drive within the window ---
     doc_q = session.query(Document).filter(
@@ -718,6 +723,106 @@ def report_weekly_changes(
             {"timestamp": _ser(t.completed_at), "type": "task_completed", **entry},
         ))
 
+    # --- Telegram communications within the window (LabourSourceEvent) ---
+    # Anyone can text the bot; every message is captured as a LabourSourceEvent
+    # with its real send time (source_created_at), sender id, and raw text. The
+    # labour path is separate; here we surface accepted *communications* in the
+    # timeline, attributed to a project via project_id_hint (deterministic
+    # recency-weighted attribution at intake). Project-less messages go to the
+    # top-level site_communications section so nothing is dropped.
+    from project_db.db.models import LabourSourceEvent, TelegramIdentity, Worker
+
+    _COMMS_TEXT_CAP = 2000
+    _ACCEPTED_COMMS = ("received", "extracted")
+    # received_at (poll time) is always >= source_created_at (send time), so a
+    # received_at prefilter is a safe superset; effective_ts refines in Python.
+    comms_rows = (
+        session.query(LabourSourceEvent)
+        .filter(
+            LabourSourceEvent.source_channel == "telegram",
+            LabourSourceEvent.ingestion_status.in_(_ACCEPTED_COMMS),
+            LabourSourceEvent.received_at >= window_start,
+        )
+        .all()
+    )
+
+    # Bulk sender-label map: verified TelegramIdentity -> Worker.display_name.
+    sender_keys = {r.source_sender_key for r in comms_rows if r.source_sender_key}
+    worker_name_by_sender: dict[str, str] = {}
+    if sender_keys:
+        id_rows = (
+            session.query(TelegramIdentity)
+            .filter(
+                TelegramIdentity.telegram_user_id.in_(sender_keys),
+                TelegramIdentity.verified.is_(True),
+            )
+            .all()
+        )
+        wid_by_sender = {i.telegram_user_id: i.worker_id for i in id_rows}
+        if wid_by_sender:
+            name_by_wid = {
+                w.canonical_id: w.display_name
+                for w in session.query(Worker)
+                .filter(Worker.canonical_id.in_(set(wid_by_sender.values())))
+                .all()
+            }
+            worker_name_by_sender = {
+                sk: name_by_wid[wid]
+                for sk, wid in wid_by_sender.items()
+                if name_by_wid.get(wid)
+            }
+
+    def _sender_label(ev) -> str:
+        """A verified Worker name if bound; else an opaque, stable sender id with
+        an explicitly-unverified @username hint (usernames change; never key on them)."""
+        sk = ev.source_sender_key
+        if sk and sk in worker_name_by_sender:
+            return worker_name_by_sender[sk]
+        uname = None
+        if ev.raw_payload_json:
+            try:
+                import json as _j
+
+                payload = _j.loads(ev.raw_payload_json)
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if isinstance(msg, dict):
+                    uname = msg.get("from_username") or (
+                        (msg.get("from") or {}).get("username")
+                        if isinstance(msg.get("from"), dict)
+                        else None
+                    )
+            except Exception:
+                uname = None
+        base = f"sender {sk}" if sk else "unknown sender"
+        return f"{base} (@{uname}, unverified)" if uname else base
+
+    for ev in comms_rows:
+        eff = ev.source_created_at or ev.received_at
+        if eff is None or not (window_start <= eff <= now):
+            continue
+        entry = {
+            "source_channel": ev.source_channel,
+            "sender": _sender_label(ev),
+            "received_at": _ser(eff),
+            "text": (ev.raw_text or "")[:_COMMS_TEXT_CAP],
+        }
+        pid = ev.project_id_hint
+        if pid is not None:
+            if target_id is not None and pid != target_id:
+                continue
+            b = _bucket(pid)
+            if b is None:
+                continue
+            b["communications"].append(entry)
+            b["_events_raw"].append(
+                (eff, {"timestamp": _ser(eff), "type": "communication", **entry})
+            )
+        elif target_id is None:
+            # Project-less message -- only surfaced in the all-projects rollup.
+            site_communications.append(
+                {"timestamp": _ser(eff), "type": "communication", **entry}
+            )
+
     # --- Prior-window counts (no content -- just trajectory signal) ---
     def _prior_counts(pids_list: list[Any]) -> dict[Any, dict[str, int]]:
         """Return {project_id: {docs, notes, proposals, tasks}} for the prior window."""
@@ -798,6 +903,7 @@ def report_weekly_changes(
         "project_count": len(projects_out),
         "total_changes": sum(r["change_count"] for r in projects_out),
         "projects": projects_out,
+        "site_communications": sorted(site_communications, key=lambda e: e["timestamp"]),
     }
 
 

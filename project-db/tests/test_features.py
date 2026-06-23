@@ -38,6 +38,7 @@ def test_non_demo_defaults_quarantined():
         "project_logs",
         "labour_intake",
         "telegram_intake",
+        "telegram_general_intake",
         "monday_gantt",
         "roadmap",
         "llm_pdf_finance",

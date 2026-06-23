@@ -172,6 +172,85 @@ def test_narrow_window_excludes_older_changes(session, seeded):
     assert len(alpha["field_notes"]) == 1
 
 
+def test_telegram_communications_surface_per_project_and_site_section(session, seeded):
+    """Telegram messages (LabourSourceEvent) reach the report: project-attributed
+    ones into the project's communications + events; project-less ones into the
+    top-level site_communications; quarantined/ignored excluded."""
+    from project_db.db.models import LabourSourceEvent
+
+    alpha = seeded["alpha"]
+    session.add_all(
+        [
+            LabourSourceEvent(
+                source_channel="telegram",
+                source_kind="telegram_text",
+                ingestion_status="received",
+                received_at=NOW - timedelta(days=1),
+                source_created_at=NOW - timedelta(days=1),
+                source_sender_key="111",
+                raw_text="Concrete delivered to the north side, all good.",
+                project_id_hint=alpha.canonical_id,
+            ),
+            LabourSourceEvent(
+                source_channel="telegram",
+                source_kind="telegram_text",
+                ingestion_status="received",
+                received_at=NOW - timedelta(days=1),
+                source_created_at=NOW - timedelta(days=1),
+                source_sender_key="222",
+                raw_text="Who has the key to the gate?",
+                project_id_hint=None,
+            ),
+            LabourSourceEvent(
+                source_channel="telegram",
+                source_kind="telegram_text",
+                ingestion_status="quarantined",
+                received_at=NOW - timedelta(days=1),
+                source_created_at=NOW - timedelta(days=1),
+                source_sender_key="333",
+                raw_text="QUARANTINEDSPAM",
+                project_id_hint=alpha.canonical_id,
+            ),
+        ]
+    )
+    session.commit()
+
+    data = report_weekly_changes(session, now=NOW, since_days=7)
+    alpha_out = next(p for p in data["projects"] if p["name"] == "Alpha Tower")
+    assert len(alpha_out["communications"]) == 1
+    assert "Concrete delivered" in alpha_out["communications"][0]["text"]
+    assert any(e["type"] == "communication" for e in alpha_out["events"])
+
+    assert len(data["site_communications"]) == 1
+    assert "key to the gate" in data["site_communications"][0]["text"]
+
+    # quarantined messages never leak into the report
+    assert "QUARANTINEDSPAM" not in json.dumps(data)
+
+
+def test_telegram_comm_effective_ts_falls_back_to_received_at(session, seeded):
+    from project_db.db.models import LabourSourceEvent
+
+    alpha = seeded["alpha"]
+    session.add(
+        LabourSourceEvent(
+            source_channel="telegram",
+            source_kind="telegram_text",
+            ingestion_status="received",
+            received_at=NOW - timedelta(days=2),
+            source_created_at=None,  # no send time -> fall back to received_at
+            source_sender_key="444",
+            raw_text="No send time on this one.",
+            project_id_hint=alpha.canonical_id,
+        )
+    )
+    session.commit()
+    data = report_weekly_changes(session, "Alpha", now=NOW, since_days=7)
+    comms = data["projects"][0]["communications"]
+    assert len(comms) == 1
+    assert comms[0]["received_at"].startswith("2026-06-20")  # NOW - 2 days
+
+
 def test_window_start_is_day_granular(session, seeded):
     # Regression: a field note timestamped ~7 days ago at an EARLIER clock time
     # than `now` must still appear in a 7-day report.  Before the day-granular

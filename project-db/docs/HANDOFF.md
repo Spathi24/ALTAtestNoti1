@@ -59,22 +59,39 @@ tasks already DONE with a scheduled finish, cleared if reopened. After one live
 sync, 8/34 are dated (the rest have no Monday end_date → stay null, honestly
 undated until they next transition).
 
-Telegram generalization — NEXT BUILD (owner-directed, in progress):
+**Telegram general intake — BUILT 2026-06-23 (owner-directed).** Anyone can now
+text the bot and the message is captured, attributed to a project, and surfaced
+in the weekly report — beyond the original labour-only, invite-gated design.
 - Why: the bosses ARE the GDrive/Monday admins, so that data is low-marginal-
-  value. Field comms (Telegram) are the untapped signal — the best line in every
-  real report already comes from a field note.
-- Current Telegram system: every message is already captured raw in
-  `LabourSourceEvent` (real send time, sender, text) even for unbound senders
-  (quarantined); a bound-sender gate blocks processing; everything funnels to
-  LABOUR only; the weekly report reads `FieldNote`, NOT `LabourSourceEvent`, so
-  Telegram never reaches the report today.
-- Plan: strip the bound-sender gate (auto-ingest anyone); resolve project per
-  message via a RECENCY-WEIGHTED heuristic (most of sender's recent messages →
-  that project; PMs who switch constantly → general section / review); keep
-  labour as the specialized downstream; teach `report_weekly_changes` to read
-  `LabourSourceEvent` as a "communications" event source. No new tables.
-- Unresolved-project decision (owner): smart recency-weighted attribution;
-  fall back to a project-less "Site communications" section, not blind default.
+  value. Field comms are the untapped signal.
+- Architecture (no new tables): every message is still recorded as exactly one
+  `LabourSourceEvent` (real send time, sender id, raw text). Two paths fork off
+  that one row — (A) LABOUR (unchanged, specialized): a bound worker + the
+  OpenAI extractor → LabourClaims; (B) GENERAL (new): any sender, kept as
+  `ingestion_status='received'`, reason `general_content`, with a deterministic
+  project attribution into `project_id_hint`.
+- Project attribution (`_attribute_project`, telegram_intake.py, NO LLM):
+  text-match on a site name → bound worker's default project → recency-weighted
+  vote over the sender's last 14d (7d half-life, ≥60% dominance) → else
+  unresolved (project-less "Site communications" section). Constants are
+  module-level (`_ATTRIB_HALF_LIFE_DAYS/_WINDOW_DAYS/_DOMINANCE`).
+- Report: `report_weekly_changes` reads telegram `LabourSourceEvent` rows
+  (status in {received, extracted}) as a 5th "communications" event source,
+  timestamped by `source_created_at` (fallback `received_at`); project-less rows
+  go to a top-level `site_communications` key. Quarantined/ignored excluded.
+- Anonymous senders: keyed on the stable telegram user id; shown as a verified
+  Worker name if bound, else `sender <id>` + an unverified `@username` hint.
+  Person-names *in* a message are free-text only — never resolved to Workers.
+- Feature gating (split, both default-off): `telegram_general_intake` enables
+  open intake; `telegram_intake` enables the labour path. `poll-telegram` runs
+  if EITHER is on; the OpenAI labour extractor is OPTIONAL (no key → general
+  runs LLM-free). Gating is at the CLI edge; `poll_telegram(..., general_intake=)`
+  takes it as an explicit input (logic stays flag-free + testable).
+- Restore live: `PROJECT_DB_FEATURE_TELEGRAM_GENERAL_INTAKE=true` (+ optionally
+  `..._TELEGRAM_INTAKE=true` for labour). Live bot: @ALTA_employeebot.
+- Deferred (NOT built): per-message LLM classifier (content_type/summary/
+  mentions) — the report's narration already summarizes raw text; media
+  (photo/voice) bytes; rate-limiting for abuse.
 
 Other known gaps (NOT yet built):
 - No money in the report (owner's stated #1: Home Depot + labour overrun). The

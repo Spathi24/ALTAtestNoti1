@@ -9,6 +9,50 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-23 -- Telegram general intake: anyone can text, into the weekly report
+
+The owner's chosen value angle: the bosses ARE the Drive/Monday admins, so that
+data is low-marginal-value; the untapped signal is field communications. The
+Telegram bot was revamped from "labour hours only, invite-gated" to "anyone can
+text any site update, and it flows into the weekly per-project report."
+
+**Architecture (no new tables, no migration).** Every message is still recorded
+as exactly one source-agnostic `LabourSourceEvent` (real send time, sender id,
+raw text). Two paths fork off that single row: (A) the LABOUR path is unchanged
+and still specialized -- a bound worker + the OpenAI extractor produce
+LabourClaims; (B) a new GENERAL path keeps any sender's message as
+`ingestion_status='received'` (reason `general_content`) with a deterministic
+project attribution. The old behaviors (quarantine strangers / drop non-labour)
+are preserved only when general intake is OFF.
+
+**Deterministic project attribution** (`_attribute_project`, no LLM): explicit
+site-name match in the text → bound worker's default project → recency-weighted
+vote over the sender's last 14 days (7-day half-life, needs ≥60% dominance) →
+otherwise unresolved. Constant site-switchers (PMs) never reach dominance and
+fall to a project-less section rather than being mis-filed.
+
+**Weekly report** gained a 5th event source: telegram `LabourSourceEvent` rows
+(status in {received, extracted}) surface as "communications" in each project's
+chronological events, timestamped by real send time; project-less messages go to
+a new top-level `site_communications` section so nothing is dropped. Anonymous
+senders show as a bound Worker name or `sender <id>` + unverified `@username`
+hint; person-names inside a message stay free-text (never resolved to Workers).
+
+**Feature flags (split, both default-off).** New `telegram_general_intake`
+enables open intake; existing `telegram_intake` enables the labour path.
+`poll-telegram` runs if EITHER is on, and the OpenAI labour extractor is now
+OPTIONAL (no key → general intake still runs, LLM-free). Gating lives at the CLI
+edge; `poll_telegram(..., general_intake=)` takes it as an explicit input so the
+intake logic stays flag-free and unit-testable. Restore live with
+`PROJECT_DB_FEATURE_TELEGRAM_GENERAL_INTAKE=true`.
+
+**Deferred:** per-message LLM classifier (content_type/summary/mentions) -- the
+report's narration already summarizes raw text; media (photo/voice) bytes;
+spam/rate-limiting. Tests: new general-intake + attribution + report-comms
+coverage; existing labour/gate contract preserved.
+
+---
+
 ## 2026-06-22 -- Direction reset: docs canon, build freeze, weekly-report build #1
 
 A deliberate course-correction after recognizing a "documentation-as-steering-

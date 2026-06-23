@@ -37,6 +37,11 @@ DEFAULT_FEATURES: dict[str, bool] = {
     "project_logs": False,
     "labour_intake": False,
     "telegram_intake": False,
+    # General (non-labour) Telegram intake: anyone can text the bot and the
+    # message is captured + attributed to a project + surfaced in the weekly
+    # report. Independent of telegram_intake (labour hour-logging) so open
+    # intake can be piloted without enabling labour write-back.
+    "telegram_general_intake": False,
     "monday_gantt": False,
     "roadmap": False,
     "llm_pdf_finance": False,

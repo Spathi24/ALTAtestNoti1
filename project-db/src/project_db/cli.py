@@ -1020,8 +1020,17 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
             print(f"  [proposals] {', '.join(_parts)} this week")
         for t in proj["tasks_completed"]:
             print(f"  [task]     {t['completed_at'][:10]}  done: {t['title']}")
+        for c in proj.get("communications", []):
+            print(f"  [msg]      {c['received_at'][:10]}  {c['sender']}: {c['text'][:80]}")
         if narrate and "narrative" in proj:
             print(f"\n  >> {proj['narrative']}")
+
+    # Project-less Telegram messages auto-attribution couldn't place.
+    site_comms = data.get("site_communications") or []
+    if site_comms:
+        print(f"\nSite communications (no project matched)  ({len(site_comms)} message(s))")
+        for c in site_comms:
+            print(f"  [msg]      {c['received_at'][:10]}  {c['sender']}: {c['text'][:80]}")
     return 0
 
 
@@ -2285,13 +2294,18 @@ def cmd_telegram_invite_worker(args: argparse.Namespace) -> int:
 
 
 def cmd_poll_telegram(args: argparse.Namespace) -> int:
-    """Poll the Telegram bot once and ingest new worker/foreman messages.
+    """Poll the Telegram bot once and ingest new messages.
 
     One-shot (not a daemon): grabs everything since the last cursor and exits, so
     no always-on server is needed -- run on a schedule or on demand. Telegram
-    retains unacknowledged updates ~24h. Free-text from a LINKED worker becomes
-    LabourClaims (via OpenAI) + consolidated shifts; unlinked senders are
-    quarantined. Needs TELEGRAM_BOT_TOKEN + OPENAI_API_KEY.
+    retains unacknowledged updates ~24h.
+
+    Two intake modes, gated by feature flags (either enables the command):
+      - telegram_general_intake: ANYONE's message is captured, attributed to a
+        project, and surfaced in the weekly report. Needs only TELEGRAM_BOT_TOKEN.
+      - telegram_intake (labour): a LINKED worker's message also becomes
+        LabourClaims via OpenAI. Needs OPENAI_API_KEY for the labour extractor;
+        if absent, general intake still runs (labour is simply skipped).
     """
     from project_db.ai.telegram_intake import poll_telegram
     from project_db.ai.telegram_labour_extraction import (
@@ -2304,31 +2318,45 @@ def cmd_poll_telegram(args: argparse.Namespace) -> int:
     Base.metadata.create_all(engine)
     ensure_sqlite_schema(engine)
 
+    general_intake = feature_enabled("telegram_general_intake")
+    labour_intake = feature_enabled("telegram_intake")
+
     try:
         client = TelegramClient()
     except TelegramClientError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
-    try:
-        extractor = OpenAITelegramLabourExtractor()
-    except TelegramLabourExtractorError as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
-        return 2
+
+    # The labour extractor is OPTIONAL: only built when labour intake is on, and
+    # its absence (no OPENAI_API_KEY) must NOT block general intake.
+    extractor = None
+    if labour_intake:
+        try:
+            extractor = OpenAITelegramLabourExtractor()
+        except TelegramLabourExtractorError as exc:
+            if not general_intake:
+                print(f"FAIL: {exc}", file=sys.stderr)
+                return 2
+            print(f"  WARN: labour extractor unavailable ({exc}); running general-intake only.")
 
     try:
         me = client.get_me()
-        print(f"[poll-telegram] bot: @{me.get('username')}  (extractor: {extractor.model})")
+        mode = "general" + ("+labour" if extractor else "")
+        extra = f", extractor: {extractor.model}" if extractor else ""
+        print(f"[poll-telegram] bot: @{me.get('username')}  (mode: {mode}{extra})")
     except Exception as exc:
         print(f"FAIL: cannot reach Telegram ({exc}). Check TELEGRAM_BOT_TOKEN.", file=sys.stderr)
         return 2
 
     with session_scope() as s:
-        batch = poll_telegram(s, client, extractor)
+        batch = poll_telegram(s, client, extractor, general_intake=general_intake)
     print(batch.summary())
     for err in batch.errors:
         print(f"  WARN: {err}")
     if batch.claims_created:
         print("  Review with: project_db labour-claims <project>  /  the project's web page")
+    if batch.general:
+        print("  See general messages in the weekly report: project_db weekly-changes --narrate")
     return 0 if batch.ok else 1
 
 
@@ -3569,7 +3597,8 @@ _CLI_FEATURES: dict[str, str] = {
     "retry-quarantined": "field_notes_email",
     "project-logs": "project_logs",
     "telegram-invite-worker": "telegram_intake",
-    "poll-telegram": "telegram_intake",
+    # poll-telegram is special-cased in _disabled_cli_feature (runs if EITHER
+    # telegram_intake OR telegram_general_intake is on), so it is NOT listed here.
     "labour-claims": "labour_intake",
     "labour-consolidate": "labour_intake",
 }
@@ -3580,6 +3609,13 @@ def _disabled_cli_feature(args: argparse.Namespace) -> str | None:
     command = getattr(args, "cmd", None)
     if command == "daily" and getattr(args, "propose_timelines", False):
         return None if feature_enabled("proposal_generation") else "proposal_generation"
+    # poll-telegram is the shared transport entry: it runs if EITHER the labour
+    # intake or the general intake flag is on (the general path needs no labour
+    # extractor). Report the broader flag in the disabled message.
+    if command == "poll-telegram":
+        if feature_enabled("telegram_general_intake") or feature_enabled("telegram_intake"):
+            return None
+        return "telegram_general_intake"
     feature = _CLI_FEATURES.get(str(command))
     if feature and not feature_enabled(feature):
         return feature

@@ -20,7 +20,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -31,16 +31,29 @@ from project_db.ai.telegram_labour_extraction import (
     ingest_telegram_labour_claims,
 )
 from project_db.connectors.telegram.client import BaseTelegramClient
-from project_db.db.models import LabourSourceEvent, TelegramIdentity, Worker
+from project_db.db.models import LabourSourceEvent, Project, TelegramIdentity, Worker
 
 logger = logging.getLogger(__name__)
 
 _HELP = (
-    "ALTA labour bot. Log your hours in plain language, e.g.:\n"
-    "  worked Rockland 7-4, half hour lunch, basement framing\n"
-    "A foreman can list several workers in one message.\n\n"
+    "ALTA site bot. Text any site update in plain language -- progress, issues,\n"
+    "deliveries, questions -- and it's logged for the team's weekly report.\n"
+    "Mention the site/address so it files under the right project.\n\n"
+    "Invited workers can also log hours, e.g.:\n"
+    "  worked Rockland 7-4, half hour lunch, basement framing\n\n"
     "Commands: /start <token> to link your account, /status for today, /help."
 )
+
+# Acknowledgement for a general (non-labour) message.
+_GENERAL_ACK = "Got it -- logged for the team's weekly report. Thanks for the update."
+
+# Recency-weighted project attribution (deterministic, no LLM). A sender's
+# recent project-attributed messages vote, weighted by recency; the top project
+# must dominate (>= _ATTRIB_DOMINANCE of total weight) or the message is left
+# unattributed (PMs who switch sites constantly -> project-less Site comms).
+_ATTRIB_HALF_LIFE_DAYS = 7.0
+_ATTRIB_WINDOW_DAYS = 14
+_ATTRIB_DOMINANCE = 0.6
 
 # ---------------------------------------------------------------------------
 # Invite (PM-side): pre-create a pending binding + deep link
@@ -110,6 +123,7 @@ class TelegramPollBatch:
     ignored: int = 0
     duplicate: int = 0
     claims_created: int = 0
+    general: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -118,9 +132,10 @@ class TelegramPollBatch:
 
     def summary(self) -> str:
         return (
-            f"[poll-telegram] {self.total_seen} update(s): {self.processed} message(s) logged "
-            f"({self.claims_created} claim(s)), {self.bound} binding(s), "
-            f"{self.quarantined} unbound, {self.ignored} ignored, {self.duplicate} duplicate"
+            f"[poll-telegram] {self.total_seen} update(s): {self.processed} labour message(s) "
+            f"({self.claims_created} claim(s)), {self.general} general message(s), "
+            f"{self.bound} binding(s), {self.quarantined} unbound, "
+            f"{self.ignored} ignored, {self.duplicate} duplicate"
         )
 
 
@@ -148,12 +163,85 @@ def _find_identity(session: Session, user_id: Any) -> TelegramIdentity | None:
     )
 
 
+def _attribute_project(
+    session: Session,
+    user_id: Any,
+    text: str,
+    *,
+    worker: Worker | None = None,
+    now: datetime | None = None,
+) -> tuple[Any, str, float]:
+    """Deterministically attribute a general message to a project (no LLM).
+
+    Returns ``(project_id | None, method, confidence)``, first hit wins:
+      1. text_match  -- an active project's name appears in the message text.
+      2. worker_default -- a bound sender's Worker.default_project_id.
+      3. sender_recency -- recency-weighted vote over this sender's recent
+         project-attributed messages; the top project must reach
+         ``_ATTRIB_DOMINANCE`` of total weight, else it's treated as ambiguous.
+      4. unresolved  -- (None) -> the message lands in the project-less
+         "Site communications" section for human routing.
+    """
+    now = now or datetime.utcnow()
+
+    # 1) Explicit site/project name in the message text.
+    if text:
+        frag = text.lower()
+        for p in session.query(Project).filter(Project.name.isnot(None)).all():
+            pname = (p.name or "").lower().strip()
+            if pname and pname in frag:
+                return p.canonical_id, "text_match", 0.9
+
+    # 2) Bound worker's default project.
+    if worker is not None and getattr(worker, "default_project_id", None):
+        return worker.default_project_id, "worker_default", 0.6
+
+    # 3) Recency-weighted sender history.
+    if user_id is not None:
+        cutoff = now - timedelta(days=_ATTRIB_WINDOW_DAYS)
+        rows = (
+            session.query(LabourSourceEvent)
+            .filter(
+                LabourSourceEvent.source_channel == "telegram",
+                LabourSourceEvent.source_sender_key == str(user_id),
+                LabourSourceEvent.project_id_hint.isnot(None),
+                LabourSourceEvent.received_at >= cutoff,
+            )
+            .all()
+        )
+        weights: dict[Any, float] = {}
+        total = 0.0
+        for r in rows:
+            ts = r.source_created_at or r.received_at
+            if ts is None:
+                continue
+            age_days = max(0.0, (now - ts).total_seconds() / 86400.0)
+            w = 0.5 ** (age_days / _ATTRIB_HALF_LIFE_DAYS)
+            weights[r.project_id_hint] = weights.get(r.project_id_hint, 0.0) + w
+            total += w
+        if total > 0:
+            top_pid, top_w = max(weights.items(), key=lambda kv: kv[1])
+            if top_w / total >= _ATTRIB_DOMINANCE:
+                return top_pid, "sender_recency", 0.5
+
+    return None, "unresolved", 0.0
+
+
 def poll_telegram(
     session: Session,
     client: BaseTelegramClient,
-    extractor: TelegramLabourExtractor,
+    extractor: TelegramLabourExtractor | None = None,
+    *,
+    general_intake: bool = False,
 ) -> TelegramPollBatch:
-    """One-shot poll: fetch new updates and process each. Mirrors poll_mailbox."""
+    """One-shot poll: fetch new updates and process each. Mirrors poll_mailbox.
+
+    Feature gating lives at the CLI edge, passed in here as explicit inputs:
+      - ``extractor`` present  -> the labour path is available (bound workers).
+      - ``general_intake=True`` -> anyone's message is accepted as general
+        content (attributed + surfaced in the weekly report). When False, the
+        legacy labour-only contract holds (strangers quarantined).
+    """
     batch = TelegramPollBatch()
     offset = _next_offset(session)
     updates = client.get_updates(offset=offset)
@@ -161,7 +249,7 @@ def poll_telegram(
 
     for upd in updates:
         try:
-            _process_update(session, client, extractor, upd, batch)
+            _process_update(session, client, extractor, upd, batch, general_intake=general_intake)
         except Exception as exc:
             logger.exception("[TELEGRAM] error processing update %s", upd.get("update_id"))
             batch.errors.append(f"{upd.get('update_id')}: {exc}")
@@ -258,9 +346,11 @@ def _record_failed_update(session: Session, upd: dict[str, Any], exc: Exception)
 def _process_update(
     session: Session,
     client: BaseTelegramClient,
-    extractor: TelegramLabourExtractor,
+    extractor: TelegramLabourExtractor | None,
     upd: dict[str, Any],
     batch: TelegramPollBatch,
+    *,
+    general_intake: bool = False,
 ) -> None:
     update_id = upd.get("update_id")
     msg = upd.get("message")
@@ -346,11 +436,88 @@ def _process_update(
         return
 
     # ----- Free text -----
+    if not text:
+        _record_event(session, update_id, msg, text, "ignored", "empty", raw_payload=upd)
+        session.commit()
+        batch.ignored += 1
+        return
+
     identity = _find_identity(session, user_id)
-    if identity is None:
-        _record_event(
-            session, update_id, msg, text, "quarantined", "unbound_sender", raw_payload=upd
-        )
+    worker = (
+        session.query(Worker).filter_by(canonical_id=identity.worker_id).one()
+        if identity is not None
+        else None
+    )
+    if identity is not None:
+        identity.last_seen_at = source_created_at or datetime.utcnow()
+
+    # Record EXACTLY ONE source event per update (preserves the offset cursor /
+    # dedup invariant). Its status is refined below once we know the content type.
+    event = _record_event(
+        session,
+        update_id,
+        msg,
+        text,
+        "received",
+        None,
+        worker_id=worker.canonical_id if worker else None,
+        raw_payload=upd,
+    )
+    session.flush()
+
+    # ----- Labour path (specialized): a bound worker + an available extractor.
+    # The LLM classifies; if it yields claims, this is a labour update. -----
+    claims: list = []
+    if worker is not None and extractor is not None:
+        try:
+            # SAVEPOINT: a labour-extraction failure rolls back only the partial
+            # claims, leaving the already-recorded event intact to fall through
+            # to the general path.
+            with session.begin_nested():
+                claims = ingest_telegram_labour_claims(
+                    session,
+                    extractor,
+                    text=text,
+                    source_event_id=event.canonical_id,
+                    message_datetime=message_datetime,
+                    reporter_worker=worker,
+                    default_project_id=worker.default_project_id,
+                )
+        except Exception:
+            logger.exception(
+                "[TELEGRAM] labour extraction failed; routing as general content"
+            )
+            claims = []
+
+    if claims:
+        event.ingestion_status = "extracted"
+        project_ids = {c.project_id for c in claims if c.project_id}
+        session.commit()
+        for pid in project_ids:
+            consolidate_claims(session, pid)
+        batch.processed += 1
+        batch.claims_created += len(claims)
+        client.send_message(chat_id, _summarize_claims(claims))
+        return
+
+    # ----- General content path: anyone, any message. Keep the event as an
+    # accepted communication, attribute a project deterministically, surface it
+    # in the weekly report. Only active when general intake is enabled. -----
+    if general_intake:
+        event.ingestion_status = "received"
+        event.ingestion_reason = "general_content"
+        pid, method, _conf = _attribute_project(session, user_id, text, worker=worker)
+        if pid is not None:
+            event.project_id_hint = pid
+        session.commit()
+        batch.general += 1
+        client.send_message(chat_id, _GENERAL_ACK)
+        return
+
+    # ----- General intake OFF: preserve the legacy labour-only contract. -----
+    if worker is None:
+        event.ingestion_status = "quarantined"
+        event.ingestion_reason = "unbound_sender"
         session.commit()
         batch.quarantined += 1
         client.send_message(
@@ -359,53 +526,11 @@ def _process_update(
             "(or send /start <token>) before logging hours.",
         )
         return
-
-    if not text:
-        _record_event(session, update_id, msg, text, "ignored", "empty", raw_payload=upd)
-        session.commit()
-        batch.ignored += 1
-        return
-
-    worker = session.query(Worker).filter_by(canonical_id=identity.worker_id).one()
-    identity.last_seen_at = source_created_at or datetime.utcnow()
-    event = _record_event(
-        session,
-        update_id,
-        msg,
-        text,
-        "extracted",
-        None,
-        worker_id=worker.canonical_id,
-        raw_payload=upd,
-    )
-    session.flush()
-
-    claims = ingest_telegram_labour_claims(
-        session,
-        extractor,
-        text=text,
-        source_event_id=event.canonical_id,
-        message_datetime=message_datetime,
-        reporter_worker=worker,
-        default_project_id=worker.default_project_id,
-    )
-    if not claims:
-        event.ingestion_status = "ignored"
-        event.ingestion_reason = "not_labour"
-        session.commit()
-        batch.ignored += 1
-        client.send_message(chat_id, "Got it — nothing to log from that message.")
-        return
-
-    # Consolidate every project these new claims touched.
-    project_ids = {c.project_id for c in claims if c.project_id}
+    event.ingestion_status = "ignored"
+    event.ingestion_reason = "not_labour"
     session.commit()
-    for pid in project_ids:
-        consolidate_claims(session, pid)
-
-    batch.processed += 1
-    batch.claims_created += len(claims)
-    client.send_message(chat_id, _summarize_claims(claims))
+    batch.ignored += 1
+    client.send_message(chat_id, "Got it — nothing to log from that message.")
 
 
 def _handle_start(

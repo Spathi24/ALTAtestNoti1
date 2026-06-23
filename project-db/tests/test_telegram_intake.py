@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -390,7 +390,166 @@ class TestFreeTextIntake:
         batch = poll_telegram(db_session, client, MockTelegramLabourExtractor())
         assert batch.ignored == 2
         assert len(client.sent) == 2
-        assert any("labour bot" in t.lower() for _, t in client.sent)
+        # /help describes the bot; copy is now open-intake ("site bot") not "labour bot".
+        assert any("site bot" in t.lower() for _, t in client.sent)
+
+
+def _seed_comm(session, sender, project_id, *, days_ago, now):
+    """Seed a prior project-attributed telegram event for attribution-history tests."""
+    ts = now - timedelta(days=days_ago)
+    session.add(
+        LabourSourceEvent(
+            canonical_id=uuid.uuid4(),
+            source_channel="telegram",
+            source_kind="telegram_text",
+            ingestion_status="received",
+            received_at=ts,
+            source_created_at=ts,
+            source_sender_key=sender,
+            project_id_hint=project_id,
+            raw_text="x",
+        )
+    )
+    session.flush()
+
+
+class TestGeneralIntake:
+    """Open intake: anyone can text; non-labour messages are accepted as general
+    content, attributed to a project, and surfaced in the weekly report."""
+
+    def _bind(self, session, worker, user_id="555"):
+        session.add(
+            TelegramIdentity(
+                canonical_id=uuid.uuid4(),
+                worker_id=worker.canonical_id,
+                telegram_user_id=user_id,
+                telegram_chat_id="123",
+                verified=True,
+                verified_method="invite_token",
+            )
+        )
+        session.flush()
+
+    def test_unbound_sender_accepted_and_text_attributed(self, db_session):
+        p = _project(db_session)  # "923-927 Rockland"
+        client = MockTelegramClient(
+            [_update(1, "Concrete poured at 923-927 Rockland, looks good", from_id=777)]
+        )
+        batch = poll_telegram(
+            db_session, client, MockTelegramLabourExtractor(), general_intake=True
+        )
+        assert batch.quarantined == 0
+        assert batch.general == 1
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.ingestion_status == "received"
+        assert ev.ingestion_reason == "general_content"
+        assert ev.project_id_hint == p.canonical_id  # text match on the site name
+        assert db_session.query(LabourClaim).count() == 0
+        assert any("logged" in t.lower() for _, t in client.sent)
+
+    def test_general_message_without_project_is_unattributed(self, db_session):
+        _project(db_session)
+        client = MockTelegramClient([_update(1, "Who has the gate key?", from_id=777)])
+        batch = poll_telegram(
+            db_session, client, MockTelegramLabourExtractor(), general_intake=True
+        )
+        assert batch.general == 1
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.project_id_hint is None  # -> lands in the Site communications section
+
+    def test_one_source_event_per_update(self, db_session):
+        _project(db_session)
+        client = MockTelegramClient([_update(1, "generic site update", from_id=777)])
+        poll_telegram(db_session, client, MockTelegramLabourExtractor(), general_intake=True)
+        assert db_session.query(LabourSourceEvent).count() == 1
+
+    def test_labour_takes_precedence_when_general_on(self, db_session):
+        p = _project(db_session)
+        mike = _worker(db_session, "Mike", default_project=p)
+        self._bind(db_session, mike)
+        client = MockTelegramClient([_update(7, "worked rockland 7-4", from_id=555)])
+        batch = poll_telegram(
+            db_session,
+            client,
+            MockTelegramLabourExtractor(_labour_result()),
+            general_intake=True,
+        )
+        assert batch.claims_created == 1
+        assert batch.general == 0
+        ev = db_session.query(LabourSourceEvent).one()
+        assert ev.ingestion_status == "extracted"
+
+    def test_general_off_still_quarantines_strangers(self, db_session):
+        _project(db_session)
+        client = MockTelegramClient([_update(1, "random message", from_id=777)])
+        batch = poll_telegram(
+            db_session, client, MockTelegramLabourExtractor(), general_intake=False
+        )
+        assert batch.quarantined == 1
+        assert batch.general == 0
+
+
+class TestProjectAttribution:
+    def test_text_match_wins(self, db_session):
+        from project_db.ai.telegram_intake import _attribute_project
+
+        p = _project(db_session)
+        pid, method, _ = _attribute_project(
+            db_session, "999", "all done at 923-927 Rockland today"
+        )
+        assert pid == p.canonical_id
+        assert method == "text_match"
+
+    def test_worker_default_used_when_no_text_match(self, db_session):
+        from project_db.ai.telegram_intake import _attribute_project
+
+        p = _project(db_session)
+        w = _worker(db_session, "Mike", default_project=p)
+        pid, method, _ = _attribute_project(db_session, "999", "no site named here", worker=w)
+        assert pid == p.canonical_id
+        assert method == "worker_default"
+
+    def test_recency_weighted_dominant_project_wins(self, db_session):
+        from project_db.ai.telegram_intake import _attribute_project
+
+        a = _project(db_session)
+        b = Project(
+            canonical_id=uuid.uuid4(),
+            name="5768 St-Laurent",
+            status=ProjectStatus.ACTIVE,
+            client_id=a.client_id,
+        )
+        db_session.add(b)
+        db_session.flush()
+        now = datetime(2026, 6, 22, 12, 0, 0)
+        _seed_comm(db_session, "888", a.canonical_id, days_ago=1, now=now)
+        _seed_comm(db_session, "888", a.canonical_id, days_ago=2, now=now)
+        _seed_comm(db_session, "888", a.canonical_id, days_ago=3, now=now)
+        _seed_comm(db_session, "888", b.canonical_id, days_ago=10, now=now)
+        pid, method, _ = _attribute_project(db_session, "888", "generic note", now=now)
+        assert pid == a.canonical_id
+        assert method == "sender_recency"
+
+    def test_constant_switcher_is_ambiguous(self, db_session):
+        from project_db.ai.telegram_intake import _attribute_project
+
+        a = _project(db_session)
+        b = Project(
+            canonical_id=uuid.uuid4(),
+            name="5768 St-Laurent",
+            status=ProjectStatus.ACTIVE,
+            client_id=a.client_id,
+        )
+        db_session.add(b)
+        db_session.flush()
+        now = datetime(2026, 6, 22, 12, 0, 0)
+        _seed_comm(db_session, "888", a.canonical_id, days_ago=1, now=now)
+        _seed_comm(db_session, "888", a.canonical_id, days_ago=2, now=now)
+        _seed_comm(db_session, "888", b.canonical_id, days_ago=1, now=now)
+        _seed_comm(db_session, "888", b.canonical_id, days_ago=2, now=now)
+        pid, method, _ = _attribute_project(db_session, "888", "generic note", now=now)
+        assert pid is None
+        assert method == "unresolved"
 
 
 class TestOffsetCursor:
