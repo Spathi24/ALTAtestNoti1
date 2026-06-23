@@ -131,6 +131,15 @@ any flag with `PROJECT_DB_FEATURE_<NAME>=true`.
   projects' money lives in PDFs / simple-estimate / job-cost sheets the grid
   parser doesn't read, and the **cost side is essentially absent**, so margins
   show `revenue_only`. Legacy `FinancialRecord` remains as a transition net.
+- **Home Depot Pro purchases (variable-cost leak #1):** the deterministic import
+  spine is BUILT and validated on the real 24-month export — 190 transactions
+  ($58,997.52 net of refunds), job names resolved to projects (155/190; till
+  register codes like `STL`/`STMAT` mapped to the single St-Laurent / St-Mathieu
+  project via a unique street-prefix pass), tax re-derived, the line-item sum
+  reconciled against the header subtotal. The gap is line-item coverage: only
+  the transaction *headers* export in bulk; per-receipt line items must be
+  exported one transaction at a time (the manual chore the Phase-2 bot targets).
+  CLI: `homedepot import|status|report|queue|relink`. Visible behind `homedepot`.
 - **Labour intake (Telegram/Gmail):** built and technically live, but **blocked
   on adoption** — nobody is reliably logging labour, so there is nothing to
   reconcile. Hidden.
@@ -156,8 +165,15 @@ any flag with `PROJECT_DB_FEATURE_<NAME>=true`.
   per-document audit ("what is this, can it be counted, why") BEFORE any
   margin/money-at-risk view. **Do not start building until the gate is set and
   this is the chosen lane.**
-- **Home Depot purchases + hourly labour** as the two budget-overrun watch
-  targets — leading value hypotheses, unvalidated.
+- **Home Depot line-item backfill bot (Phase 2):** the import spine exists (see
+  Subsystem reality), but ~189 transactions still have header-only data because
+  the per-receipt detail export is buried behind ~5 clicks each. A logged-in
+  Playwright bot to replay that export — driven by the value-ranked `homedepot
+  queue`, throttled, resumable, NOT a stealth scraper — is the open question.
+  Needs owner setup: Playwright install + one-time login, and a look at the live
+  detail-export click path so selectors are reliable. Gated behind the
+  `homedepot_browser` flag (off). Hourly labour remains the other unvalidated
+  watch target.
 
 ---
 

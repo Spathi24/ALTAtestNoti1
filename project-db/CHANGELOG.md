@@ -9,6 +9,54 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-23 -- Home Depot Pro purchase ledger: import spine (variable-cost leak #1)
+
+The owner's #1 named cost leak gets its spine. The Home Depot Pro site exports
+two Excel shapes: a **transaction** export (24 months of headers -- date, txn
+number, store, job name, status, purchaser, subtotal, total; no line items) and
+a per-transaction **detail** export (SKU, product name, qty, unit price, line
+subtotal) that the site only emits one receipt at a time, behind ~5 clicks.
+This change ingests both deterministically -- no browser, no LLM, no network.
+
+**New ledger (`home_depot_transaction` + `home_depot_line_item`).** Standalone
+tables keyed by `transaction_number` (the receipt's natural key), like the
+labour-intake layer -- NOT bridged through `ExternalId`. Headers upsert in place
+(re-importing the 24-month export is idempotent); a transaction's line items are
+replaced wholesale on detail import (fresh snapshot, self-healing). Raw values
+kept verbatim (`job_name_raw`, `product_name`, untouched row in
+`source_meta_json`).
+
+**Nothing trusted to the source.** `tax` is re-derived (`total - subtotal`);
+refunds flagged by negative total; the line-item sum is reconciled against the
+header subtotal, and a mismatch lands `detail_status='unbalanced'` for review
+rather than being silently absorbed. The line-item backfill state lives on the
+header (`detail_status`, `detail_attempts`, ...) -- the work-queue, no side table.
+
+**Project attribution (`Project` stays the join nucleus).** `job_name` resolves
+to a project in descending confidence: exact name/code, substring, then a
+unique street-prefix pass for till abbreviations (`STL`/`STLAU`/`STL-GIFT-K` ->
+`5768 St-Laurent`, `STMAT` -> `1455 Rue St. Mathieu`) -- only when it resolves to
+exactly one project. Never guessed: `ONLINE ORDER` / `BODFS Order` / `TANIA` /
+blank stay `unresolved`, raw label always kept. `homedepot relink` re-runs
+linking after projects change.
+
+**Validated on the real export.** 190 transactions, 17 refunds, **$64,619.21
+gross / $58,997.52 net**; linking resolves 155/190 (unresolved $14.2k is the
+genuinely project-less online/BODFS/blank rows). The one real detail export
+(STL-GIFT-K) reconciles to the penny ($111.58 = 23.27 + 44.97 + 43.34).
+
+**CLI** (`homedepot` flag on; `homedepot_browser` off): `homedepot
+import <files|dirs>`, `status` (spend + backfill coverage), `report [--by-item]`
+(spend by project / top SKUs), `queue` (pending txns ranked by $ -- the backfill
+work-list), `relink`. 40 new tests; full suite green (1467).
+
+**Parked (Phase 2, needs owner setup):** a logged-in Playwright bot to replay the
+per-receipt detail export so line-item backfill stops being a hundreds-of-clicks
+chore -- driven by `homedepot queue`, throttled, resumable, NOT a stealth
+scraper. See HANDOFF "Parked".
+
+---
+
 ## 2026-06-23 -- Telegram general intake: anyone can text, into the weekly report
 
 The owner's chosen value angle: the bosses ARE the Drive/Monday admins, so that

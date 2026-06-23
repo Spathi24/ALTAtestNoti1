@@ -27,6 +27,12 @@ from project_db.db.models.finance import (
     Invoice,
     InvoiceStatus,
 )
+from project_db.db.models.homedepot import (
+    HD_DETAIL_STATUSES,
+    HD_PROJECT_MATCH_METHODS,
+    HomeDepotLineItem,
+    HomeDepotTransaction,
+)
 from project_db.db.models.labour_intake import (
     CLAIM_TYPES,
     CLUSTER_STATUSES,
@@ -76,6 +82,8 @@ __all__ = [
     "FINANCIAL_DIRECTIONS",
     "FINANCIAL_DOC_ROLES",
     "FINANCIAL_RECORD_KINDS",
+    "HD_DETAIL_STATUSES",
+    "HD_PROJECT_MATCH_METHODS",
     "LINE_ITEM_AMOUNT_TYPES",
     "LINE_ITEM_SIDES",
     "LINE_ITEM_SOURCES",
@@ -100,6 +108,8 @@ __all__ = [
     "FieldNote",
     "FinancialLineItem",
     "FinancialRecord",
+    "HomeDepotLineItem",
+    "HomeDepotTransaction",
     "Invoice",
     "InvoiceStatus",
     "LabourClaim",

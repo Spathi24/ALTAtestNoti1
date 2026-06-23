@@ -3036,6 +3036,173 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _homedepot_import(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from project_db.connectors.homedepot import import_details, import_transactions, parse_export
+    from project_db.connectors.homedepot.parse import HomeDepotParseError
+
+    paths: list[Path] = []
+    for raw in args.paths:
+        p = Path(raw)
+        if p.is_dir():
+            paths.extend(sorted(p.glob("*.xlsx")))
+        else:
+            paths.append(p)
+    if not paths:
+        print("FAIL: no .xlsx files found", file=sys.stderr)
+        return 2
+
+    with session_scope() as s:
+        for p in paths:
+            if not p.exists():
+                print(f"  SKIP (missing): {p}", file=sys.stderr)
+                continue
+            try:
+                parsed = parse_export(p)
+            except HomeDepotParseError as exc:
+                print(f"  SKIP: {exc}", file=sys.stderr)
+                continue
+            if parsed.kind == "transactions":
+                st = import_transactions(s, parsed, source_file=p.name)
+                print(
+                    f"  OK: {p.name} [transactions] {len(parsed)} rows -> "
+                    f"{st['inserted']} new, {st['updated']} updated, "
+                    f"{st['refunds']} refunds, {st['unresolved']} unresolved-project"
+                )
+            else:
+                st = import_details(s, parsed, source_file=p.name)
+                print(
+                    f"  OK: {p.name} [details] {st['transactions']} txns, "
+                    f"{st['line_items']} line items, {st['reconciled']} reconciled, "
+                    f"{st['unbalanced']} UNBALANCED, {st['headers_created']} stub header(s)"
+                )
+    return 0
+
+
+def _homedepot_status(_: argparse.Namespace) -> int:
+    from project_db.connectors.homedepot import reports as R
+
+    with session_scope() as s:
+        c = R.coverage_summary(s)
+        print("Home Depot ledger")
+        print(
+            f"  Transactions:   {c['transactions']}  "
+            f"({c['purchases']} purchases, {c['refunds']} refunds)"
+        )
+        print(f"  Gross spend:    ${c['gross_spend']:,.2f}")
+        print(f"  Refunds:        ${c['refunded']:,.2f}")
+        print(f"  Net spend:      ${c['net_spend']:,.2f}")
+        print(f"  Line items:     {c['line_items']}")
+        print(
+            f"  Backfilled:     {c['backfilled_count']}/{c['transactions']} txns = "
+            f"${c['backfilled_spend']:,.2f} ({c['backfilled_spend_pct']:.0f}% of gross)"
+        )
+        print(f"  Projects:       {c['linked']} linked, {c['unresolved']} unresolved")
+        if c["unbalanced"]:
+            print(f"  ! Unbalanced:   {c['unbalanced']} (line sum != subtotal -- review)")
+        print("  Detail status:")
+        for k, v in sorted(c["by_detail_status"].items()):
+            print(f"    {k:<12} {v}")
+    return 0
+
+
+def _homedepot_report(args: argparse.Namespace) -> int:
+    from project_db.ai.views import _resolve_project
+    from project_db.connectors.homedepot import reports as R
+
+    with session_scope() as s:
+        pid = None
+        if args.project:
+            proj = _resolve_project(s, args.project)
+            if proj is None:
+                print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
+                return 2
+            pid = proj.canonical_id
+            print(f"Project: {proj.name}\n")
+        if args.by_item:
+            rows = R.top_items(s, limit=args.limit, project_id=pid)
+            if not rows:
+                print("No line items yet. Import a details export first.")
+                return 0
+            print(f"Top {len(rows)} item(s) by spend:")
+            for r in rows:
+                name = (r["product_name"] or "")[:58]
+                print(
+                    f"  ${r['spend']:>10,.2f}  x{r['quantity']!s:<6} "
+                    f"{(r['sku'] or ''):<12} {name}"
+                )
+        else:
+            rows = R.spend_by_project(s)
+            if not rows:
+                print("No transactions yet. Import a transaction export first.")
+                return 0
+            print("Net spend by project:")
+            for r in rows:
+                print(
+                    f"  ${r['net_spend']:>12,.2f}  {r['transactions']:>4} txns  {r['label']}"
+                )
+    return 0
+
+
+def _homedepot_queue(args: argparse.Namespace) -> int:
+    from decimal import Decimal
+
+    from project_db.connectors.homedepot import reports as R
+
+    with session_scope() as s:
+        txns = R.backfill_queue(s, limit=args.limit, include_refunds=args.include_refunds)
+        if not txns:
+            print("Queue empty -- no pending transactions to backfill.")
+            return 0
+        total = sum(
+            (abs(Decimal(str(t.total))) if t.total is not None else Decimal("0")) for t in txns
+        )
+        print(
+            f"{len(txns)} pending transaction(s), ${total:,.2f} of spend awaiting "
+            f"line-item backfill (biggest first):\n"
+        )
+        for t in txns:
+            tot = f"${t.total:,.2f}" if t.total is not None else "?"
+            print(
+                f"  {tot:>12}  {t.sales_date}  {(t.job_name_raw or ''):<14} "
+                f"{t.transaction_number}"
+            )
+    return 0
+
+
+def _homedepot_relink(_: argparse.Namespace) -> int:
+    from project_db.connectors.homedepot import relink_transactions
+
+    with session_scope() as s:
+        st = relink_transactions(s)
+        print(
+            f"Re-linked: {st['linked']} linked, {st['unresolved']} unresolved, "
+            f"{st['manual_kept']} manual kept"
+        )
+    return 0
+
+
+def cmd_homedepot(args: argparse.Namespace) -> int:
+    """Home Depot Pro purchase ledger: import exports, report spend, see the queue."""
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_sqlite_schema(engine)
+
+    dispatch = {
+        "import": _homedepot_import,
+        "status": _homedepot_status,
+        "report": _homedepot_report,
+        "queue": _homedepot_queue,
+        "relink": _homedepot_relink,
+    }
+    handler = dispatch.get(args.homedepot_action)
+    if handler is None:
+        print(f"Unknown homedepot action: {args.homedepot_action}", file=sys.stderr)
+        return 2
+    return handler(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="project_db")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -3169,6 +3336,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required to confirm 'accept all'",
     )
     proposals.set_defaults(func=cmd_proposals)
+
+    hd = sub.add_parser(
+        "homedepot",
+        help="Home Depot Pro purchase ledger: import exports, report spend, see the backfill queue",
+    )
+    hd_sub = hd.add_subparsers(dest="homedepot_action", required=True)
+    hd_imp = hd_sub.add_parser(
+        "import",
+        help="Import transaction and/or detail Excel export(s); kind is auto-detected",
+    )
+    hd_imp.add_argument(
+        "paths", nargs="+", help="One or more .xlsx files, or directories to scan for .xlsx"
+    )
+    hd_sub.add_parser(
+        "status", help="Coverage: spend, line-item backfill %, unbalanced/unresolved counts"
+    )
+    hd_rep = hd_sub.add_parser(
+        "report", help="Net spend by project, or --by-item for the top SKUs"
+    )
+    hd_rep.add_argument(
+        "--by-item",
+        action="store_true",
+        help="Rank line items by spend instead of summarizing by project",
+    )
+    hd_rep.add_argument(
+        "--project", help="Limit --by-item to one project (name fragment or UUID)"
+    )
+    hd_rep.add_argument(
+        "--limit", type=int, default=25, help="Max rows for --by-item (default 25)"
+    )
+    hd_q = hd_sub.add_parser(
+        "queue",
+        help="Pending transactions ranked by dollar value -- the backfill work-list",
+    )
+    hd_q.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
+    hd_q.add_argument(
+        "--include-refunds", action="store_true", help="Include refund transactions"
+    )
+    hd_sub.add_parser(
+        "relink",
+        help="Re-run job -> project linking over imported transactions (after adding projects)",
+    )
+    hd.set_defaults(func=cmd_homedepot)
 
     lt = sub.add_parser(
         "llm-test",
@@ -3601,6 +3811,7 @@ _CLI_FEATURES: dict[str, str] = {
     # telegram_intake OR telegram_general_intake is on), so it is NOT listed here.
     "labour-claims": "labour_intake",
     "labour-consolidate": "labour_intake",
+    "homedepot": "homedepot",
 }
 
 

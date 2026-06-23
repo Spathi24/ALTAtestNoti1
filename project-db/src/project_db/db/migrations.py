@@ -610,6 +610,86 @@ SQLITE_TELEGRAM_IDENTITY_INDEXES = (
 )
 
 
+SQLITE_HOME_DEPOT_TRANSACTION_DDL = """
+CREATE TABLE home_depot_transaction (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    transaction_number VARCHAR NOT NULL,
+    sales_date DATE,
+    purchase_location VARCHAR,
+    job_name_raw VARCHAR,
+    status VARCHAR,
+    purchaser VARCHAR,
+    subtotal NUMERIC(14, 2),
+    total NUMERIC(14, 2),
+    tax NUMERIC(14, 2),
+    currency VARCHAR,
+    is_refund BOOLEAN NOT NULL DEFAULT 0,
+    project_id TEXT,
+    project_match_method VARCHAR NOT NULL DEFAULT 'unresolved',
+    project_match_confidence FLOAT,
+    detail_status VARCHAR NOT NULL DEFAULT 'pending',
+    line_item_count INTEGER NOT NULL DEFAULT 0,
+    line_items_subtotal NUMERIC(14, 2),
+    reconciled BOOLEAN,
+    reconcile_delta NUMERIC(14, 2),
+    detail_attempts INTEGER NOT NULL DEFAULT 0,
+    detail_last_error TEXT,
+    detail_fetched_at DATETIME,
+    source_export_file VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_HOME_DEPOT_TRANSACTION_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_home_depot_transaction_number "
+    "ON home_depot_transaction (transaction_number)",
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_transaction_project "
+    "ON home_depot_transaction (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_transaction_detail_status "
+    "ON home_depot_transaction (detail_status)",
+)
+
+SQLITE_HOME_DEPOT_LINE_ITEM_DDL = """
+CREATE TABLE home_depot_line_item (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    transaction_id TEXT,
+    transaction_number VARCHAR NOT NULL,
+    line_number INTEGER,
+    sku VARCHAR,
+    product_name TEXT,
+    quantity NUMERIC(12, 3),
+    unit_price NUMERIC(14, 4),
+    subtotal NUMERIC(14, 2),
+    project_id TEXT,
+    sales_date DATE,
+    purchase_location VARCHAR,
+    category_guess VARCHAR,
+    source_export_file VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (transaction_id) REFERENCES home_depot_transaction(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_HOME_DEPOT_LINE_ITEM_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_transaction "
+    "ON home_depot_line_item (transaction_id)",
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_txn_number "
+    "ON home_depot_line_item (transaction_number)",
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_sku "
+    "ON home_depot_line_item (sku)",
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_project "
+    "ON home_depot_line_item (project_id)",
+)
+
+
 def _add_missing_columns(conn, inspector, table: str, columns: dict[str, str]) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     for name, ddl_type in columns.items():
@@ -710,6 +790,17 @@ def ensure_sqlite_schema(engine) -> None:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "telegram_identity", SQLITE_TELEGRAM_IDENTITY_DDL)
         for _idx_ddl in SQLITE_TELEGRAM_IDENTITY_INDEXES:
+            conn.execute(text(_idx_ddl))
+        # Home Depot Pro purchase ledger (FK -> project; project exists already).
+        _create_table_if_missing(
+            conn, tables, "home_depot_transaction", SQLITE_HOME_DEPOT_TRANSACTION_DDL
+        )
+        for _idx_ddl in SQLITE_HOME_DEPOT_TRANSACTION_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(
+            conn, tables, "home_depot_line_item", SQLITE_HOME_DEPOT_LINE_ITEM_DDL
+        )
+        for _idx_ddl in SQLITE_HOME_DEPOT_LINE_ITEM_INDEXES:
             conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "field_note", SQLITE_FIELD_NOTE_DDL)
         # Post-DDL columns on field_note (email_ingest_id added after initial DDL).

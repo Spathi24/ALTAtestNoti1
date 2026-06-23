@@ -27,21 +27,27 @@ DEFAULT_FEATURES: dict[str, bool] = {
     "field_notes_typed": True,
     "finance_margins": True,
     "ledger_health": True,
-    "task_date_edit": False,
+    "task_date_edit": True,
     # Explicitly quarantined by default.
     "field_notes_email": False,
     "field_notes_photo": False,
     "finance_legacy": False,
     "obligations": False,
     "value_caught": False,
-    "project_logs": False,
-    "labour_intake": False,
-    "telegram_intake": False,
+    "project_logs": True,
+    "labour_intake": True,
+    "telegram_intake": True,
     # General (non-labour) Telegram intake: anyone can text the bot and the
     # message is captured + attributed to a project + surfaced in the weekly
     # report. Independent of telegram_intake (labour hour-logging) so open
     # intake can be piloted without enabling labour write-back.
-    "telegram_general_intake": False,
+    "telegram_general_intake": True,
+    # Home Depot Pro purchase ledger (variable-cost leak #1 in CLAUDE.md).
+    # Deterministic import of the transaction + line-item Excel exports. The
+    # browser backfill bot is gated separately under `homedepot_browser` because
+    # it drives a logged-in session and needs one-time operator setup.
+    "homedepot": True,
+    "homedepot_browser": False,
     "monday_gantt": False,
     "roadmap": False,
     "llm_pdf_finance": False,
@@ -50,7 +56,7 @@ DEFAULT_FEATURES: dict[str, bool] = {
     "admin_nav": False,
     "admin_cli": True,
     # Token-spending batch proposal generation is not part of the rescue demo.
-    "proposal_generation": False,
+    "proposal_generation": True,
 }
 
 
