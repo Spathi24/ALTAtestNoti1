@@ -20,6 +20,10 @@ env/
 # Runtime artifacts — `project_db rebuild` exports proposals here before re-deriving
 proposals_backup_*.json
 
+# Financial reconciliation working dir — generated bundles + advisory reports,
+# regenerable from the DB via export_financial_bundles.py + reconcile_financials_llm.py
+.reconcile_bundles/
+
 # Environment / secrets
 .env
 *.env.local
