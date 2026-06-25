@@ -139,6 +139,16 @@ Valid, but explicitly NOT in slice 1 (do not build until their slice):
   table needs BOTH a SQLAlchemy model (for `create_all` / fresh DBs) AND a DDL block wired into
   `ensure_sqlite_schema` (for existing local SQLite files). Keep FK-dependency creation order correct.
 - Avoid scope creep: each slice has a Definition of Done; close it before starting the next.
+- **Lint gate (owner, 2026-06-25):** run ruff (`ruff check .` + `format --check`) and keep it
+  GREEN *before* continuing to the next feature/slice — not only at the end. Don't stack work on
+  an un-linted base. (CI ruff is blocking and `ruff>=0.5` is unpinned, so drift happens.)
+- **Re-anchor each step (owner, 2026-06-25):** before and during any slice, re-read its Definition
+  of Done + hard scope limits and quote them back to yourself, so the plan stays rock-steady and
+  you don't overflow/drift.
+- **Basal/upstream caution (owner, 2026-06-25):** the parse/ingestion spine is foundational —
+  changing a shared/upstream object (models, the parse layer, `DocumentText`) can ripple across
+  many files/functions. Think twice, enumerate downstream consumers first, prefer additive/
+  backward-compatible changes, and update all affected call sites + tests in the same pass.
 
 ## Completed Since Last Update
 
