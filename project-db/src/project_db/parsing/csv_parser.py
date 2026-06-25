@@ -17,7 +17,7 @@ import csv
 import io
 
 from project_db.parsing.base import ParsedDocument, ParsedEvidence
-from project_db.parsing.tableutil import detect_header_index
+from project_db.parsing.tableutil import detect_header
 
 _CSV_MIMES = {"text/csv", "text/comma-separated-values", "application/csv"}
 _MAX_RENDER_ROWS = 1000  # cap the compatibility Markdown; structured sample is separate
@@ -96,7 +96,7 @@ class CsvParser:
                 evidence_spans=[],
             )
 
-        header_idx = detect_header_index(rows)
+        header_idx, header_conf = detect_header(rows)
         headers = [((h or "").strip() or f"col{i}") for i, h in enumerate(rows[header_idx])]
         data_rows = rows[header_idx + 1 :]
         n_cols = max(len(r) for r in rows)
@@ -135,7 +135,8 @@ class CsvParser:
                 "n_rows": len(data_rows),
                 "rows_sample": sample,
                 "rows_preview": rows_preview,
+                "header_confidence": header_conf,
             },
-            confidence=1.0,
+            confidence=header_conf,
         )
         return ParsedDocument(rendered_text=rendered, structured=structured, evidence_spans=[span])

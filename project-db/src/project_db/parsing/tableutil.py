@@ -47,17 +47,41 @@ def _nonempty_count(row: list) -> int:
     return sum(1 for c in row if c not in (None, ""))
 
 
-def detect_header_index(rows: list[list], *, scan: int = 15) -> int:
-    """Index of the most likely header row among the first *scan* rows.
+def detect_header(rows: list[list], *, scan: int = 15) -> tuple[int, float]:
+    """Best header-row index + a CONFIDENCE in [0,1].
 
     Among header-like rows we pick the one with the MOST filled cells (a real
     column header labels every column, while metadata rows like "address | Date |
-    5/5/2026" fill only a few), earliest on a tie. Falls back to 0 when nothing
-    looks like a header (e.g. a bare data table)."""
-    best_idx, best_score = 0, -1
-    for i, row in enumerate(rows[:scan]):
-        if looks_like_header(row):
-            score = _nonempty_count(row)
-            if score > best_score:
-                best_idx, best_score = i, score
-    return best_idx
+    5/5/2026" fill only a few), earliest on a tie.
+
+    The confidence is a cheap, deterministic UNCERTAINTY SIGNAL -- it is NOT a
+    second guess. It is meant to be carried on the table_region span so the
+    downstream extractor (Slice 6, where the LLM already runs) can RE-DERIVE the
+    header from `rows_preview` when confidence is low, instead of calling the LLM
+    per-file inside parsing. For PDFs this is moot -- Docling/TableFormer detects
+    headers directly.
+      1.0  clear winner, >=3 labelled columns, strictly beats the runner-up
+      0.8  >=2 labelled columns, strictly beats the runner-up
+      0.5  a tie (two rows equally header-like) -- genuinely ambiguous
+      0.3  nothing looked like a header (fell back to row 0)
+    """
+    scored = [
+        (i, _nonempty_count(row)) for i, row in enumerate(rows[:scan]) if looks_like_header(row)
+    ]
+    if not scored:
+        return 0, 0.3
+    scored.sort(key=lambda x: (-x[1], x[0]))
+    best_idx, best_score = scored[0]
+    runner_up = scored[1][1] if len(scored) > 1 else 0
+    if best_score <= runner_up:
+        conf = 0.5
+    elif best_score >= 3:
+        conf = 1.0
+    else:
+        conf = 0.8
+    return best_idx, conf
+
+
+def detect_header_index(rows: list[list], *, scan: int = 15) -> int:
+    """Back-compat: the header index only (see `detect_header` for confidence)."""
+    return detect_header(rows, scan=scan)[0]

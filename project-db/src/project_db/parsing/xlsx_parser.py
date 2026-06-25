@@ -25,7 +25,7 @@ import io
 import warnings
 
 from project_db.parsing.base import ParsedDocument, ParsedEvidence
-from project_db.parsing.tableutil import detect_header_index, is_formula
+from project_db.parsing.tableutil import detect_header, is_formula
 
 _XLSX_MIMES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
@@ -135,7 +135,7 @@ class XlsxParser:
                         except Exception:
                             pass
 
-                header_idx = detect_header_index(rows)
+                header_idx, header_conf = detect_header(rows)
                 headers = [(_cell(h) or f"col{i}") for i, h in enumerate(rows[header_idx])]
                 width = max(len(headers), max((len(r) for r in rows), default=0))
                 data_rows = rows[header_idx + 1 :]
@@ -189,8 +189,9 @@ class XlsxParser:
                             "rows_sample": sample,
                             "rows_preview": rows_preview,
                             "cells": formula_cells,
+                            "header_confidence": header_conf,
                         },
-                        confidence=1.0,
+                        confidence=header_conf,
                     )
                 )
                 sheet_meta.append(

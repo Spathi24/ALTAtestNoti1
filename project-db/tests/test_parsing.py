@@ -81,6 +81,17 @@ def test_csv_parser_detects_header_below_title_rows():
     assert cj["rows_sample"][0]["Total Amount"] == "$1,000.00"
     # Title rows are not lost.
     assert any("ESTIMATE" in str(c) for row in cj["rows_preview"] for c in row)
+    # A clear, well-labelled header -> high confidence.
+    assert cj["header_confidence"] == 1.0
+
+
+def test_csv_parser_low_header_confidence_when_no_header():
+    # All-numeric rows: nothing looks like a header -> low-confidence fallback,
+    # an uncertainty signal the downstream extractor can act on (Slice 6).
+    parsed = CsvParser().parse(b"1,2,3\n4,5,6\n7,8,9\n", doc_name="grid.csv", mime="text/csv")
+    cj = parsed.evidence_spans[0].content_json
+    assert cj["header_confidence"] == 0.3
+    assert parsed.evidence_spans[0].confidence == 0.3
 
 
 def test_csv_parser_empty_input():
