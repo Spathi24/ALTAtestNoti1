@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from project_db.parsing.base import DocumentParser, ParsedDocument, ParsedEvidence
 from project_db.parsing.csv_parser import CsvParser
+from project_db.parsing.pdf_parser import PdfParser
 from project_db.parsing.router import available_parsers, get_parser_for, register_parser
 from project_db.parsing.service import parse_document_content, parse_documents
 from project_db.parsing.xlsx_parser import XlsxParser
@@ -24,6 +25,7 @@ __all__ = [
     "DocumentParser",
     "ParsedDocument",
     "ParsedEvidence",
+    "PdfParser",
     "XlsxParser",
     "available_parsers",
     "get_parser_for",

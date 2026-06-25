@@ -42,8 +42,11 @@ limitation is not a license to add a phase.**
       detection above title rows, formulas/merged/number-formats, `rows_sample` + raw
       `rows_preview`). Validated on 115 real HD files (0 failures). `.xls` legacy not handled
       (routes to skipped).
-- [ ] Slice 4 — Docling PDF parser → page text blocks + table regions as `EvidenceSpan`. ← NEXT
-- [ ] Slice 5 — Nullable evidence links on FinancialRecord / FinancialLineItem / ContractObligation.
+- [x] **Slice 4 — Docling PDF parser (+ PyMuPDF fallback).** DONE 2026-06-25. `PdfParser`:
+      Docling (layout + TableFormer) recovers tables with page + bbox + spanning headers; falls
+      back to PyMuPDF when Docling absent/fails. Docling is a SEPARATE `[docling]` extra, NOT in
+      CI; OCR disabled (digital PDFs). Validated on real table-heavy PDFs.
+- [ ] Slice 5 — Nullable evidence links on FinancialRecord / FinancialLineItem / ContractObligation. ← NEXT
 - [ ] Slice 6 — One structured extraction path consumes evidence bundles; refuse trusted records without evidence.
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
 - [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence spans.
@@ -110,7 +113,30 @@ existing reports and tests.
     total, multi-sheet) + cell-level CITATION for the future evidence-bundle extractor
     (Slice 6) — NOT a dramatic flat-text classification win on simple single tables. Do not
     overclaim it.
-- Next: Slice 4 — Docling PDF parser (page blocks + table regions as EvidenceSpan).
+- **Slice 4: DONE (2026-06-25).** `parsing/pdf_parser.py` `PdfParser` (registered). Docling backend
+  (layout analysis + TableFormer) emits a `table_region` EvidenceSpan per table with page + bbox +
+  structured `rows_sample`, and a `page` span per page of text; `export_to_markdown` is the compat
+  rendering. Falls back to PyMuPDF (`page` spans) when Docling is absent or a conversion errors —
+  never raises. Backend recorded in `structured_json`.
+  - **Docling specifics:** heavy optional dep in a SEPARATE `[docling]` extra (NOT in `dev`/CI;
+    `pip install -e ".[docling]"`; pulls torch + onnxruntime; models cached under
+    `~/.cache/huggingface`). OCR is DISABLED (`do_ocr=False`) — these are digital PDFs, and the
+    default rapidocr model (`torch.PP-OCRv6.det.small`) is broken in this build anyway; scanned-PDF
+    OCR is a future option. Tested with docling 2.107.0.
+  - **Correctness validated on real table-heavy PDFs** (owner's directive): the OpenAI structured-
+    outputs PDF (table on p2, headers + rows bound, bbox captured) and the 9-page Docling paper
+    (3 tables; TableFormer correctly recovered a SPANNING header — `native backend.TTS` /
+    `native backend.Pages/s` / `pypdfium backend.TTS` — so each column traces to its full header
+    path). This spanning-header / nested-hierarchy recovery is exactly the "multiple sums" structure
+    flat text destroys — the real Docling win. (Real ACTIVE-project estimate/invoice PDFs live in
+    Drive, not on disk, so on-disk validation used these table-heavy PDFs; validate on fetched
+    project PDFs when Drive access is wired.)
+  - 4 tests in `test_pdf_parsing.py` (fallback forced for CI; Docling path gated on import). Adding
+    PdfParser to the registry rippled into 2 Slice-2 tests that used PDF as their "unsupported type"
+    example — fixed to use an image mime (the registry-ripple the owner warned about, caught by the
+    suite). Full suite **1503 passed**; ruff+format clean.
+- Next: Slice 5 — nullable `evidence_span_id` / `evidence_locator_json` on FinancialRecord /
+  FinancialLineItem / ContractObligation (additive; old rows stay valid).
 - Everything below ("Reference architecture") is **background, not a command to implement now.**
 
 ## Struggles / Bugs / Parked

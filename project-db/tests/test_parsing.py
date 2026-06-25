@@ -106,7 +106,8 @@ def test_csv_parser_can_parse_by_extension_and_mime():
 def test_router_routes_csv_and_skips_others():
     assert isinstance(get_parser_for(mime="text/csv", filename=None), CsvParser)
     assert isinstance(get_parser_for(mime=None, filename="a.csv"), CsvParser)
-    assert get_parser_for(mime="application/pdf", filename="a.pdf") is None
+    # An image has no registered parser (CSV/XLSX/PDF are all handled now).
+    assert get_parser_for(mime="image/png", filename="a.png") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -134,8 +135,9 @@ def test_parse_document_content_writes_full_spine(session):
 
 
 def test_parse_document_content_skips_unsupported_mime(session):
-    doc = _doc(session, name="plan.pdf", mime="application/pdf")
-    parse = parse_document_content(session, document=doc, content=b"%PDF-1.7 ...")
+    # An image type has no parser -> skipped (PDF/CSV/XLSX are all handled now).
+    doc = _doc(session, name="photo.png", mime="image/png")
+    parse = parse_document_content(session, document=doc, content=b"\x89PNG\r\n\x1a\n ...")
     session.commit()
 
     assert parse.status == "skipped"

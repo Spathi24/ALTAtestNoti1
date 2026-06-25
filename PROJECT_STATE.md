@@ -26,7 +26,13 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
 - Slice 3 (`XlsxParser` via openpyxl) — **DONE 2026-06-25**. Structure-preserving: sheets,
   header-below-title detection, formulas/merged/number-formats, `rows_sample` + raw
   `rows_preview`. Validated on 115 real HD files (0 failures). NO extraction behavior changed.
-- **Next: Slice 4** — Docling PDF parser (page blocks + table regions as EvidenceSpan).
+- Slice 3.1 (shared header detection) — **DONE 2026-06-25**. `parsing/tableutil.py` fixes the
+  row-1-header bug on real estimates (Rockland); used by CSV + XLSX.
+- Slice 4 (Docling PDF parser + PyMuPDF fallback) — **DONE 2026-06-25**. `PdfParser`: Docling
+  (TableFormer) recovers tables w/ page+bbox+spanning headers; PyMuPDF fallback. Docling in a
+  SEPARATE `[docling]` extra (NOT in CI), OCR off. Validated on real table-heavy PDFs.
+- **Next: Slice 5** — nullable evidence links (`evidence_span_id`/`evidence_locator_json`) on
+  FinancialRecord / FinancialLineItem / ContractObligation (additive; old rows stay valid).
 
 ## Known Bugs
 
@@ -195,6 +201,19 @@ Valid, but explicitly NOT in slice 1 (do not build until their slice):
   is robustness + cell citation for Slice 6, not flat-text classification. 7 tests in
   `test_xlsx_parsing.py`; full suite **1498 passed**; ruff + format clean. Deferred next: Slice 4
   Docling PDF.
+
+- 2026-06-25: **Slice 3.1 + Slice 4 COMPLETE.**
+  - 3.1 (header detection): real Rockland estimate exposed that CSV took row 1 (`,ESTIMATE,,,,`) as
+    the header. Shared `parsing/tableutil.py::detect_header_index` (header-like row with the MOST
+    filled cells) used by CSV + XLSX; raw `rows_preview` safety net. Rockland header now row 6;
+    115 HD xlsx still row 1. Recorded KNOWN GAPS (multi-table-per-sheet; nested subtotals).
+  - 4 (PDF): `parsing/pdf_parser.py` `PdfParser` (registered). Docling (layout + TableFormer) →
+    `table_region` spans with page+bbox+spanning-header recovery + `page` spans; PyMuPDF fallback.
+    Docling = SEPARATE `[docling]` extra (NOT CI; `pip install -e ".[docling]"`; torch+onnx, models
+    in `~/.cache/huggingface`); OCR off (digital PDFs; rapidocr default model is broken). Validated
+    on real table-heavy PDFs (spanning header `native backend.TTS` recovered). Adding PdfParser
+    rippled into 2 Slice-2 tests (used PDF as "unsupported" example) — fixed to an image mime.
+    4 tests in `test_pdf_parsing.py`; full suite **1503 passed**; ruff + format clean. Next: Slice 5.
 
 ## Open Questions
 

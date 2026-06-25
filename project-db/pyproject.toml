@@ -14,6 +14,12 @@ postgres = ["psycopg[binary]>=3.1"]
 ai = ["anthropic>=0.40"]
 gdrive = ["google-api-python-client>=2.0", "google-auth>=2.0", "google-auth-oauthlib>=1.0"]
 content = ["pymupdf>=1.24", "python-docx>=1.1", "openpyxl>=3.1"]
+# Docling PDF parser (layout analysis + TableFormer). HEAVY (pulls torch +
+# onnxruntime, ~500MB HuggingFace models on first run). Deliberately a SEPARATE
+# optional extra and NOT in `dev`/CI -- the PdfParser lazy-imports it and falls
+# back to PyMuPDF when absent, so the suite stays green without it.
+# Tested with docling 2.107.0. Install locally: pip install -e ".[docling]"
+docling = ["docling>=2.107"]
 rag = ["openai>=1.40", "tiktoken>=0.7", "numpy>=1.26"]
 telegram = ["pyTelegramBotAPI>=4.34"]
 ui = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "jinja2>=3.1", "python-multipart>=0.0.9", "markdown>=3.5"]

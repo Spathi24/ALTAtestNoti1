@@ -9,6 +9,36 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-25 -- Evidence-backed parsing: Docling PDF parser (Slice 4)
+
+``PdfParser`` with two backends. When the optional ``[docling]`` extra is
+installed, Docling (IBM's layout-analysis + TableFormer models) recovers each
+table's structure with its page number and bounding box, including SPANNING
+HEADERS and nested row/column hierarchy -- the "figure it out from row/column
+labels" shape that flat PDF text destroys. Each table becomes a ``table_region``
+EvidenceSpan (headers + structured rows_sample + page/bbox) and each page a
+``page`` span; ``export_to_markdown`` is the DocumentText-compatible rendering.
+When Docling is absent or a conversion errors, it falls back to the existing
+PyMuPDF text path (page spans) -- it never raises.
+
+Docling is a heavy, OPTIONAL dependency kept in a separate ``[docling]`` extra
+that is deliberately NOT in CI (pulls torch + onnxruntime, ~500MB HuggingFace
+models on first run). OCR is disabled (these are digital PDFs; the default
+rapidocr model is broken in this build, and skipping OCR is faster) -- scanned
+PDFs are a future option. Validated on real table-heavy PDFs: the 9-page Docling
+paper's complex table was recovered with its multi-column spanning header
+(``native backend.TTS`` / ``native backend.Pages/s``), each column traceable to
+its full header path. (Real active-project estimate/invoice PDFs live in Drive,
+not on disk; validate on fetched project PDFs once Drive access is wired.)
+
+Registering the PDF parser correctly rippled into two earlier tests that used
+"PDF" as their unsupported-type example -- now an image mime; the suite caught
+it. 4 new tests (fallback forced for CI; Docling path gated on import). Full
+suite 1503 passed; ruff + format clean. Next: Slice 5 -- nullable evidence links
+on the financial records.
+
+---
+
 ## 2026-06-25 -- Evidence-backed parsing: XLSX parser (Slice 3)
 
 ``XlsxParser`` (openpyxl) -- the structure-preserving spreadsheet parser, since
