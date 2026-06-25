@@ -25,6 +25,7 @@ import io
 import warnings
 
 from project_db.parsing.base import ParsedDocument, ParsedEvidence
+from project_db.parsing.tableutil import detect_header_index, is_formula
 
 _XLSX_MIMES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
@@ -42,44 +43,6 @@ def _a1(row: int, col: int) -> str:
     from openpyxl.utils import get_column_letter
 
     return f"{get_column_letter(col)}{row}"
-
-
-def _is_formula(value: object) -> bool:
-    return isinstance(value, str) and value.startswith("=")
-
-
-def _looks_numeric(x: object) -> bool:
-    if isinstance(x, (int, float)):
-        return True
-    if not isinstance(x, str):
-        return False
-    s = x.strip().lstrip("$").replace(" ", "").replace(",", "").replace("%", "")
-    if not s:
-        return False
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
-
-def _looks_like_header(row: list) -> bool:
-    """A header row has >=2 non-empty cells, mostly non-numeric text (column
-    titles), and no formulas. Lets us skip a title/metadata row sitting above the
-    real header (common in estimate exports)."""
-    nonempty = [c for c in row if c not in (None, "")]
-    if len(nonempty) < 2 or any(_is_formula(c) for c in nonempty):
-        return False
-    text = [c for c in nonempty if isinstance(c, str) and not _looks_numeric(c)]
-    return len(text) >= max(2, (len(nonempty) + 1) // 2)
-
-
-def _detect_header_index(rows: list[list], *, scan: int = 10) -> int:
-    """Index (into the non-empty rows) of the best header row; falls back to 0."""
-    for i, row in enumerate(rows[:scan]):
-        if _looks_like_header(row):
-            return i
-    return 0
 
 
 def _cell(x: object) -> str:
@@ -138,7 +101,7 @@ class XlsxParser:
                         continue
                     rows.append([c.value for c in row])
                     for c in row:
-                        if _is_formula(c.value) and len(formula_cells) < _MAX_CELLS_MAP:
+                        if is_formula(c.value) and len(formula_cells) < _MAX_CELLS_MAP:
                             formula_cells[c.coordinate] = {
                                 "formula": c.value,
                                 "number_format": c.number_format,
@@ -172,14 +135,14 @@ class XlsxParser:
                         except Exception:
                             pass
 
-                header_idx = _detect_header_index(rows)
+                header_idx = detect_header_index(rows)
                 headers = [(_cell(h) or f"col{i}") for i, h in enumerate(rows[header_idx])]
                 width = max(len(headers), max((len(r) for r in rows), default=0))
                 data_rows = rows[header_idx + 1 :]
                 sample = [
                     {
                         (headers[i] if i < len(headers) else f"col{i}"): (
-                            v if not _is_formula(v) else str(v)
+                            v if not is_formula(v) else str(v)
                         )
                         for i, v in enumerate(r)
                         if v not in (None, "")
@@ -189,7 +152,7 @@ class XlsxParser:
                 # Raw grid safety net: never lose structure even if header
                 # detection is imperfect (title rows, multi-table sheets).
                 rows_preview = [
-                    [None if v is None else (str(v) if _is_formula(v) else v) for v in r]
+                    [None if v is None else (str(v) if is_formula(v) else v) for v in r]
                     for r in rows[: _MAX_SAMPLE_ROWS + header_idx + 1]
                 ]
 

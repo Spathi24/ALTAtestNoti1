@@ -59,6 +59,30 @@ def test_csv_parser_detects_semicolon_delimiter():
     assert parsed.evidence_spans[0].content_json["rows_sample"][0]["Montant"] == "43 090,33"
 
 
+def test_csv_parser_detects_header_below_title_rows():
+    # Real estimate shape: title + company + metadata rows ABOVE the real header.
+    est = (
+        b",ESTIMATE,,,,\n"
+        b"7557 Blvd Gouin Est.,,Date,5/5/2026,,\n"
+        b'"Montreal, QC",,Estimate #,25008,,\n'
+        b",,,,,\n"
+        b"Description,Notes,,Material Amount,Labour Amount,Total Amount\n"
+        b'Demolition,Div. 02,,,,"$1,000.00"\n'
+        b"    Selective Demolition,02 41 19,,,$400.00,\n"
+    )
+    parsed = CsvParser().parse(est, doc_name="est.csv", mime="text/csv")
+    cj = parsed.evidence_spans[0].content_json
+    assert cj["headers"][0] == "Description"
+    assert "Total Amount" in cj["headers"]  # the real header row, not ",ESTIMATE,,,,"
+    # Blank rows are dropped before indexing, so the header is the 4th kept row.
+    assert parsed.evidence_spans[0].locator["header_row"] == 4
+    # Value stays bound to the right column.
+    assert cj["rows_sample"][0]["Description"] == "Demolition"
+    assert cj["rows_sample"][0]["Total Amount"] == "$1,000.00"
+    # Title rows are not lost.
+    assert any("ESTIMATE" in str(c) for row in cj["rows_preview"] for c in row)
+
+
 def test_csv_parser_empty_input():
     parsed = CsvParser().parse(b"\n\n", doc_name="empty.csv", mime="text/csv")
     assert parsed.structured["n_rows"] == 0

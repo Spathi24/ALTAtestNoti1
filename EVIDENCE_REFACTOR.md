@@ -115,7 +115,29 @@ existing reports and tests.
 
 ## Struggles / Bugs / Parked
 
-- (none yet — record limitations found mid-slice here, with evidence + which slice absorbs them.)
+- **(FIXED 2026-06-25) CSV/XLSX took row 1 as the header.** Real active-project estimates open
+  with a title + company + estimate-# + blank rows, then the real header
+  (`Description | Notes | Material | Labour | Total`). On Rockland's ACCEPTED QUOTE the CSV parser
+  produced headers `['', 'ESTIMATE', ...]` (garbage). Fixed: shared `parsing/tableutil.py`
+  `detect_header_index` (pick the header-like row with the MOST filled cells, so a metadata row
+  like `address | Date | 5/5/2026` loses to the real 5-column header), used by both parsers; a raw
+  `rows_preview` is always kept as a safety net. Re-validated: Rockland header now row 6 with
+  `Demolition → Total $1,000.00` bound correctly; all 115 HD xlsx still detect row 1.
+- **KNOWN GAP (not yet addressed) — multi-table-per-sheet.** A sheet/CSV can hold several tables
+  (side by side or stacked). v1 treats each sheet as ONE table_region, so a second table's columns
+  bleed into the first's. Needs region detection (blank-row/blank-col splitting, or layout from
+  Docling for PDFs). Owner flagged this explicitly. Target: a hardening pass before/within Slice 6
+  (evidence-bundle extraction), since that is where region granularity actually matters.
+- **KNOWN GAP (not yet addressed) — nested subtotals / "multiple sums".** Estimate columns are not
+  one grand total: a section row carries a subtotal that sums only its indented sub-items
+  (Material+Labour), with structure encoded by row labels/indentation. v1 captures all rows with
+  correct headers (data preserved) but does NOT model the section→subtotal hierarchy. The future
+  evidence-bundle extractor must reconstruct it from row labels rather than blindly summing a
+  column. Owner flagged this explicitly.
+- **TESTING NOTE (owner directive).** Validate parsers on REAL, preferably ACTIVE/current projects
+  (open finances matter more than closed ones like 3940), across MANY differently-formatted sheets
+  — not just the simple single-table Home Depot exports. Read files yourself, check in/out pairs,
+  and trace downstream (does the API agent get the right answer on cleaner data?).
 
 ## Future Work (explicitly out of the slice list above, revisit later)
 

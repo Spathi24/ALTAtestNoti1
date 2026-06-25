@@ -17,6 +17,7 @@ import csv
 import io
 
 from project_db.parsing.base import ParsedDocument, ParsedEvidence
+from project_db.parsing.tableutil import detect_header_index
 
 _CSV_MIMES = {"text/csv", "text/comma-separated-values", "application/csv"}
 _MAX_RENDER_ROWS = 1000  # cap the compatibility Markdown; structured sample is separate
@@ -28,18 +29,24 @@ def _cell(x: object) -> str:
     return s.replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
 
 
-def _to_markdown(headers: list[str], rows: list[list[str]]) -> str:
-    cols = max([len(headers)] + [len(r) for r in rows]) if (headers or rows) else 0
+def _row_md(cells: list, width: int) -> str:
+    rr = list(cells) + [""] * (width - len(cells))
+    return "| " + " | ".join(_cell(c) for c in rr[:width]) + " |"
+
+
+def _to_markdown(
+    headers: list[str], rows: list[list[str]], *, title_rows: list[list[str]] | None = None
+) -> str:
+    title_rows = title_rows or []
+    widths = [len(headers)] + [len(r) for r in rows] + [len(r) for r in title_rows]
+    cols = max(widths) if widths else 0
     if cols == 0:
         return ""
-    hdr = list(headers) + [""] * (cols - len(headers))
-    lines = [
-        "| " + " | ".join(_cell(h) for h in hdr) + " |",
-        "| " + " | ".join("---" for _ in range(cols)) + " |",
-    ]
+    lines = [_row_md(tr, cols) for tr in title_rows]  # preserve title/metadata rows
+    lines.append(_row_md(headers, cols))
+    lines.append("| " + " | ".join("---" for _ in range(cols)) + " |")
     for r in rows[:_MAX_RENDER_ROWS]:
-        rr = list(r) + [""] * (cols - len(r))
-        lines.append("| " + " | ".join(_cell(c) for c in rr) + " |")
+        lines.append(_row_md(r, cols))
     if len(rows) > _MAX_RENDER_ROWS:
         lines.append(f"| ...({len(rows) - _MAX_RENDER_ROWS} more rows) |")
     return "\n".join(lines)
@@ -89,30 +96,36 @@ class CsvParser:
                 evidence_spans=[],
             )
 
-        headers = [(h or "").strip() for h in rows[0]]
-        data_rows = rows[1:]
+        header_idx = detect_header_index(rows)
+        headers = [((h or "").strip() or f"col{i}") for i, h in enumerate(rows[header_idx])]
+        data_rows = rows[header_idx + 1 :]
         n_cols = max(len(r) for r in rows)
-        rendered = _to_markdown(headers, data_rows)
+        rendered = _to_markdown(headers, data_rows, title_rows=rows[:header_idx])
         structured = {
             "format": "csv",
             "delimiter": delimiter,
             "n_rows": len(data_rows),
             "n_cols": n_cols,
             "headers": headers,
+            "header_row": header_idx + 1,
         }
         sample = [
             {
-                headers[i] if i < len(headers) else f"col{i}": (v or "").strip()
+                (headers[i] if i < len(headers) else f"col{i}"): (v or "").strip()
                 for i, v in enumerate(r)
+                if (v or "").strip()
             }
             for r in data_rows[:_MAX_SAMPLE_ROWS]
         ]
+        # Raw grid safety net: keep title rows + first data rows verbatim, so
+        # structure survives even when header detection is imperfect.
+        rows_preview = [list(r) for r in rows[: _MAX_SAMPLE_ROWS + header_idx + 1]]
         span = ParsedEvidence(
             evidence_type="table_region",
             locator={
                 "format": "csv",
                 "delimiter": delimiter,
-                "header_row": 1,
+                "header_row": header_idx + 1,
                 "n_rows": len(data_rows),
                 "n_cols": n_cols,
             },
@@ -121,6 +134,7 @@ class CsvParser:
                 "headers": headers,
                 "n_rows": len(data_rows),
                 "rows_sample": sample,
+                "rows_preview": rows_preview,
             },
             confidence=1.0,
         )
