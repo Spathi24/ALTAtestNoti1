@@ -38,9 +38,11 @@ limitation is not a license to add a phase.**
 - [x] **Slice 2 — Parser abstraction + MIME routing + CSV parser.** DONE 2026-06-25. Spine proven
   end-to-end; forward-compat groundwork added (graceful `skipped` for unimplemented types, a
   `parse_documents` batch pipeline, one-line `register_parser` seam).
-- [ ] Slice 3 — openpyxl XLSX/XLS parser (highest-risk flattened format) → `EvidenceSpan` table/cell regions. ← NEXT
-      Mechanical: implement `XlsxParser` (same `DocumentParser` interface) and `register_parser(XlsxParser())`.
-- [ ] Slice 4 — Docling PDF parser → page text blocks + table regions as `EvidenceSpan`.
+- [x] **Slice 3 — openpyxl XLSX parser.** DONE 2026-06-25. `XlsxParser` (sheets, header
+      detection above title rows, formulas/merged/number-formats, `rows_sample` + raw
+      `rows_preview`). Validated on 115 real HD files (0 failures). `.xls` legacy not handled
+      (routes to skipped).
+- [ ] Slice 4 — Docling PDF parser → page text blocks + table regions as `EvidenceSpan`. ← NEXT
 - [ ] Slice 5 — Nullable evidence links on FinancialRecord / FinancialLineItem / ContractObligation.
 - [ ] Slice 6 — One structured extraction path consumes evidence bundles; refuse trusted records without evidence.
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
@@ -90,9 +92,25 @@ existing reports and tests.
     helper. ADDITIVE: the live Drive `extract_and_store` path is untouched; this seam is not
     wired into live sync yet (a later integration step).
   - 9 tests in `test_parsing.py`. Full suite **1491 passed**; ruff + format clean.
-- Next: Slice 3 — `XlsxParser` via openpyxl (highest-risk flattened format). Mechanical given
-  the seam: implement the `DocumentParser` interface and `register_parser(XlsxParser())`; emit
-  `table_region` / `cell_range` / `sheet` `EvidenceSpan`s with cell maps + formulas.
+- **Slice 3: DONE (2026-06-25).** `src/project_db/parsing/xlsx_parser.py` (`XlsxParser` v1,
+  registered) via openpyxl. Per sheet, one `table_region` EvidenceSpan with: detected header
+  (skips a title/metadata row above it), `rows_sample` of `{header: value}` dicts, a raw
+  `rows_preview` safety net, `merged_ranges`, and a compact `cells` map of FORMULA cells
+  (formula + number_format + cached value when the file carries one). Bounded; `.xls` legacy →
+  skipped. ADDITIVE (live `extract_xlsx`/`extract_and_store` untouched; not wired into live sync).
+  - **Correctness validated on REAL data** (per owner's testing directive): swept all **115**
+    Home Depot `.xlsx` files — 0 failures, 0 anomalies; headers/values/sheet structure matched a
+    manual read. Synthetic workbooks cover formulas/merged/title-rows/multi-sheet. 7 tests in
+    `test_xlsx_parsing.py`; full suite **1498 passed**; ruff+format clean.
+  - **Downstream check (honest finding):** fed a reconstructed 3940 vendor-cost worksheet to
+    `gpt-4o-mini` (the model that failed on 3940) as OLD flat text vs NEW structured evidence —
+    BOTH classified it `cost` correctly. So flattening was NOT the sole cause of the original
+    3940 error (that was the financial extractor's doc_type→side logic on the CSV path, fixed
+    earlier). XlsxParser's real payoff is robustness on harder shapes (title rows, formula-vs-
+    total, multi-sheet) + cell-level CITATION for the future evidence-bundle extractor
+    (Slice 6) — NOT a dramatic flat-text classification win on simple single tables. Do not
+    overclaim it.
+- Next: Slice 4 — Docling PDF parser (page blocks + table regions as EvidenceSpan).
 - Everything below ("Reference architecture") is **background, not a command to implement now.**
 
 ## Struggles / Bugs / Parked

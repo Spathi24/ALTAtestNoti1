@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from project_db.parsing.base import DocumentParser
 from project_db.parsing.csv_parser import CsvParser
+from project_db.parsing.xlsx_parser import XlsxParser
 
-# Registered parsers, in priority order. Slice 2 ships CSV only; XLSX/PDF/DOCX
-# parsers register here in their slices without touching callers.
+# Registered parsers, in priority order. PDF/DOCX parsers register here in their
+# slices without touching callers.
 _PARSERS: list[DocumentParser] = [
     CsvParser(),
+    XlsxParser(),
 ]
 
 

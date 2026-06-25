@@ -9,6 +9,34 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-25 -- Evidence-backed parsing: XLSX parser (Slice 3)
+
+``XlsxParser`` (openpyxl) -- the structure-preserving spreadsheet parser, since
+flattened workbooks were the worst troublemakers. Per sheet it emits one
+``table_region`` EvidenceSpan with: a detected header row (skips a title/metadata
+row sitting above it), a ``rows_sample`` of ``{header: value}`` dicts (values stay
+bound to their column -- the 3940 lesson), a raw ``rows_preview`` safety net,
+``merged_ranges``, and a compact ``cells`` map of FORMULA cells (formula +
+number_format + cached value) so a ``=SUM`` total is citeable and not mistaken for
+a line item. Bounded; ``.xls`` legacy (openpyxl can't read it) routes to a
+skipped parse.
+
+Validated on REAL data, not just synthetic: swept all 115 Home Depot ``.xlsx``
+exports -- 0 failures, 0 anomalies, headers/values/sheet structure matched a
+by-hand read. Honest downstream finding: feeding a reconstructed 3940 vendor-cost
+worksheet to gpt-4o-mini as OLD flat text vs NEW structured evidence, BOTH were
+classified ``cost`` correctly -- so flattening was not the sole cause of the
+original 3940 mis-booking (that was the financial extractor's doc_type->side
+logic, fixed earlier). The XlsxParser's payoff is robustness on harder shapes +
+cell-level citation for the future evidence-bundle extractor, not a flat-text
+classification win on simple single tables.
+
+ADDITIVE: live ``extract_xlsx`` / ``extract_and_store`` untouched, seam not wired
+into live sync, no extraction behavior changed. 7 new tests; full suite 1498
+passed; ruff + format clean. Next: Slice 4 -- Docling PDF parser.
+
+---
+
 ## 2026-06-25 -- Evidence-backed parsing: parser abstraction + CSV (Slice 2)
 
 Proves the Slice-1 spine end to end with the first real parser. New

@@ -22,11 +22,11 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
 
 - Slice 1 (foundation: models + migration + compat write-back) — **DONE 2026-06-25**.
 - Slice 2 (parser abstraction + MIME routing + CSV parser) — **DONE 2026-06-25**. Spine proven
-  end-to-end by a real parser; forward-compat groundwork added (skipped path, batch pipeline,
-  registry seam). NO financial extraction behavior changed.
-- **Next: Slice 3** — `XlsxParser` via openpyxl (the highest-risk flattened format, the root of
-  the 3940 confusion). Mechanical given the seam: implement the `DocumentParser` interface +
-  `register_parser(XlsxParser())`.
+  end-to-end; forward-compat groundwork (skipped path, batch pipeline, registry seam).
+- Slice 3 (`XlsxParser` via openpyxl) — **DONE 2026-06-25**. Structure-preserving: sheets,
+  header-below-title detection, formulas/merged/number-formats, `rows_sample` + raw
+  `rows_preview`. Validated on 115 real HD files (0 failures). NO extraction behavior changed.
+- **Next: Slice 4** — Docling PDF parser (page blocks + table regions as EvidenceSpan).
 
 ## Known Bugs
 
@@ -182,6 +182,19 @@ Valid, but explicitly NOT in slice 1 (do not build until their slice):
   `parse_documents` batch pipeline). ADDITIVE — live `extract_and_store` untouched, not wired
   into live sync. 9 tests in `test_parsing.py`; full suite **1491 passed**; ruff + format clean.
   Deferred next: Slice 3 `XlsxParser` (openpyxl).
+
+- 2026-06-25: **Slice 3 (`XlsxParser` via openpyxl) COMPLETE.** New `parsing/xlsx_parser.py`
+  (registered): per-sheet `table_region` EvidenceSpan with detected header (skips title rows),
+  `rows_sample` {header:value} + raw `rows_preview`, `merged_ranges`, and a compact `cells` map
+  of formula cells (formula + number_format + cached value). Bounded; `.xls` → skipped; ADDITIVE
+  (live `extract_xlsx` untouched). **Correctness validated on real data per owner's directive**:
+  swept all 115 Home Depot `.xlsx` (0 failures/anomalies; headers/values matched a manual read);
+  synthetic workbooks cover formulas/merged/title-rows/multi-sheet. **Downstream check (honest):**
+  gpt-4o-mini classified a reconstructed 3940 vendor sheet as `cost` from BOTH old-flat and
+  new-structured input — flattening wasn't the sole cause of the original error; XlsxParser's win
+  is robustness + cell citation for Slice 6, not flat-text classification. 7 tests in
+  `test_xlsx_parsing.py`; full suite **1498 passed**; ruff + format clean. Deferred next: Slice 4
+  Docling PDF.
 
 ## Open Questions
 
