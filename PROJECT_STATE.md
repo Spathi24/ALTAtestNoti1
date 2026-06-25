@@ -15,16 +15,18 @@
 
 ## Current Focus
 
-**Evidence-backed document parsing refactor — Slice 1 (foundation).**
-Building the `Document -> DocumentParse -> EvidenceSpan -> DocumentText (compat)`
-spine so future parsers and the financial audit can cite *where* a number came
-from (page / sheet / cell range) instead of reading one flat text blob. Full
-plan + checklist + finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
+**Evidence-backed document parsing refactor.** Spine `Document -> DocumentParse ->
+EvidenceSpan -> DocumentText (compat)` so parsers and the financial audit can cite
+*where* a number came from instead of reading one flat blob. Full plan + checklist +
+finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
 
-Slice 1 scope is deliberately tiny and changes NO financial extraction
-behavior: add two models + migration + a compatibility write-back helper +
-tests. Parsers (Docling/openpyxl), evidence-bundle extraction, and
-reconciliation storage are all deferred to later slices.
+- Slice 1 (foundation: models + migration + compat write-back) — **DONE 2026-06-25**.
+- Slice 2 (parser abstraction + MIME routing + CSV parser) — **DONE 2026-06-25**. Spine proven
+  end-to-end by a real parser; forward-compat groundwork added (skipped path, batch pipeline,
+  registry seam). NO financial extraction behavior changed.
+- **Next: Slice 3** — `XlsxParser` via openpyxl (the highest-risk flattened format, the root of
+  the 3940 confusion). Mechanical given the seam: implement the `DocumentParser` interface +
+  `register_parser(XlsxParser())`.
 
 ## Known Bugs
 
@@ -170,6 +172,16 @@ Valid, but explicitly NOT in slice 1 (do not build until their slice):
     the spine end-to-end (DocumentParse + EvidenceSpan + DocumentText written by a real
     parser). Then openpyxl (Slice 3), then Docling (Slice 4). NO extraction-logic changes
     until Slice 5+. See [EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md).
+
+- 2026-06-25: **Slice 2 (parser abstraction + MIME routing + CSV parser) COMPLETE**, plus the
+  authorized forward-compat groundwork. New `src/project_db/parsing/` package: `base.py`
+  (`ParsedDocument`/`ParsedEvidence`/`DocumentParser`), `csv_parser.py` (`CsvParser` v1 —
+  header + delimiter sniffing incl. Quebec `;`, Markdown render, `table_region` EvidenceSpan
+  with structured sample), `router.py` (`get_parser_for`/`register_parser` seam), `service.py`
+  (`parse_document_content` persists the full spine; `skipped`/`failed` handled, never raises;
+  `parse_documents` batch pipeline). ADDITIVE — live `extract_and_store` untouched, not wired
+  into live sync. 9 tests in `test_parsing.py`; full suite **1491 passed**; ruff + format clean.
+  Deferred next: Slice 3 `XlsxParser` (openpyxl).
 
 ## Open Questions
 

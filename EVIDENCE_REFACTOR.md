@@ -35,8 +35,11 @@ limitation is not a license to add a phase.**
 ## Slice checklist (top-level)
 
 - [x] **Slice 1 — Foundation (models + migration + compat write-back).** DONE 2026-06-25.
-- [ ] Slice 2 — Parser abstraction + MIME routing + CSV parser (lowest-risk parser first to prove the spine). ← NEXT
-- [ ] Slice 3 — openpyxl XLSX/XLS parser (highest-risk flattened format) → `EvidenceSpan` table/cell regions.
+- [x] **Slice 2 — Parser abstraction + MIME routing + CSV parser.** DONE 2026-06-25. Spine proven
+  end-to-end; forward-compat groundwork added (graceful `skipped` for unimplemented types, a
+  `parse_documents` batch pipeline, one-line `register_parser` seam).
+- [ ] Slice 3 — openpyxl XLSX/XLS parser (highest-risk flattened format) → `EvidenceSpan` table/cell regions. ← NEXT
+      Mechanical: implement `XlsxParser` (same `DocumentParser` interface) and `register_parser(XlsxParser())`.
 - [ ] Slice 4 — Docling PDF parser → page text blocks + table regions as `EvidenceSpan`.
 - [ ] Slice 5 — Nullable evidence links on FinancialRecord / FinancialLineItem / ContractObligation.
 - [ ] Slice 6 — One structured extraction path consumes evidence bundles; refuse trusted records without evidence.
@@ -70,10 +73,26 @@ existing reports and tests.
 
 - **Slice 1: DONE (2026-06-25).** Tables `document_parse` + `evidence_span` exist (models +
   migration); `db/parse_compat.py::write_document_text_from_parse` bridges a successful parse
-  back to `DocumentText`. No parser writes them yet (that is Slice 2+), and NO financial
-  extraction behavior changed. Full suite 1482 passed; ruff clean.
-- Next: Slice 2 — a CSV parser through a small parser abstraction, to exercise the whole spine
-  (`DocumentParse` + `EvidenceSpan` + `DocumentText` written by a real parser) end-to-end.
+  back to `DocumentText`. NO financial extraction behavior changed.
+- **Slice 2: DONE (2026-06-25).** New `src/project_db/parsing/` package proves the spine
+  end-to-end with a real parser:
+  - `base.py` — `ParsedDocument` / `ParsedEvidence` dataclasses + `DocumentParser` Protocol
+    (pure: bytes → ParsedDocument; no DB/network).
+  - `csv_parser.py` — `CsvParser` (v1): header detection, comma/semicolon/tab/pipe delimiter
+    sniffing (handles Quebec `;` CSVs), Markdown table for compatibility, and a `table_region`
+    `EvidenceSpan` carrying headers + a structured row sample (preserves table structure,
+    does NOT flatten).
+  - `router.py` — `get_parser_for(mime, filename)` registry; `register_parser(...)` is the
+    one-line extension point for Slice 3/4. Unhandled types → `None`.
+  - `service.py` — `parse_document_content(...)` persists the spine (`DocumentParse` +
+    `EvidenceSpan` + compat `DocumentText`); unknown type → `status='skipped'`, parser
+    exception → `status='failed'` (never raises). `parse_documents(...)` is a batch pipeline
+    helper. ADDITIVE: the live Drive `extract_and_store` path is untouched; this seam is not
+    wired into live sync yet (a later integration step).
+  - 9 tests in `test_parsing.py`. Full suite **1491 passed**; ruff + format clean.
+- Next: Slice 3 — `XlsxParser` via openpyxl (highest-risk flattened format). Mechanical given
+  the seam: implement the `DocumentParser` interface and `register_parser(XlsxParser())`; emit
+  `table_region` / `cell_range` / `sheet` `EvidenceSpan`s with cell maps + formulas.
 - Everything below ("Reference architecture") is **background, not a command to implement now.**
 
 ## Struggles / Bugs / Parked

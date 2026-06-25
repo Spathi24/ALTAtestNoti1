@@ -9,6 +9,29 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-25 -- Evidence-backed parsing: parser abstraction + CSV (Slice 2)
+
+Proves the Slice-1 spine end to end with the first real parser. New
+``src/project_db/parsing/`` package: a pure parser interface
+(``ParsedDocument`` / ``ParsedEvidence`` / ``DocumentParser`` -- bytes in,
+structured evidence out, no DB/network), MIME/extension routing with a one-line
+``register_parser`` extension point, and a ``CsvParser`` that PRESERVES table
+structure instead of flattening (header detection; comma/semicolon/tab/pipe
+delimiter sniffing, so Quebec ``;`` CSVs parse correctly; a Markdown table for
+DocumentText compatibility; and a ``table_region`` EvidenceSpan carrying headers
++ a structured row sample). ``parse_document_content`` persists the whole spine
+(DocumentParse + EvidenceSpan + compat DocumentText); an unknown type records a
+``skipped`` parse and a parser exception a ``failed`` parse -- it never raises.
+``parse_documents`` is a batch pipeline helper for a future re-parse job.
+
+ADDITIVE: the live Drive ``extract_and_store`` path is untouched and this seam is
+not yet wired into the live sync (a later integration step), so no financial
+extraction or ingestion behavior changed. 9 new tests; full suite 1491 passed;
+ruff + format clean. Next: Slice 3 -- ``XlsxParser`` via openpyxl (the
+highest-risk flattened format, the root of the 3940 worksheet confusion).
+
+---
+
 ## 2026-06-25 -- Evidence-backed parsing: foundation (Slice 1)
 
 First slice of the evidence refactor (full plan: `EVIDENCE_REFACTOR.md` at repo
