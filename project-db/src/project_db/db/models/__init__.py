@@ -11,7 +11,14 @@ from project_db.db.models.canonical import (
 )
 from project_db.db.models.core import Client, Property, User, Vendor
 from project_db.db.models.crm import Deal, Lead, LeadStage
-from project_db.db.models.docs import Document, DocumentText
+from project_db.db.models.docs import (
+    EVIDENCE_TYPES,
+    PARSE_STATUSES,
+    Document,
+    DocumentParse,
+    DocumentText,
+    EvidenceSpan,
+)
 from project_db.db.models.field_notes import FieldNote, NoteChannel, NoteClass
 from project_db.db.models.finance import (
     FINANCIAL_DIRECTIONS,
@@ -79,6 +86,7 @@ __all__ = [
     "CLAIM_TYPES",
     "CLUSTER_STATUSES",
     "EMPLOYEE_MATCH_METHODS",
+    "EVIDENCE_TYPES",
     "FINANCIAL_DIRECTIONS",
     "FINANCIAL_DOC_ROLES",
     "FINANCIAL_RECORD_KINDS",
@@ -90,6 +98,7 @@ __all__ = [
     "LINE_ITEM_STATUSES",
     "OBLIGATION_DIRECTIONS",
     "OBLIGATION_KINDS",
+    "PARSE_STATUSES",
     "PROJECT_LOG_CLASSIFICATION_METHODS",
     "PROJECT_LOG_INGESTION_REASONS",
     "PROJECT_LOG_INGESTION_STATUSES",
@@ -102,8 +111,10 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentFinancialStatus",
+    "DocumentParse",
     "DocumentText",
     "EmailIngest",
+    "EvidenceSpan",
     "ExternalId",
     "FieldNote",
     "FinancialLineItem",

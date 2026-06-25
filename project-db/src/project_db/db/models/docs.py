@@ -19,12 +19,36 @@ metadata to answer real questions without re-hitting the API:
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 from project_db.db.base import Base, CanonicalMixin
+
+# Status of a single parse run. Plain strings (schema-light style), not a DB enum.
+PARSE_STATUSES = ("success", "failed", "skipped")
+
+# Kinds of citeable evidence a parser can emit. Plain strings, not a DB enum.
+EVIDENCE_TYPES = (
+    "text_block",
+    "table_region",
+    "cell_range",
+    "paragraph",
+    "page",
+    "sheet",
+)
 
 
 class Document(Base, CanonicalMixin):
@@ -85,3 +109,71 @@ class DocumentText(Base):
     extraction_method = Column(String, nullable=False)
     extracted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     token_count = Column(Integer, nullable=True)
+
+
+class DocumentParse(Base):
+    """One parse run for one Document.
+
+    The canonical parse artifact going forward. Records WHICH parser produced
+    the artifact, what source hash it parsed, whether it succeeded, an
+    LLM/human-readable rendering (`rendered_text`), and the structured parser
+    output (`structured_json`). `DocumentText` becomes a compatibility view
+    written FROM a successful parse's `rendered_text` (see
+    `db/parse_compat.py`) so existing reports/search keep working.
+
+    Status is a plain string in `PARSE_STATUSES` (success | failed | skipped) --
+    schema-light, no DB enum, matching the rest of the project.
+    """
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    parser_name = Column(String, nullable=False)
+    parser_version = Column(String, nullable=True)
+    source_hash = Column(String, nullable=True)
+    status = Column(String, nullable=False)  # one of PARSE_STATUSES
+    rendered_text = Column(Text, nullable=True)
+    structured_json = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    token_count = Column(Integer, nullable=True)
+
+
+class EvidenceSpan(Base):
+    """A citeable unit of evidence produced by a parse run.
+
+    A PDF text block / table region, an XLSX sheet range or cell range, a CSV
+    row group, a DOCX paragraph/table, or a page-level block. This is the anchor
+    a financial claim cites (later slices add `evidence_span_id` FKs to the
+    ledger), so every extracted number can answer "which page/sheet/range did
+    this come from".
+
+    `evidence_type` is a plain string in `EVIDENCE_TYPES`. `locator_json`,
+    `content_json`, and `bbox_json` hold parser-specific structure as JSON text;
+    `content_text` holds a readable rendering of the span.
+    """
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    parse_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document_parse.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    evidence_type = Column(String, nullable=False)  # one of EVIDENCE_TYPES
+    locator_json = Column(Text, nullable=True)
+    content_text = Column(Text, nullable=True)
+    content_json = Column(Text, nullable=True)
+    bbox_json = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

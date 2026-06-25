@@ -50,6 +50,53 @@ CREATE TABLE document_text (
 )
 """
 
+# Evidence-backed parsing layer (slice 1). document_parse must be created
+# BEFORE evidence_span (FK -> document_parse.id). Both cascade-delete with their
+# Document.
+SQLITE_DOCUMENT_PARSE_DDL = """
+CREATE TABLE document_parse (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    parser_name VARCHAR NOT NULL,
+    parser_version VARCHAR,
+    source_hash VARCHAR,
+    status VARCHAR NOT NULL,
+    rendered_text TEXT,
+    structured_json TEXT,
+    error TEXT,
+    created_at DATETIME NOT NULL,
+    token_count INTEGER,
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_DOCUMENT_PARSE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_document_parse_document_id "
+    "ON document_parse (document_id)",
+)
+
+SQLITE_EVIDENCE_SPAN_DDL = """
+CREATE TABLE evidence_span (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    parse_id TEXT NOT NULL,
+    evidence_type VARCHAR NOT NULL,
+    locator_json TEXT,
+    content_text TEXT,
+    content_json TEXT,
+    bbox_json TEXT,
+    confidence FLOAT,
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (parse_id) REFERENCES document_parse(id) ON DELETE CASCADE
+)
+"""
+
+SQLITE_EVIDENCE_SPAN_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_evidence_span_document_id ON evidence_span (document_id)",
+    "CREATE INDEX IF NOT EXISTS ix_evidence_span_parse_id ON evidence_span (parse_id)",
+)
+
 SQLITE_PROPOSAL_DDL = """
 CREATE TABLE proposal (
     canonical_id TEXT PRIMARY KEY,
@@ -721,6 +768,13 @@ def ensure_sqlite_schema(engine) -> None:
         if "document" in tables:
             _add_missing_columns(conn, inspector, "document", SQLITE_DOCUMENT_COLUMNS)
         _create_table_if_missing(conn, tables, "document_text", SQLITE_DOCUMENT_TEXT_DDL)
+        # Evidence-backed parsing layer: parse before span (FK -> document_parse.id).
+        _create_table_if_missing(conn, tables, "document_parse", SQLITE_DOCUMENT_PARSE_DDL)
+        for _idx_ddl in SQLITE_DOCUMENT_PARSE_INDEXES:
+            conn.execute(text(_idx_ddl))
+        _create_table_if_missing(conn, tables, "evidence_span", SQLITE_EVIDENCE_SPAN_DDL)
+        for _idx_ddl in SQLITE_EVIDENCE_SPAN_INDEXES:
+            conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "proposal", SQLITE_PROPOSAL_DDL)
         _create_table_if_missing(conn, tables, "roadmap_task", SQLITE_ROADMAP_TASK_DDL)
         _create_table_if_missing(conn, tables, "financial_record", SQLITE_FINANCIAL_RECORD_DDL)

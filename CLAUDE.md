@@ -73,6 +73,15 @@ to **four canonical files, present-tense only:**
 | `project-db/docs/HANDOFF.md` | Current engineering state only | **Wiped & retyped every handoff** |
 | `project-db/CHANGELOG.md` | Dated history, newest on top | **Never wiped — append only** |
 
+**Durable working memory (owner-mandated 2026-06-25, repo root):**
+`PROJECT_STATE.md` is the cross-session scratch/decision log (known bugs,
+decisions, plans, risks, model observations) the four present-tense files don't
+keep — read it at session start. A large multi-slice initiative gets ONE
+dedicated plan+state doc (e.g. `EVIDENCE_REFACTOR.md`) with finishing
+conditions, linked from `PROJECT_STATE.md`. These are working memory, not
+"next build" authority docs — keep them honest and current, don't let them
+ossify into mandates.
+
 Rules:
 - **Write present-tense facts, not "next build" declarations.** No roadmaps, no
   "this is now the headline," no new strategy/authority docs. Forward ideas go in
@@ -80,8 +89,9 @@ Rules:
   ossify into commitments.
 - **`project-db/docs/archive/` is history, NOT instructions.** Do not steer from
   it. It exists so nothing is lost, not so future sessions obey it.
-- If a doc contradicts reality, fix it or archive it. **Do not add a fifth doc**
-  to reconcile the other four.
+- If a doc contradicts reality, fix it or archive it. **Do not add a fifth
+  canonical/strategy doc** to reconcile the other four. (The root working-memory
+  docs above are the sanctioned exception — they record state, not authority.)
 
 ---
 

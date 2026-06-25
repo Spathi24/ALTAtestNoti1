@@ -9,6 +9,32 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-25 -- Evidence-backed parsing: foundation (Slice 1)
+
+First slice of the evidence refactor (full plan: `EVIDENCE_REFACTOR.md` at repo
+root; durable working memory: `PROJECT_STATE.md`). The audit currently reads
+flat `DocumentText` blobs, which destroy table/sheet/cell structure -- that is
+why a vendor cost worksheet (3940's "Quotes") could read like a client quote.
+The fix is a citeable evidence layer: ``Document -> DocumentParse ->
+EvidenceSpan -> DocumentText (compatibility)``.
+
+This slice adds only the foundation, changing NO financial-extraction behavior:
+two models (``DocumentParse`` = one parse run per document; ``EvidenceSpan`` = a
+citeable page/sheet/table/cell unit), their SQLite migration (cascade-delete with
+the Document), and ``db/parse_compat.write_document_text_from_parse`` which keeps
+the legacy ``DocumentText`` row in sync from a successful parse's rendering so all
+existing reports/search/RAG keep working. Statuses/types are plain strings
+(schema-light). No parser writes these yet (CSV/openpyxl/Docling are later
+slices); no Cell table, no many-to-many, no automatic ledger mutation. 7 new
+tests; full suite 1482 passed; ruff clean.
+
+Also this session (advisory, no DB writes): an OpenAI cross-document
+reconciliation auditor (`scripts/reconcile_financials_llm.py`, gpt-4.1) that
+reads each project's documents together and flags duplicates / SOW restatements /
+supplier-worksheet-as-revenue / side inversions for human approval.
+
+---
+
 ## 2026-06-23 -- Home Depot: in-store/online duplicate flagging
 
 Home Depot's export lists BODFS / online-pickup events twice -- once as an
