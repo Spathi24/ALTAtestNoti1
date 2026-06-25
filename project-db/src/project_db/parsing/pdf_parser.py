@@ -23,6 +23,9 @@ import io
 from project_db.parsing.base import ParsedDocument, ParsedEvidence
 
 _PDF_MIMES = {"application/pdf"}
+# Bound runtime: financial docs are a few pages; reference PDFs (building codes)
+# can be 1000s of pages and aren't worth full table recovery. Cap pages parsed.
+_MAX_PDF_PAGES = 60
 _MAX_TABLES = 50
 _MAX_PAGE_SPANS = 100
 _MAX_SAMPLE_ROWS = 25
@@ -85,7 +88,10 @@ def _val(x: object):
 def _parse_with_docling(content: bytes, doc_name: str, converter) -> ParsedDocument:
     from docling_core.types.io import DocumentStream
 
-    res = converter.convert(DocumentStream(name=doc_name or "doc.pdf", stream=io.BytesIO(content)))
+    res = converter.convert(
+        DocumentStream(name=doc_name or "doc.pdf", stream=io.BytesIO(content)),
+        max_num_pages=_MAX_PDF_PAGES,
+    )
     doc = res.document
 
     spans: list[ParsedEvidence] = []
@@ -166,6 +172,8 @@ def _parse_with_pymupdf(content: bytes) -> ParsedDocument:
         spans: list[ParsedEvidence] = []
         parts: list[str] = []
         for i, page in enumerate(pdf, 1):
+            if i > _MAX_PDF_PAGES:
+                break
             text = (page.get_text("text") or "").strip()
             if i <= _MAX_PAGE_SPANS and text:
                 spans.append(

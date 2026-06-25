@@ -9,6 +9,36 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-25 -- Evidence-backed parsing: integration backfill + header confidence
+
+Makes the new parsers actually USED on the real corpus. `scripts/parse_documents.py`
+fetches each Drive document's bytes and runs the new parsers ->
+``DocumentParse`` + ``EvidenceSpan`` + a synced ``DocumentText`` (the new
+structure-preserving parse becomes canonical; ``DocumentText`` stays a
+compatibility view). Idempotent (skips already-parsed; ``--overwrite`` re-does),
+bounded (``--project`` / ``--limit`` / ``--all``), and it applies the SQLite
+migration to the real DB itself. PDF pages are capped (60) so a 1000-page
+building code can't dominate.
+
+Ran on the real Rockland project: 9 documents -> 9 DocumentParse + 66
+EvidenceSpan rows (39 page + 27 table regions); the window-spec PDF gave 16
+tables, the estimates 3 each, the Google-Sheet estimates got their real headers
+detected. Stale-data proof: the old extraction had Rockland JOB COST at $50.71;
+the live sheet now totals $5,675.38 -- exactly why re-parsing matters.
+
+RUNTIME reality (measured, this CPU): Docling PDFs ~220s avg, 728s max; Google
+Sheets ~0.05s. The full ~452-PDF corpus is ~a day on this laptop -> local-model
+work belongs on a dedicated server (ideally GPU), not each coworker's machine
+(mitigations: financial-docs-only scope, pypdfium backend, or GPU).
+
+Also: ``tableutil.detect_header`` now returns a confidence, carried on table
+spans as ``header_confidence`` -- an uncertainty signal the Slice-6 extractor can
+act on (re-derive the header via the LLM only when low), instead of calling the
+LLM per file. NOT yet auto-wired into the live sync. Full suite 1504 passed;
+ruff + format clean.
+
+---
+
 ## 2026-06-25 -- Evidence-backed parsing: Docling PDF parser (Slice 4)
 
 ``PdfParser`` with two backends. When the optional ``[docling]`` extra is

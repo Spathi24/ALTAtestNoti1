@@ -46,6 +46,12 @@ limitation is not a license to add a phase.**
       Docling (layout + TableFormer) recovers tables with page + bbox + spanning headers; falls
       back to PyMuPDF when Docling absent/fails. Docling is a SEPARATE `[docling]` extra, NOT in
       CI; OCR disabled (digital PDFs). Validated on real table-heavy PDFs.
+- [x] **Slice 4.5 — Integration backfill (make it USED).** DONE 2026-06-25.
+      `scripts/parse_documents.py` fetches real Drive bytes and runs the new parsers ->
+      `DocumentParse` + `EvidenceSpan` + synced `DocumentText`, idempotent. Applies the migration
+      to the real DB. Ran on Rockland (9 docs -> 66 spans, 27 table regions). NOT yet auto-wired
+      into the live sync (next). RUNTIME: PDFs ~220s avg / 728s max on this CPU (Docling) -> the
+      full 452-PDF corpus is ~a day on this laptop; needs a server/GPU or financial-docs-only scope.
 - [ ] Slice 5 — Nullable evidence links on FinancialRecord / FinancialLineItem / ContractObligation. ← NEXT
 - [ ] Slice 6 — One structured extraction path consumes evidence bundles; refuse trusted records without evidence.
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).

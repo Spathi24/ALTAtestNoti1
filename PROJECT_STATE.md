@@ -31,8 +31,28 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
 - Slice 4 (Docling PDF parser + PyMuPDF fallback) — **DONE 2026-06-25**. `PdfParser`: Docling
   (TableFormer) recovers tables w/ page+bbox+spanning headers; PyMuPDF fallback. Docling in a
   SEPARATE `[docling]` extra (NOT in CI), OCR off. Validated on real table-heavy PDFs.
+- Slice 4.5 (integration backfill) — **DONE 2026-06-25**. `scripts/parse_documents.py` runs the new
+  parsers over real Drive docs -> `DocumentParse`+`EvidenceSpan`+`DocumentText` (idempotent; applies
+  the migration). Ran on Rockland: 9 docs -> 66 spans (27 table regions). The new parsers are now
+  USED/runnable on the corpus, but NOT yet auto-wired into the live sync.
 - **Next: Slice 5** — nullable evidence links (`evidence_span_id`/`evidence_locator_json`) on
   FinancialRecord / FinancialLineItem / ContractObligation (additive; old rows stay valid).
+
+### STORAGE MODEL (answer to "where does parsed data live / does it replace the old?")
+- `DocumentParse` (one row per parse run: rendered_text + structured_json + status) and
+  `EvidenceSpan` (citeable page/sheet/table/cell units) ARE the new canonical storage. NOT a new
+  system beyond these two tables. `DocumentText` is kept as a compatibility VIEW (written from a
+  successful parse), so old reports/search keep working.
+- `FinancialRecord`/`FinancialLineItem`/`ContractObligation` are NOT replaced yet. Slices 5-7 add
+  evidence links and switch the financial extractor to read the structured `EvidenceSpan`s instead
+  of flat text; old rows stay valid through the transition.
+- Sync: `parse_documents.py` is the manual backfill today. Wiring it into the live refresh (so a
+  sync re-parses changed docs via md5) is the integration step after the parsers are proven.
+- RUNTIME/DEPLOYMENT (measured): Docling PDF parsing is ~220s avg / 728s max per PDF on this CPU ->
+  the 452-PDF corpus is ~a day on this laptop. Local-model work (Docling, embeddings) + always-on
+  services (refresh, gmail/telegram ingestion) belong on a dedicated server (ideally GPU), NOT on
+  each coworker's machine. Mitigations: financial-docs-only scope, pypdfium backend (faster, lower
+  table quality), or GPU.
 
 ## Known Bugs
 
