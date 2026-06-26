@@ -9,6 +9,30 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Evidence-bundle reader: stored evidence -> AI-readable input (Slice 6a)
+
+The READ side of the spine. `ai/evidence_bundle.py::build_evidence_bundle` loads
+a document's latest successful `DocumentParse` + `EvidenceSpan` rows and assembles
+them into an `EvidenceBundle`: structured tables (headers + sampled rows) tagged
+with their sheet/page/range locator and `header_confidence`, plus PDF page text.
+`render_for_llm()` emits labelled Markdown tables instead of a flat blob.
+
+Why it matters (real proof, live DB): for "927 QUOTE", the bundle renders the
+table starting at the TRUE header row (row 6, confidence 1.0) with clean columns
+(Description / Material / Labour / Total) -- while the old flat `DocumentText`
+dumps the ESTIMATE/address/`Estimate #`/`Valid Until` metadata rows first, the
+exact noise that misleads the extractor about doc type and columns.
+
+Pure: no LLM, no ledger writes, does not touch `DocumentText`. Returns `None` when
+a doc has no successful parse (caller falls back to flat text -- additive). Also
+exposes the Slice-6b hooks: `is_low_confidence()` (the deterministic -> LLM
+escalation gate, threshold 0.5) and `primary_span_id()` (which span to cite as
+`evidence_span_id`). 7 tests in `test_evidence_bundle.py`.
+
+Slice 6b (next) wires this into `financial_llm_extractor.py`: read the bundle
+instead of flat text, set the evidence link, and escalate low-confidence docs to
+a stronger model (owner approved permanently upgrading off gpt-4o-mini).
+
 ## 2026-06-26 -- Evidence spine wired into sync + evidence links on the ledgers (Slice 5)
 
 Two additive steps, both downstream-safe (no financial numbers move yet; that is

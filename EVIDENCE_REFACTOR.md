@@ -62,8 +62,16 @@ limitation is not a license to add a phase.**
       many-to-many). Models + migration DDL + ALTER cols; applied to real DB. 5 tests
       (test_document_parse.py). Invariant "no NEW trusted record without evidence" recorded, NOT
       enforced yet (Slice 6 owns enforcement). Suite 1512.
-- [ ] Slice 6 — One structured extraction path consumes evidence bundles; sets the evidence link;
-      refuses trusted records without evidence; low header_confidence -> LLM escalation. ← NEXT
+- [x] **Slice 6a — Evidence-bundle reader.** DONE 2026-06-26. `ai/evidence_bundle.py::
+      build_evidence_bundle` -> `EvidenceBundle` (structured tables w/ sheet/page/range locator +
+      header_confidence; PDF page text; `render_for_llm()` labelled Markdown). Pure (no LLM/ledger/
+      DocumentText). Hooks for 6b: `is_low_confidence()` (gate, thr 0.5), `primary_span_id()`.
+      Returns None w/o a successful parse (caller falls back to flat text). Real proof: "927 QUOTE"
+      renders from true header row 6 vs old flat text leading with ESTIMATE/metadata noise.
+      7 tests (test_evidence_bundle.py).
+- [ ] Slice 6b — Wire the bundle into `financial_llm_extractor.py`: read bundle instead of flat
+      text, SET `evidence_span_id` on each row, refuse trusted records without evidence, escalate
+      low-confidence/empty bundles to a STRONGER model (owner approved off gpt-4o-mini). ← NEXT
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
 - [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence spans.
 

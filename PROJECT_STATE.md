@@ -45,10 +45,18 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   many-to-many). Migration applied to real DB; cols confirmed on all three. 5 tests
   (test_document_parse.py). Suite 1512. Invariant "no NEW trusted record without evidence" is
   recorded but NOT enforced yet — Slice 6 owns enforcement.
-- **Next: Slice 6** — one structured extraction path reads `EvidenceSpan` bundles (not flat text),
-  sets the evidence link, refuses trusted records without evidence, and escalates low
-  `header_confidence` spans to the LLM. This is the high-stakes slice (it moves the financial
-  numbers) — split it: read-path first, then enforcement + escalation.
+- Slice 6a (evidence-bundle reader) — **DONE 2026-06-26**. `ai/evidence_bundle.py::
+  build_evidence_bundle` turns stored spans into an `EvidenceBundle` (labelled tables + locator +
+  header_confidence + page text; `render_for_llm()`). Pure — no LLM/ledger/DocumentText. Hooks:
+  `is_low_confidence()` (thr 0.5), `primary_span_id()`. Real proof on "927 QUOTE": renders from the
+  true header row vs old flat text leading with ESTIMATE/metadata noise. 7 tests.
+- **Next: Slice 6b** (HIGH STAKES — moves the numbers) — wire the bundle into
+  `financial_llm_extractor.py::populate_ledger_llm_for_document`: build the bundle, use
+  `render_for_llm()` as the LLM input when a parse exists (fall back to flat `DocumentText` when
+  `build_evidence_bundle` returns None), SET `evidence_span_id`/`evidence_locator_json` on each
+  `FinancialLineItem`, and escalate low-confidence/empty bundles to a stronger model. Keep the
+  reconcile TRUST GATE unchanged. Validate downstream on real active-project docs (revenue/cost +
+  totals) before trusting.
 
 ### STORAGE MODEL (answer to "where does parsed data live / does it replace the old?")
 - `DocumentParse` (one row per parse run: rendered_text + structured_json + status) and
@@ -167,6 +175,22 @@ Valid, but explicitly NOT in slice 1 (do not build until their slice):
   an evidence-grounded LLM verifier later (refute only on concrete contradiction; never silently erase).
 - Snapshot export/import.
 - Apply the stronger-model policy across certainty-requiring calls; Batch API for nightly audits.
+- **Faceted / hierarchical retrieval (owner idea 2026-06-26).** Askbot RAG currently pulls
+  same-worded evidence from UNRELATED projects (flat global cosine pool -> cross-project
+  contamination). Owner wants tree/faceted fetch: `project -> unit -> trade` (or `side
+  (income/expense) -> ...`) so an agent filters-then-ranks down the relevant branch. The evidence
+  layer makes the facets available: every `EvidenceSpan`/`DocumentChunk` already carries
+  `project_id`; add `unit` / `division_code` / `side` facets and filter retrieval by them. This is a
+  RETRIEVAL refactor — do it AFTER the evidence layer feeds the ledger (post Slice 6/7), not now
+  (build freeze, one slice at a time). Stay relational (SQL filter + existing hybrid RRF); no
+  graph/vector service. Keep it CLEAN, not "everything everywhere" — the owner's own caveat.
+
+## Decisions (2026-06-26)
+- **Model upgrade approved (owner):** permanently move the financial/certainty-requiring LLM calls
+  OFF `gpt-4o-mini` to a stronger model if it delivers better results (gpt-4o-mini/4o proved
+  unreliable on the audit). Apply in Slice 6b at the extractor call (env `OPENAI_EXTRACT_MODEL`
+  default bump + low-confidence escalation to an even stronger tier). Validate the win on real docs
+  before locking the default.
 
 ## Risks / Drift Warnings
 
