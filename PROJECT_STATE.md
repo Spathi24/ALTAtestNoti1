@@ -58,6 +58,19 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   reconcile TRUST GATE unchanged. Validate downstream on real active-project docs (revenue/cost +
   totals) before trusting.
 
+### PRIVACY FIX 2026-06-26 (delta sync leaked files outside the team root) — RESOLVED
+- Symptom: corpus revamp processed private personal files NOT under the configured root.
+- Cause: `_delta_sync` ingested every `changes.list` result (corpora="allDrives", not folder-scoped);
+  impersonated account is a personal Gmail and the root is a My-Drive folder, so any edited file
+  anywhere leaked in. Full crawl was fine; only delta lacked containment.
+- Fix: `_delta_sync` now verifies each changed file is a descendant of `root_folder` (memoised
+  parent-chain walk); unverifiable ancestry -> skip (privacy-safe). Tests in test_gdrive_connector.py.
+- Cleanup: authoritative Drive walk of the root (1188 files, 0 failures) -> purged 374 foreign docs
+  + all derived rows; verified 0 orphans, deleted set confirmed under_root=False, 0 shortcuts. 1187
+  team docs kept. DB backed up (project_db.sqlite.bak_foreignpurge_*). One-off script lived in
+  scratchpad (not committed — destructive remediation, not a feature).
+- NOTE for future: any time delta sync or impersonation config changes, re-check containment.
+
 ### STORAGE MODEL (answer to "where does parsed data live / does it replace the old?")
 - `DocumentParse` (one row per parse run: rendered_text + structured_json + status) and
   `EvidenceSpan` (citeable page/sheet/table/cell units) ARE the new canonical storage. NOT a new

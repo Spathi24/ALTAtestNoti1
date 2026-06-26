@@ -463,3 +463,78 @@ class TestFolderNameNormalization:
         from project_db.identity.matcher import normalize_name
 
         assert normalize_name("ALTA Group") == "alta group"
+
+
+# ---------------------------------------------------------------------------
+# Delta-sync root containment (privacy guard)
+# ---------------------------------------------------------------------------
+
+
+class _FakeAncestryClient:
+    """Minimal client: canned changes + a folder_id -> parents ancestry map."""
+
+    def __init__(self, changes: list[dict], parents: dict[str, list[str]]) -> None:
+        self._changes = changes
+        self._parents = parents
+        self.metadata_calls: list[str] = []
+
+    def list_changes(self, cursor: str):
+        return self._changes, "cursor_next"
+
+    def get_file_metadata(self, file_id: str) -> dict:
+        self.metadata_calls.append(file_id)
+        if file_id not in self._parents:
+            raise RuntimeError(f"not found: {file_id}")
+        return {"id": file_id, "parents": self._parents[file_id]}
+
+
+class TestGDriveDeltaContainment:
+    """A delta sync must ingest ONLY files that live under the configured root."""
+
+    def _connector(self, session, org, fake):
+        from project_db.connectors.gdrive.connector import GDriveConnector
+
+        return GDriveConnector(
+            session=session,
+            organization_id=org.canonical_id,
+            config={"_client": fake, "root_folder": "ROOTID"},
+        )
+
+    def test_skips_file_outside_root_keeps_file_inside(self, session, org):
+        from project_db.db.models.docs import Document
+
+        under = _make_file("u1", "Team Quote.pdf", folder_id="SUB")
+        foreign = _make_file("f1", "Private Lease.pdf", folder_id="OTHER")
+        changes = [
+            {"fileId": "u1", "removed": False, "file": under},
+            {"fileId": "f1", "removed": False, "file": foreign},
+        ]
+        # SUB -> ROOTID (inside); OTHER -> PERSONAL -> (none) (outside)
+        parents = {"SUB": ["ROOTID"], "OTHER": ["PERSONAL"], "PERSONAL": []}
+        fake = _FakeAncestryClient(changes, parents)
+        self._connector(session, org, fake)._delta_sync("cursor0")
+
+        names = {d.name for d in session.query(Document).all()}
+        assert "Team Quote.pdf" in names  # under root -> ingested
+        assert "Private Lease.pdf" not in names  # outside root -> skipped
+
+    def test_unverifiable_ancestry_is_treated_as_outside(self, session, org):
+        from project_db.db.models.docs import Document
+
+        ghost = _make_file("g1", "Mystery.pdf", folder_id="GHOST")
+        changes = [{"fileId": "g1", "removed": False, "file": ghost}]
+        fake = _FakeAncestryClient(changes, parents={})  # GHOST not resolvable
+        self._connector(session, org, fake)._delta_sync("cursor0")
+
+        assert session.query(Document).filter_by(storage_ref="g1").count() == 0
+
+    def test_direct_child_of_root_is_kept(self, session, org):
+        from project_db.db.models.docs import Document
+
+        rootfile = _make_file("r1", "Overview.pdf", folder_id="ROOTID")
+        changes = [{"fileId": "r1", "removed": False, "file": rootfile}]
+        fake = _FakeAncestryClient(changes, parents={})  # no lookup needed
+        self._connector(session, org, fake)._delta_sync("cursor0")
+
+        assert session.query(Document).filter_by(storage_ref="r1").count() == 1
+        assert fake.metadata_calls == []  # ROOTID matched directly, no API walk

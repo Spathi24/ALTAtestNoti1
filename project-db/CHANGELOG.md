@@ -9,6 +9,34 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- PRIVACY FIX: delta sync leaked files outside the team root
+
+Found during the corpus revamp: it was processing private personal files (videos,
+screenshots, a web project, camera photos, leases/underwriting) that are NOT under
+the configured Drive root folder.
+
+Root cause: `GDriveConnector._delta_sync` ingested EVERY file returned by
+`changes.list` (which runs `corpora="allDrives"` and is NOT folder-scoped). The
+impersonated account is a personal Gmail (`GDRIVE_IMPERSONATE=nsaropoulos@gmail.com`)
+and the "root" `1zMaKp...` is a folder in its My Drive, so any file edited anywhere
+in that account's Drive got ingested. The full crawl was correctly root-scoped; only
+the delta path lacked a containment check.
+
+Fix: `_delta_sync` now verifies each changed file is a descendant of `root_folder`
+(parent-chain walk via `get_file_metadata`, memoised per folder) before upsert.
+Unscoped root ("root") keeps legacy behaviour; an unverifiable ancestry is treated
+as OUTSIDE (skip rather than risk ingesting a private file). 3 tests in
+`test_gdrive_connector.py`.
+
+Cleanup: built the authoritative allowlist by walking the real team root via Drive
+(1188 files, 273 folders, 0 failures) and purged every Document whose Drive ID was
+not under it -- 374 foreign docs + all derived rows (312 evidence_span, 45
+document_parse, 80 document_text, 13 document_chunk, 374 external_id; 0 financial/
+obligation rows referenced them). Verified: 0 orphaned derived rows; a Drive-ancestry
+spot-check of the deleted set returned under_root=False for all sampled files; 0
+shortcuts in the tree (no false positives). 1187 legit team docs retained. DB backed
+up first (`project_db.sqlite.bak_foreignpurge_*`).
+
 ## 2026-06-26 -- Evidence-bundle reader: stored evidence -> AI-readable input (Slice 6a)
 
 The READ side of the spine. `ai/evidence_bundle.py::build_evidence_bundle` loads

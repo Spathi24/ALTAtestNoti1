@@ -167,6 +167,13 @@ class GDriveConnector(BaseConnector):
         # Cache: folder_id -> project_id (None = unrecognized)
         self._folder_project_cache: dict[str, Any | None] = {}
 
+        # Cache: folder_id -> is it a descendant of root_folder? Used by the delta
+        # path to reject changed files that live OUTSIDE the configured root (the
+        # impersonated account can see its whole Drive; changes.list is not folder-
+        # scoped, so without this guard a private file edited anywhere would be
+        # ingested -- a real privacy leak we hit in production).
+        self._under_root_cache: dict[str, bool] = {}
+
         # Drive-state reconciliation: track everything the current walk visits
         # so we can soft-mark vanished files at the end.  See _reconcile_removed.
         self._seen_file_ids: set[str] = set()
@@ -390,6 +397,19 @@ class GDriveConnector(BaseConnector):
                 continue
 
             if file_data:
+                # CONTAINMENT GUARD (privacy-critical): changes.list is NOT
+                # folder-scoped -- it returns every file the impersonated account
+                # can see across all drives. Without this check a private file
+                # edited anywhere in the user's Drive would be ingested. Only
+                # upsert changed files that actually live under the configured
+                # root folder; verify ancestry via the parent chain.
+                if not self._is_under_root(file_data):
+                    logger.debug(
+                        "[GDRIVE] delta: skipping %s (outside root %s)",
+                        file_id,
+                        self.root_folder,
+                    )
+                    continue
                 parent_id = (file_data.get("parents") or [None])[0]
                 # The delta path lacks the full tree, so it cannot resolve
                 # folder ancestry.  project_id / folder_path / category are
@@ -405,6 +425,51 @@ class GDriveConnector(BaseConnector):
                 )
 
         self._save_cursor(new_cursor)
+
+    # ------------------------------------------------------------------
+    # Root containment (delta-sync privacy guard)
+    # ------------------------------------------------------------------
+
+    def _is_under_root(self, file_data: dict[str, Any]) -> bool:
+        """True iff *file_data* lives somewhere under the configured root folder.
+
+        When the root is unscoped ("root"/empty) we keep the legacy behaviour
+        (accept everything). Otherwise we follow the file's parent chain up to
+        the root. Ancestry results per folder are memoised across the sync.
+        Any folder we cannot resolve is treated as OUTSIDE the root -- it is
+        safer to skip an unverifiable file than to ingest a private one.
+        """
+        root = self.root_folder
+        if not root or root == "root":
+            return True
+        parents = file_data.get("parents") or []
+        return any(self._folder_under_root(p) for p in parents)
+
+    def _folder_under_root(self, folder_id: str | None, _depth: int = 0) -> bool:
+        if not folder_id:
+            return False
+        root = self.root_folder
+        if folder_id == root:
+            return True
+        if _depth > self._MAX_DEPTH:
+            return False
+        cached = self._under_root_cache.get(folder_id)
+        if cached is not None:
+            return cached
+        # Mark False first to break any parent cycle, then resolve.
+        self._under_root_cache[folder_id] = False
+        try:
+            meta = self.client.get_file_metadata(folder_id)
+        except Exception as exc:
+            logger.warning(
+                "[GDRIVE] ancestry check failed for folder %s (%s) -- treating as OUTSIDE root",
+                folder_id,
+                exc,
+            )
+            return False
+        result = any(self._folder_under_root(p, _depth + 1) for p in (meta.get("parents") or []))
+        self._under_root_cache[folder_id] = result
+        return result
 
     # ------------------------------------------------------------------
     # Document upsert
