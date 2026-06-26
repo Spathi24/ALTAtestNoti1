@@ -19,10 +19,13 @@ from project_db.db.base import Base
 from project_db.db.models import (
     EVIDENCE_TYPES,
     PARSE_STATUSES,
+    ContractObligation,
     Document,
     DocumentParse,
     DocumentText,
     EvidenceSpan,
+    FinancialLineItem,
+    FinancialRecord,
 )
 from project_db.db.parse_compat import write_document_text_from_parse
 
@@ -128,9 +131,7 @@ def test_evidence_spans_point_to_parse(fk_session):
 def test_deleting_document_cascades_parse_and_evidence(fk_session):
     doc = _document(fk_session)
     p = _parse(fk_session, doc)
-    fk_session.add(
-        EvidenceSpan(document_id=doc.canonical_id, parse_id=p.id, evidence_type="page")
-    )
+    fk_session.add(EvidenceSpan(document_id=doc.canonical_id, parse_id=p.id, evidence_type="page"))
     fk_session.commit()
     assert fk_session.query(DocumentParse).count() == 1
     assert fk_session.query(EvidenceSpan).count() == 1
@@ -193,9 +194,7 @@ def test_writeback_skips_non_success_parse(fk_session):
 
     row = write_document_text_from_parse(fk_session, p)
     assert row is None
-    assert (
-        fk_session.query(DocumentText).filter_by(document_id=doc.canonical_id).count() == 0
-    )
+    assert fk_session.query(DocumentText).filter_by(document_id=doc.canonical_id).count() == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -218,3 +217,105 @@ def test_migration_creates_parse_and_evidence_tables_on_blank_db(tmp_path):
     assert "document_parse" in names
     assert "evidence_span" in names
     engine.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# Slice 5: evidence links on the financial/obligation ledgers
+# --------------------------------------------------------------------------- #
+
+_EVIDENCE_LINK_COLS = {"evidence_span_id", "evidence_locator_json"}
+
+
+def test_migration_adds_evidence_link_columns_to_old_ledgers(tmp_path):
+    """An old DB whose ledger tables predate the evidence link gets the columns."""
+    from sqlalchemy import text as _text
+
+    from project_db.db.migrations import ensure_sqlite_schema
+
+    db = tmp_path / "old.sqlite"
+    engine = create_engine(f"sqlite:///{db}", future=True)
+    # Pre-existing ledger tables WITHOUT the Slice-5 columns.
+    with engine.begin() as conn:
+        conn.execute(_text("CREATE TABLE financial_record (canonical_id TEXT PRIMARY KEY)"))
+        conn.execute(_text("CREATE TABLE contract_obligation (canonical_id TEXT PRIMARY KEY)"))
+        # financial_line_item has indexes the migration (re)creates -> give it the
+        # columns those indexes reference, mirroring a real old DB.
+        conn.execute(
+            _text(
+                "CREATE TABLE financial_line_item (canonical_id TEXT PRIMARY KEY, "
+                "project_id TEXT, document_id TEXT, unit VARCHAR, division_code VARCHAR)"
+            )
+        )
+
+    ensure_sqlite_schema(engine)
+    ensure_sqlite_schema(engine)  # idempotent: second run must not raise
+
+    for tbl in ("financial_record", "financial_line_item", "contract_obligation"):
+        cols = {c["name"] for c in inspect(engine).get_columns(tbl)}
+        assert _EVIDENCE_LINK_COLS <= cols, f"{tbl} missing evidence link columns"
+    engine.dispose()
+
+
+def test_fresh_db_ledgers_have_evidence_link_columns():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    for tbl in ("financial_record", "financial_line_item", "contract_obligation"):
+        cols = {c["name"] for c in inspect(engine).get_columns(tbl)}
+        assert _EVIDENCE_LINK_COLS <= cols
+    engine.dispose()
+
+
+def test_financial_record_links_to_evidence_span(fk_session):
+    """A FinancialRecord can cite the exact EvidenceSpan its amount came from."""
+    doc = _document(fk_session)
+    p = _parse(fk_session, doc)
+    span = EvidenceSpan(
+        document_id=doc.canonical_id,
+        parse_id=p.id,
+        evidence_type="table_region",
+        locator_json=json.dumps({"sheet": "Quote", "range": "B4:F29"}),
+    )
+    fk_session.add(span)
+    fk_session.flush()
+
+    rec = FinancialRecord(
+        document_id=doc.canonical_id,
+        amount=76503.96,
+        evidence_span_id=span.id,
+        evidence_locator_json=span.locator_json,
+    )
+    line = FinancialLineItem(document_id=doc.canonical_id, amount=400.00, evidence_span_id=span.id)
+    ob = ContractObligation(document_id=doc.canonical_id, amount=1000.00, evidence_span_id=span.id)
+    fk_session.add_all([rec, line, ob])
+    fk_session.commit()
+
+    got = fk_session.query(FinancialRecord).one()
+    assert got.evidence_span_id == span.id
+    assert json.loads(got.evidence_locator_json)["range"] == "B4:F29"
+    # The link resolves back to the citeable span.
+    cited = fk_session.query(EvidenceSpan).filter_by(id=got.evidence_span_id).one()
+    assert cited.evidence_type == "table_region"
+    # Old rows stay valid: evidence link is nullable.
+    plain = FinancialRecord(document_id=doc.canonical_id, amount=5.0)
+    fk_session.add(plain)
+    fk_session.commit()
+    assert plain.evidence_span_id is None
+
+
+def test_deleting_evidence_span_nulls_the_link(fk_session):
+    """ondelete=SET NULL: dropping a span must not delete the financial fact."""
+    doc = _document(fk_session)
+    p = _parse(fk_session, doc)
+    span = EvidenceSpan(document_id=doc.canonical_id, parse_id=p.id, evidence_type="page")
+    fk_session.add(span)
+    fk_session.flush()
+    rec = FinancialRecord(document_id=doc.canonical_id, amount=10.0, evidence_span_id=span.id)
+    fk_session.add(rec)
+    fk_session.commit()
+
+    fk_session.delete(span)
+    fk_session.commit()
+    fk_session.expire_all()  # drop cached state; re-read what the DB now holds
+
+    got = fk_session.query(FinancialRecord).one()  # still here
+    assert got.evidence_span_id is None  # link cleared, fact preserved

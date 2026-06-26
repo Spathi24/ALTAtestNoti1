@@ -85,3 +85,13 @@ class ContractObligation(Base, CanonicalMixin):
 
     prompt_version = Column(String, nullable=True)
     source_meta_json = Column(Text, nullable=True)  # raw LLM item -- keep everything
+
+    # Evidence link (Slice 5) -- structured EvidenceSpan this clause was read
+    # from, plus a denormalized locator. Nullable; one span per record (no
+    # many-to-many). See FinancialRecord for full semantics.
+    evidence_span_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("evidence_span.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    evidence_locator_json = Column(Text, nullable=True)

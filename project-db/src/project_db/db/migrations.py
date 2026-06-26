@@ -71,8 +71,7 @@ CREATE TABLE document_parse (
 """
 
 SQLITE_DOCUMENT_PARSE_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS ix_document_parse_document_id "
-    "ON document_parse (document_id)",
+    "CREATE INDEX IF NOT EXISTS ix_document_parse_document_id ON document_parse (document_id)",
 )
 
 SQLITE_EVIDENCE_SPAN_DDL = """
@@ -161,6 +160,8 @@ CREATE TABLE financial_record (
     is_rollup BOOLEAN,
     prompt_version VARCHAR,
     source_meta_json TEXT,
+    evidence_span_id TEXT,
+    evidence_locator_json TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
     FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
 )
@@ -170,6 +171,10 @@ CREATE TABLE financial_record (
 SQLITE_FINANCIAL_RECORD_COLUMNS: dict[str, str] = {
     "amount_verified": "BOOLEAN",
     "is_rollup": "BOOLEAN",
+    # Evidence link (Slice 5). FK to evidence_span.id is enforced via the model on
+    # fresh DBs; on an ALTER we add a plain TEXT column (SQLite can't add an FK).
+    "evidence_span_id": "TEXT",
+    "evidence_locator_json": "TEXT",
 }
 
 SQLITE_FINANCIAL_LINE_ITEM_DDL = """
@@ -198,6 +203,8 @@ CREATE TABLE financial_line_item (
     amount_verified BOOLEAN,
     extractor_version VARCHAR,
     source_meta_json TEXT,
+    evidence_span_id TEXT,
+    evidence_locator_json TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
     FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
 )
@@ -209,6 +216,15 @@ SQLITE_FINANCIAL_LINE_ITEM_COLUMNS: dict[str, str] = {
     "classification_confidence": "FLOAT",
     "source_doc_type": "VARCHAR",
     "source_region": "VARCHAR",
+    # Evidence link (Slice 5) -- see SQLITE_FINANCIAL_RECORD_COLUMNS.
+    "evidence_span_id": "TEXT",
+    "evidence_locator_json": "TEXT",
+}
+
+# Columns added to contract_obligation after the initial DDL (Slice 5 evidence link).
+SQLITE_CONTRACT_OBLIGATION_COLUMNS: dict[str, str] = {
+    "evidence_span_id": "TEXT",
+    "evidence_locator_json": "TEXT",
 }
 
 SQLITE_FINANCIAL_LINE_ITEM_INDEXES = (
@@ -241,6 +257,8 @@ CREATE TABLE contract_obligation (
     amount_verified BOOLEAN,
     prompt_version VARCHAR,
     source_meta_json TEXT,
+    evidence_span_id TEXT,
+    evidence_locator_json TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
     FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
 )
@@ -737,8 +755,7 @@ SQLITE_HOME_DEPOT_LINE_ITEM_INDEXES = (
     "ON home_depot_line_item (transaction_id)",
     "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_txn_number "
     "ON home_depot_line_item (transaction_number)",
-    "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_sku "
-    "ON home_depot_line_item (sku)",
+    "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_sku ON home_depot_line_item (sku)",
     "CREATE INDEX IF NOT EXISTS ix_home_depot_line_item_project "
     "ON home_depot_line_item (project_id)",
 )
@@ -803,6 +820,10 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(
             conn, tables, "contract_obligation", SQLITE_CONTRACT_OBLIGATION_DDL
         )
+        if "contract_obligation" in tables:
+            _add_missing_columns(
+                conn, inspector, "contract_obligation", SQLITE_CONTRACT_OBLIGATION_COLUMNS
+            )
         _create_table_if_missing(conn, tables, "document_chunk", SQLITE_DOCUMENT_CHUNK_DDL)
         for _idx_ddl in SQLITE_DOCUMENT_CHUNK_INDEXES:
             conn.execute(text(_idx_ddl))

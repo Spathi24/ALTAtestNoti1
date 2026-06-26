@@ -35,8 +35,20 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   parsers over real Drive docs -> `DocumentParse`+`EvidenceSpan`+`DocumentText` (idempotent; applies
   the migration). Ran on Rockland: 9 docs -> 66 spans (27 table regions). The new parsers are now
   USED/runnable on the corpus, but NOT yet auto-wired into the live sync.
-- **Next: Slice 5** — nullable evidence links (`evidence_span_id`/`evidence_locator_json`) on
-  FinancialRecord / FinancialLineItem / ContractObligation (additive; old rows stay valid).
+- Slice 4.6 (backfill wired into sync) — **DONE 2026-06-26**. `cmd_weekly_changes --sync` ->
+  `_parse_recent_evidence`: recently-changed fast docs (CSV/XLSX/gsheet) parse into the spine on
+  refresh, `write_text=False` (DocumentText untouched -> downstream-safe), idempotent. PDFs gated by
+  `PROJECT_DB_PARSE_PDF_ON_SYNC=true` (Docling cost). 4 tests (test_sync_evidence.py).
+- Slice 5 (evidence links on the ledgers) — **DONE 2026-06-26**. Nullable `evidence_span_id`
+  (FK->evidence_span.id, ON DELETE SET NULL) + `evidence_locator_json` on FinancialRecord /
+  FinancialLineItem / ContractObligation. Additive (old rows null; one span per record, no
+  many-to-many). Migration applied to real DB; cols confirmed on all three. 5 tests
+  (test_document_parse.py). Suite 1512. Invariant "no NEW trusted record without evidence" is
+  recorded but NOT enforced yet — Slice 6 owns enforcement.
+- **Next: Slice 6** — one structured extraction path reads `EvidenceSpan` bundles (not flat text),
+  sets the evidence link, refuses trusted records without evidence, and escalates low
+  `header_confidence` spans to the LLM. This is the high-stakes slice (it moves the financial
+  numbers) — split it: read-path first, then enforcement + escalation.
 
 ### STORAGE MODEL (answer to "where does parsed data live / does it replace the old?")
 - `DocumentParse` (one row per parse run: rendered_text + structured_json + status) and

@@ -52,8 +52,18 @@ limitation is not a license to add a phase.**
       to the real DB. Ran on Rockland (9 docs -> 66 spans, 27 table regions). NOT yet auto-wired
       into the live sync (next). RUNTIME: PDFs ~220s avg / 728s max on this CPU (Docling) -> the
       full 452-PDF corpus is ~a day on this laptop; needs a server/GPU or financial-docs-only scope.
-- [ ] Slice 5 — Nullable evidence links on FinancialRecord / FinancialLineItem / ContractObligation. ← NEXT
-- [ ] Slice 6 — One structured extraction path consumes evidence bundles; refuse trusted records without evidence.
+- [x] **Slice 4.6 — Backfill wired into live sync.** DONE 2026-06-26. `cmd_weekly_changes --sync`
+      calls `_parse_recent_evidence` after legacy extraction: recently-changed fast docs (CSV/XLSX/
+      gsheet) parse into the spine, `write_text=False` (DocumentText untouched), idempotent. PDFs
+      gated off by `PROJECT_DB_PARSE_PDF_ON_SYNC=true` (Docling cost). 4 tests (test_sync_evidence.py).
+- [x] **Slice 5 — Nullable evidence links on the ledgers.** DONE 2026-06-26. `evidence_span_id`
+      (FK -> evidence_span.id, ON DELETE SET NULL) + `evidence_locator_json` on FinancialRecord /
+      FinancialLineItem / ContractObligation. Additive (old rows null; one span per record, no
+      many-to-many). Models + migration DDL + ALTER cols; applied to real DB. 5 tests
+      (test_document_parse.py). Invariant "no NEW trusted record without evidence" recorded, NOT
+      enforced yet (Slice 6 owns enforcement). Suite 1512.
+- [ ] Slice 6 — One structured extraction path consumes evidence bundles; sets the evidence link;
+      refuses trusted records without evidence; low header_confidence -> LLM escalation. ← NEXT
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
 - [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence spans.
 

@@ -189,6 +189,19 @@ class FinancialRecord(Base, CanonicalMixin):
     # Raw LLM item -- keep everything; promote to columns only what we query.
     source_meta_json = Column(Text, nullable=True)
 
+    # Evidence link (Slice 5) -- the structured EvidenceSpan this amount was read
+    # from, plus a denormalized locator (page/sheet/cell range) for citation
+    # without a join. Nullable: pre-refactor rows and rows extracted from flat
+    # text have neither. One span per record (no many-to-many); any extra spans
+    # live in source_meta_json during transition. Invariant enforced by a later
+    # slice: no NEW trusted record without an evidence link.
+    evidence_span_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("evidence_span.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    evidence_locator_json = Column(Text, nullable=True)
+
 
 class FinancialLineItem(Base, CanonicalMixin):
     """One amount on the division-keyed line-item ledger (the redesign).
@@ -251,6 +264,15 @@ class FinancialLineItem(Base, CanonicalMixin):
     classification_confidence = Column(Float, nullable=True)
     # Which document type the classifier assigned (matches classify_financial_sheet).
     source_doc_type = Column(String, nullable=True)  # quote | extras | job_cost | ...
+
+    # Evidence link (Slice 5) -- structured EvidenceSpan this line was read from,
+    # plus a denormalized locator. See FinancialRecord above; same semantics.
+    evidence_span_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("evidence_span.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    evidence_locator_json = Column(Text, nullable=True)
     # Sub-region within a multi-block document (e.g. "material_spending_block").
     source_region = Column(String, nullable=True)
 

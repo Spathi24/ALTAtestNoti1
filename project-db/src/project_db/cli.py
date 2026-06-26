@@ -857,6 +857,7 @@ def _sync_one_source(src_name: str) -> bool:
                 "Launching the OAuth flow now -- a browser window will open.\n"
             )
             import argparse as _ap
+
             rc = cmd_gdrive_auth(_ap.Namespace())
             if rc != 0:
                 print("  WARN: auth not completed -- Drive sync skipped.", file=sys.stderr)
@@ -930,6 +931,107 @@ def _extract_recent_content(since_days: int) -> None:
         s.close()
 
 
+# Evidence-spine fetch maps (mirror scripts/parse_documents.py). Fast types parse
+# in ~0.05s; PDFs go through Docling (~minutes/doc) so they are gated by env.
+_EVIDENCE_BINARY_MIMES = {
+    "application/pdf": "application/pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ),
+    "text/csv": "text/csv",
+}
+_EVIDENCE_EXPORT_MIMES = {
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+}
+_EVIDENCE_FAST_MIMES = (set(_EVIDENCE_BINARY_MIMES) | set(_EVIDENCE_EXPORT_MIMES)) - {
+    "application/pdf"
+}
+
+
+def _parse_recent_evidence(since_days: int) -> None:
+    """Populate the evidence spine (DocumentParse + EvidenceSpan) for docs changed
+    in the last ``since_days`` days that have no successful parse yet.
+
+    ADDITIVE and downstream-safe: ``write_text=False`` -- this does NOT overwrite
+    the legacy ``DocumentText`` rows the financial reports read today; it only
+    stores the structured evidence alongside them. The deliberate switch to read
+    that evidence is Slice 6, not here.
+
+    Fast types (CSV / XLSX / Google Sheets) always run. PDFs are skipped unless
+    ``PROJECT_DB_PARSE_PDF_ON_SYNC=true`` because Docling costs minutes per doc on
+    CPU (see PROJECT_STATE runtime notes -- local models belong on a server).
+    Silent on auth errors; per-doc failures are non-fatal.
+    """
+    import os
+    from datetime import datetime as _dt
+    from datetime import timedelta
+
+    from project_db.connectors.gdrive.client import GDriveClient
+    from project_db.db import get_session_factory
+    from project_db.db.models import DocumentParse
+    from project_db.parsing import parse_document_content
+
+    want_pdf = os.environ.get("PROJECT_DB_PARSE_PDF_ON_SYNC", "").lower() in ("1", "true", "yes")
+    want_mimes = set(_EVIDENCE_FAST_MIMES)
+    if want_pdf:
+        want_mimes.add("application/pdf")
+
+    window_start = _dt.utcnow() - timedelta(days=since_days)
+
+    try:
+        client = GDriveClient()
+    except RuntimeError:
+        return  # no credentials -- sync already surfaced this
+
+    s = get_session_factory()()
+    try:
+        docs = (
+            s.query(Document)
+            .filter(
+                Document.is_trashed.is_(False),
+                Document.project_id.isnot(None),
+                Document.storage_ref.isnot(None),
+                Document.mime_type.in_(list(want_mimes)),
+                Document.modified_at_source >= window_start,
+            )
+            .all()
+        )
+        # Skip docs that already have a successful parse (idempotent, no fetch).
+        pending = [
+            d
+            for d in docs
+            if not s.query(DocumentParse)
+            .filter_by(document_id=d.canonical_id, status="success")
+            .first()
+        ]
+        if not pending:
+            return
+        print(f"  Parsing evidence for {len(pending)} recently-changed doc(s)...")
+        for doc in pending:
+            try:
+                if doc.mime_type in _EVIDENCE_EXPORT_MIMES:
+                    raw = client.export_google_doc(
+                        doc.storage_ref, _EVIDENCE_EXPORT_MIMES[doc.mime_type]
+                    )
+                    parser_mime = _EVIDENCE_EXPORT_MIMES[doc.mime_type]
+                else:
+                    raw = client.download_file(doc.storage_ref)
+                    parser_mime = _EVIDENCE_BINARY_MIMES[doc.mime_type]
+                parse_document_content(
+                    s,
+                    document=doc,
+                    content=raw,
+                    mime=parser_mime,
+                    filename=doc.name,
+                    write_text=False,
+                )
+                s.commit()
+            except Exception:
+                s.rollback()  # per-doc failure is non-fatal
+    finally:
+        s.close()
+
+
 def cmd_weekly_changes(args: argparse.Namespace) -> int:
     """What changed per project in the last N days.
 
@@ -955,6 +1057,7 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
         if not _sync_sources(("google_drive", "monday")):
             return 2
         _extract_recent_content(since_days=args.days)
+        _parse_recent_evidence(since_days=args.days)
         print()
 
     if narrate:
@@ -983,10 +1086,7 @@ def cmd_weekly_changes(args: argparse.Namespace) -> int:
         f"Changes in the last {data['since_days']} day(s) "
         f"({data['window_start'][:10]} -> {data['window_end'][:10]})"
     )
-    print(
-        f"  {data['total_changes']} change(s) across "
-        f"{data['project_count']} project(s)."
-    )
+    print(f"  {data['total_changes']} change(s) across {data['project_count']} project(s).")
     if not data["projects"]:
         print("  Nothing changed in this window.")
         return 0
@@ -3134,8 +3234,7 @@ def _homedepot_report(args: argparse.Namespace) -> int:
             for r in rows:
                 name = (r["product_name"] or "")[:58]
                 print(
-                    f"  ${r['spend']:>10,.2f}  x{r['quantity']!s:<6} "
-                    f"{(r['sku'] or ''):<12} {name}"
+                    f"  ${r['spend']:>10,.2f}  x{r['quantity']!s:<6} {(r['sku'] or ''):<12} {name}"
                 )
         else:
             rows = R.spend_by_project(s)
@@ -3144,9 +3243,7 @@ def _homedepot_report(args: argparse.Namespace) -> int:
                 return 0
             print("Net spend by project:")
             for r in rows:
-                print(
-                    f"  ${r['net_spend']:>12,.2f}  {r['transactions']:>4} txns  {r['label']}"
-                )
+                print(f"  ${r['net_spend']:>12,.2f}  {r['transactions']:>4} txns  {r['label']}")
     return 0
 
 
@@ -3170,8 +3267,7 @@ def _homedepot_queue(args: argparse.Namespace) -> int:
         for t in txns:
             tot = f"${t.total:,.2f}" if t.total is not None else "?"
             print(
-                f"  {tot:>12}  {t.sales_date}  {(t.job_name_raw or ''):<14} "
-                f"{t.transaction_number}"
+                f"  {tot:>12}  {t.sales_date}  {(t.job_name_raw or ''):<14} {t.transaction_number}"
             )
     return 0
 
@@ -3204,7 +3300,9 @@ def _homedepot_dedupe(args: argparse.Namespace) -> int:
             proj = projects.get(pr.project_id, "(unresolved)")
             kind = "REFUND" if pr.is_refund else "purchase"
             print(f"  ${p['total']:>9,.2f}  {kind:<8} -> {proj}")
-            print(f"      keep  in-store {pr.transaction_number}  {pr.sales_date}  job={pr.job_name_raw!r}")
+            print(
+                f"      keep  in-store {pr.transaction_number}  {pr.sales_date}  job={pr.job_name_raw!r}"
+            )
             print(
                 f"      flag  online   {du.transaction_number}  {du.sales_date}  "
                 f"job={du.job_name_raw!r}  ({p['days_apart']}d apart)"
@@ -3387,28 +3485,20 @@ def build_parser() -> argparse.ArgumentParser:
     hd_sub.add_parser(
         "status", help="Coverage: spend, line-item backfill %, unbalanced/unresolved counts"
     )
-    hd_rep = hd_sub.add_parser(
-        "report", help="Net spend by project, or --by-item for the top SKUs"
-    )
+    hd_rep = hd_sub.add_parser("report", help="Net spend by project, or --by-item for the top SKUs")
     hd_rep.add_argument(
         "--by-item",
         action="store_true",
         help="Rank line items by spend instead of summarizing by project",
     )
-    hd_rep.add_argument(
-        "--project", help="Limit --by-item to one project (name fragment or UUID)"
-    )
-    hd_rep.add_argument(
-        "--limit", type=int, default=25, help="Max rows for --by-item (default 25)"
-    )
+    hd_rep.add_argument("--project", help="Limit --by-item to one project (name fragment or UUID)")
+    hd_rep.add_argument("--limit", type=int, default=25, help="Max rows for --by-item (default 25)")
     hd_q = hd_sub.add_parser(
         "queue",
         help="Pending transactions ranked by dollar value -- the backfill work-list",
     )
     hd_q.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
-    hd_q.add_argument(
-        "--include-refunds", action="store_true", help="Include refund transactions"
-    )
+    hd_q.add_argument("--include-refunds", action="store_true", help="Include refund transactions")
     hd_sub.add_parser(
         "relink",
         help="Re-run job -> project linking over imported transactions (after adding projects)",
@@ -3621,9 +3711,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional project UUID or name fragment; omit for all projects",
     )
-    wc.add_argument(
-        "--days", type=int, default=7, help="Look-back window in days (default 7)"
-    )
+    wc.add_argument("--days", type=int, default=7, help="Look-back window in days (default 7)")
     wc.add_argument(
         "--narrate",
         action="store_true",

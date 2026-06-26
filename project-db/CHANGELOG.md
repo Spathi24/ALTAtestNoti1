@@ -9,6 +9,35 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Evidence spine wired into sync + evidence links on the ledgers (Slice 5)
+
+Two additive steps, both downstream-safe (no financial numbers move yet; that is
+Slice 6's deliberate switch).
+
+**Backfill wired into live sync.** `cmd_weekly_changes --sync` now calls
+`_parse_recent_evidence` after the legacy content extraction: recently-changed
+fast docs (CSV / XLSX / Google Sheets, ~0.05s each) are parsed into
+`DocumentParse` + `EvidenceSpan` so the spine fills automatically on refresh.
+It is idempotent (skips docs with a successful parse, no fetch) and uses
+`write_text=False`, so the legacy `DocumentText` the reports read today is left
+untouched. PDFs are gated OFF by default (Docling costs minutes/doc on CPU --
+see runtime notes) behind `PROJECT_DB_PARSE_PDF_ON_SYNC=true`. 4 tests in
+`test_sync_evidence.py`.
+
+**Evidence links on the ledgers (Slice 5).** Added nullable `evidence_span_id`
+(FK -> `evidence_span.id`, `ON DELETE SET NULL`) + `evidence_locator_json` to
+`FinancialRecord`, `FinancialLineItem`, and `ContractObligation`. Additive: old
+rows stay valid (link is null), one span per record (no many-to-many; extra
+spans live in `source_meta_json` during transition). `SET NULL` means deleting a
+span never deletes the financial fact -- it just drops the citation. Models +
+migration DDL + ALTER columns wired into `ensure_sqlite_schema`; applied to the
+real `project_db.sqlite` (columns confirmed present on all three tables). 5
+tests in `test_document_parse.py`. Suite 1512.
+
+The invariant "no NEW trusted record without an evidence link" is recorded but
+NOT enforced yet -- enforcement waits until Slice 6 makes the extractor read
+spans and set the link.
+
 ## 2026-06-25 -- Evidence-backed parsing: integration backfill + header confidence
 
 Makes the new parsers actually USED on the real corpus. `scripts/parse_documents.py`
