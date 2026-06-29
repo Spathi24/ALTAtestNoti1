@@ -15,6 +15,25 @@
 
 ## Current Focus
 
+**EVIDENCE REFACTOR COMPLETE + PARSER CAPPED (2026-06-26).** Slices 1-8 done,
+hardened, and applied portfolio-wide. The parser is closed off; the NEXT line of
+work is the refoundation plan (front-of-spine SOW/PO/budget) — see
+[REFOUNDATION_BUILD_NOTES](docs/REFOUNDATION_BUILD_NOTES.md) +
+[the plan](docs/MEETING_SYNTHESIS_financial_refoundation.md), build-later, on hold
+until the owner settles conventions (plan §12). Build freeze applies.
+
+CAP STATE (what's live now): 610 docs parsed (evidence stored), 0 parse failures;
+ledger populated across 10 projects = 241 FinancialLineItem rows (158 llm + 83
+grid), 169 evidence-linked; grid path reads evidence rows, LLM path reads bundles
+with the Slice-7 grounding gate; 10 docs quarantined (trust gate held), 33 correctly
+skipped. Reconciliation detector (Slice 8) flagged 2 real cross-doc double-counts
+portfolio-wide (Rockland SOW+quote $66,539.65; a $4,973.56 pair). Suite 1556 green;
+13 adversarial parser tests added. KNOWN LIMITATIONS (documented, not bugs): scanned
+PDFs yield empty bundles (OCR off by design); multi-sheet workbooks are not M/L/T
+grids so the single-table grid gating loses no grid data; ~72 llm rows are
+flat-text-fallback (no parse) so unlinked; aggregate roll-ups stay wrong until the
+status/job_number SOP (the $361k was a cross-doc dup, now flagged not summed).
+
 **Evidence-backed document parsing refactor.** Spine `Document -> DocumentParse ->
 EvidenceSpan -> DocumentText (compat)` so parsers and the financial audit can cite
 *where* a number came from instead of reading one flat blob. Full plan + checklist +
