@@ -53,7 +53,7 @@ from project_db.db.models import Document, FinancialLineItem
 from project_db.db.models.docs import DocumentText
 from project_db.db.models.finance import LINE_ITEM_AMOUNT_TYPES
 
-FINANCIAL_LINE_PROMPT_VERSION = "fin-line-llm-v1"
+FINANCIAL_LINE_PROMPT_VERSION = "fin-line-llm-v2"  # v2: no-double-count section-total rule
 EXTRACTOR_VERSION_LLM = "llm-v1"
 
 # Document types the model classifies into. The authoritative router is
@@ -295,6 +295,16 @@ def _system_prompt(company_name: str) -> str:
         "ITEMIZE: when the document breaks its price into trades/sections, return "
         "EACH as its own line with its own division_code. Only return a single "
         "lump line when the document itself gives one price for everything.\n\n"
+        "NO DOUBLE-COUNTING (critical for these quote tables): a row with a value "
+        "in a TOTAL column (e.g. 'Total Amount') is a SECTION/DIVISION total that "
+        "ALREADY SUMS the Material/Labour sub-rows listed beneath it (a section "
+        "header like 'Demolition  Div. 02  $1,600' followed by its component rows "
+        "'...  $400 (Labour)', '...  $1,200 (Labour)'). Extract the SECTION TOTAL "
+        "rows -- one line per section/division, amount = its Total. Do NOT ALSO "
+        "extract the Material/Labour component rows that sum into that total; "
+        "doing so double-counts the section (the #1 error on these quotes). Only "
+        "when a section has NO total of its own, extract its component rows "
+        "instead. Every dollar must be counted exactly once.\n\n"
         "COST RULE (critical): on a cost document, include ONLY money ACTUALLY "
         "spent or invoiced. A single sheet often mixes real spend with planning "
         "numbers -- you must EXCLUDE every budget column, estimate column, and "
