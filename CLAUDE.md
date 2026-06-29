@@ -134,6 +134,24 @@ Rules:
 - **Stay relational / SQL + SQLite.** No graph DB, no vector DB service, no
   Postgres, no new tech until SQL actually limits us.
 
+### Refoundation plan (owner+PM, 2026-06-29) — read before big finance/parser work
+
+The financial spine is now the owner's **#1** ("financing → costing → receivables
+is the first win"). Full plan: `docs/MEETING_SYNTHESIS_financial_refoundation.md`
+(authoritative; kept in repo). Distilled invariants: `PROJECT_STATE.md` →
+"REFOUNDATION PLAN". The load-bearing through-line: **structure & traceability
+over prediction** — every cost traces SOW item → package → quote → PO → budget →
+actual; the Alta-number estimator is **parked**. Direction shifts that bind future
+work: the **deterministic grid parser is the primary path**; evidence/LLM tolerance
+(Docling/LLM) is the **fallback for legacy/third-party docs** (keep, demote). The
+product value is the **per-division line-item material/labour split, not aggregate
+totals**. Do **not** over-invest in `folder_path` project attribution or quote-status
+guessing — SOPs (`job_number`, one status vocabulary) will supersede both. New
+entities (SowItem/SowPackage/SubcontractorQuote/PurchaseOrder/ChangeOrder,
+`FinancialLineItem.purchase_type`/`cost_status`, `Project.job_number`) are **build-
+later** — structure current work to fit them; don't pre-empt with large permanent
+changes before conventions are settled with the owner.
+
 ---
 
 ## Layout & common commands

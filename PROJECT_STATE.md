@@ -94,14 +94,31 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   table PDF accuracy, per-LINE span attribution, enforce no-trusted-record-without-evidence,
   full-sync to backfill the 189 NULL folder_paths.
 
-## REFOUNDATION DOC (owner heads-up 2026-06-26) — synthesize in a dedicated session
-`docs/MEETING_SYNTHESIS_financial_refoundation.md` (repo) is a higher-level re-statement of ALTA's
-purpose/authority/goals from an owner+bosses review. NOT read/applied yet (owner said non-priority;
-finish the current CRITICAL parsing/evidence slices first). It's organizational/strategic; our
-parsing+evidence foundation is the substrate it depends on, so current work is ALIGNED, not in
-conflict. ACTION (later, ideally fresh session): read it, fold blatant load-bearing points into
-CLAUDE.md / README.md / PROJECT_STATE, keep the full md in repo. Do NOT make large permanent changes
-that pre-empt it before that synthesis.
+## REFOUNDATION PLAN (READ 2026-06-29) — `docs/MEETING_SYNTHESIS_financial_refoundation.md`
+Authoritative plan (owner+PM) kept in repo. Read it before big parser/ledger changes. Full distilled
+invariants in memory [[project-refoundation-plan]]. The parser/ledger/DB-relevant constraints:
+- NORTH STAR: STRUCTURE & TRACEABILITY over prediction. Every cost traces SOW item -> package -> quote
+  -> PO -> budget line -> actual. Alta-number estimator (§11) PARKED until ~20-50 clean projects.
+- LEAVE ALONE (§9): 13-entity core + ExternalId; Project=join nucleus; LLM-advisor->Proposal gate;
+  SQL/SQLite; **evidence spine (DocumentParse/EvidenceSpan) keep as-is**; CSI vocab; HD + labour spines.
+- PARSING (§9): deterministic GRID parser becomes the MAIN path under templated SOP inputs; evidence/
+  LLM tolerance (Docling/XlsxParser/LLM) DEMOTED to FALLBACK for legacy + third-party docs. My grid->
+  evidence migration is aligned. The VALUE is the per-division LINE-ITEM material/labour split, NOT the
+  aggregate total (PM confirmed). => the $361k "contracted revenue" is a WRONG aggregation, not a target.
+- DON'T OVER-INVEST IN (SOPs supersede): folder_path/category project attribution (-> `job_number` on
+  Project); quote-status GUESSING (accepted/verified/1/2/3 -> deterministic status-label read; this
+  guessing IS the $361k bug: 927 mis-counted as contracted); forcing HD/hourly to line items (tolerance
+  buckets vs job#, not precision).
+- INVARIANTS: outside-SOW -> tracked ChangeOrder never silent; flag never silently sort; material spec
+  drives material/labour; client never sees internal numbers; takeoff(quantities) vs site-visit
+  (conditions) kept separate; cross-doc rollups must not double-count (the $361k = ACCEPTED QUOTE
+  $66,539.65 + its SOW $66,539.65 same money + 927 mis-classified).
+- NEW entities (build LATER): SowItem, SowPackage, SubcontractorQuote (has evidence_span_id <- my
+  spine), BudgetSnapshot, PurchaseOrder (emits ContractObligation), ChangeOrder (generalize
+  extras_grid). EXTEND FinancialLineItem +purchase_type +cost_status(estimated->quoted->committed->
+  actual); EXTEND Project +job_number.
+- ACTION: do NOT start building this yet (owner: settle conventions first, doc §10 step 1 + §12 Qs).
+  HOLD Slice 8. Structure current work to fit; don't pre-empt with large permanent parser changes.
 
 ### PRIVACY FIX 2026-06-26 (delta sync leaked files outside the team root) — RESOLVED
 - Symptom: corpus revamp processed private personal files NOT under the configured root.
