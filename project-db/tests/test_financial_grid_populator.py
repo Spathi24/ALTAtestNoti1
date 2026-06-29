@@ -352,3 +352,87 @@ class TestPopulateLedgerForProject:
         assert "Ledger populated" in summary
         assert "923 ACCEPTED QUOTE" in summary
         assert "OK" in summary
+
+
+# ---------------------------------------------------------------------------
+# Evidence-backed grid path (migration): read EvidenceSpan rows + link rows
+# ---------------------------------------------------------------------------
+
+_MLT_GRID_ROWS = [
+    ["", "ESTIMATE", "", "", "", ""],
+    ["", "", "", "", "", ""],
+    [
+        "Description",
+        "Notes/ Master Format values",
+        "",
+        "Material Amount (CAD)",
+        "Labour Amount (CAD)",
+        "Total Amount (CAD)",
+    ],
+    ["Demolition", "Div. 02", "", "", "", "$1,000.00"],
+    ["    Demo scope", "02 41 00", "", "$400.00", "$600.00", ""],
+    ["Plumbing", "Div. 22", "", "", "", "$500.00"],
+    ["    Rough-in", "22 11 16", "", "$500.00", "", ""],
+    ["OHP", "", "", "", "", "$150.00"],
+    ["", "", "", "", "Pre-Tax total", "$1,650.00"],
+]
+
+# Markdown -- what the re-parse now stores in DocumentText; the CSV grid parser
+# CANNOT read it, so any rows written must have come from the evidence spine.
+_MARKDOWN_TEXT = (
+    "|  | ESTIMATE |  |  |  |  |\n| --- | --- | --- | --- | --- | --- |\n"
+    "| Demolition | Div. 02 |  |  |  | $1,000.00 |\n"
+)
+
+
+def _add_parse_with_grid(session, doc):
+    import json as _json
+
+    from project_db.db.models.docs import DocumentParse, EvidenceSpan
+
+    p = DocumentParse(
+        document_id=doc.canonical_id,
+        parser_name="csv",
+        parser_version="1",
+        status="success",
+        rendered_text=_MARKDOWN_TEXT,
+    )
+    session.add(p)
+    session.flush()
+    span = EvidenceSpan(
+        document_id=doc.canonical_id,
+        parse_id=p.id,
+        evidence_type="table_region",
+        locator_json=_json.dumps({"sheet": "Quote", "header_row": 3}),
+        content_json=_json.dumps({"headers": _MLT_GRID_ROWS[2], "rows_preview": _MLT_GRID_ROWS}),
+        confidence=1.0,
+    )
+    session.add(span)
+    session.flush()
+    return span
+
+
+class TestEvidenceBackedGrid:
+    def test_text_path_fails_on_markdown(self, db_session):
+        project = _make_project(db_session)
+        # Control: no parse -> bundle None -> text path on markdown -> no rows.
+        doc_a, dt_a = _make_doc(db_session, project, "923 ACCEPTED QUOTE", _MARKDOWN_TEXT)
+        res_a = populate_ledger_for_document(db_session, doc_a, dt_a)
+        assert res_a.rows_written == 0  # markdown is unreadable by the CSV grid parser
+
+    def test_evidence_rows_drive_the_grid_and_link_each_row(self, db_session):
+        project = _make_project(db_session)
+        doc, dt = _make_doc(db_session, project, "923 ACCEPTED QUOTE", _MARKDOWN_TEXT)
+        span = _add_parse_with_grid(db_session, doc)
+
+        res = populate_ledger_for_document(db_session, doc, dt)
+        db_session.flush()
+
+        rows = db_session.query(FinancialLineItem).filter_by(document_id=doc.canonical_id).all()
+        assert res.ingestion_status == "parsed"
+        assert len(rows) > 0  # evidence rows parsed even though DocumentText is markdown
+        # Division totals reconcile to the stated pre-tax total.
+        assert res.grand_total == Decimal("1650.00")
+        assert res.reconcile_ok is True
+        # Every grid row cites its EvidenceSpan.
+        assert all(r.evidence_span_id == span.id for r in rows)

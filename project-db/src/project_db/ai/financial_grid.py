@@ -231,6 +231,22 @@ def parse_financial_grid(text: str | None) -> GridParseResult:
         return result
 
     rows = list(csv.reader(io.StringIO(text), delimiter=_detect_delimiter(text)))
+    return parse_financial_grid_rows(rows)
+
+
+def parse_financial_grid_rows(rows: list[list[str]]) -> GridParseResult:
+    """Parse an already-split cell grid (rows of string cells).
+
+    This is the core walker shared by ``parse_financial_grid`` (which splits CSV/
+    TSV text first) and the evidence-backed path, which feeds the structured
+    ``EvidenceSpan`` row grid directly -- so the grid ledger reads the same parsed
+    cells as the rest of the evidence spine instead of re-parsing document text.
+    """
+    result = GridParseResult()
+    if not rows:
+        result.warnings.append("empty grid")
+        return result
+
     header_idx = next((i for i, r in enumerate(rows) if _looks_like_header(r)), None)
     if header_idx is None:
         result.warnings.append("no Material/Labour/Total header row found")

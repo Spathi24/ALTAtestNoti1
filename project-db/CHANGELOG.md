@@ -9,6 +9,32 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Grid ledger reads the evidence spine (single source of truth + links)
+
+The deterministic grid parser re-split DocumentText as CSV. After the corpus
+re-parse rewrote DocumentText to structure-preserving MARKDOWN, the CSV grid
+parser could no longer read it (927 QUOTE -> header_found=False, 0 rows) -- a
+latent regression. Fix + migration (owner-chosen): the grid populator now reads
+the structured `EvidenceSpan` row grid.
+
+- `financial_grid.parse_financial_grid_rows(rows)` -- factored the core walker out
+  of `parse_financial_grid(text)` so it can parse an already-split cell grid.
+- `financial_grid_populator` builds the evidence bundle per document; for a single
+  table it feeds `EvidenceSpan.rows_preview` to the grid parser, and stamps
+  `evidence_span_id` + `evidence_locator_json` on every grid row. Multi-sheet
+  workbooks stay on the text path for now (per-sheet table mapping is a follow-up).
+
+Validated on real Rockland (deterministic, no LLM): ACCEPTED QUOTE parses from the
+evidence rows and reconciles to the penny ($66,539.65). Architectural finding that
+fell out of this: the grid parser handles only Material/Labour/Total grids; the
+CURRENT 927 QUOTE is a Description+Total quote (no M/L columns) summing to
+$191,843.68 -- the LLM+evidence path's number is the CORRECT one, and the 56 old
+grid rows ($233k) were STALE from a prior version of the sheet. So grid and LLM
+paths are complementary by document structure, not competitors.
+
+3 tests (parse_financial_grid_rows refactor covered by 207 existing grid tests;
+2 new evidence-grid tests in test_financial_grid_populator.py).
+
 ## 2026-06-26 -- Slice 7: deterministic evidence verification (anti-hallucination gate)
 
 A reconcile can pass on a HALLUCINATED total -- the model invents a grand total

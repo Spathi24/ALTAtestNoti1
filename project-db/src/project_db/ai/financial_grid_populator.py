@@ -35,6 +35,7 @@ from decimal import Decimal
 from project_db.ai.financial_grid import (
     classify_financial_sheet,
     parse_financial_grid,
+    parse_financial_grid_rows,
     split_workbook_sheets,
 )
 from project_db.db.models.docs import Document, DocumentText
@@ -185,8 +186,17 @@ def _collect_quote_rows(
     text: str,
     *,
     extractor_version: str,
+    grid_rows: list[list[str]] | None = None,
+    evidence_span_id=None,
+    evidence_locator_json: str | None = None,
 ) -> tuple[list[FinancialLineItem], DocLedgerResult]:
-    """Parse a quote grid and return (items, result). No DB writes."""
+    """Parse a quote grid and return (items, result). No DB writes.
+
+    When *grid_rows* is given (the structured ``EvidenceSpan`` row grid), it is
+    parsed instead of re-splitting *text* -- the grid ledger then reads the same
+    parsed cells as the rest of the evidence spine, and each row is linked to its
+    span. Falls back to text parsing when no evidence rows are supplied.
+    """
     result = DocLedgerResult(
         doc_id=str(document.canonical_id),
         doc_name=document.name or "",
@@ -195,7 +205,11 @@ def _collect_quote_rows(
         ingestion_reason="no_header",
     )
 
-    grid = parse_financial_grid(text)
+    grid = (
+        parse_financial_grid_rows(grid_rows)
+        if grid_rows is not None
+        else parse_financial_grid(text)
+    )
     result.warnings.extend(grid.warnings)
 
     if not grid.header_found:
@@ -230,6 +244,8 @@ def _collect_quote_rows(
             classification_confidence=1.0,
             source_doc_type="quote",
             source_region=None,
+            evidence_span_id=evidence_span_id,
+            evidence_locator_json=evidence_locator_json,
             source_meta_json=json.dumps(
                 {"kind": row.kind, "masterformat_hint": row.masterformat_hint}
             ),
@@ -258,6 +274,8 @@ def _collect_extras_rows(
     text: str,
     *,
     extractor_version: str,
+    evidence_span_id=None,
+    evidence_locator_json: str | None = None,
 ) -> tuple[list[FinancialLineItem], DocLedgerResult]:
     """Parse an EXTRAS/change-order sheet and return (items, result). No DB writes.
 
@@ -317,6 +335,8 @@ def _collect_extras_rows(
             classification_confidence=1.0,
             source_doc_type="extras",
             source_region=None,
+            evidence_span_id=evidence_span_id,
+            evidence_locator_json=evidence_locator_json,
             source_meta_json=json.dumps(
                 {
                     "co_number": row.co_number,
@@ -417,17 +437,42 @@ def populate_ledger_for_document(
     if not canonical_sheets:
         return result
 
+    # Evidence spine: link grid rows to their EvidenceSpan and, for a single-table
+    # sheet, parse the structured span grid instead of re-splitting the (now
+    # markdown) DocumentText -- one parsing source of truth. Multi-sheet workbooks
+    # stay on the text path for now (per-sheet table mapping is a follow-up).
+    from project_db.ai.evidence_bundle import build_evidence_bundle
+
+    bundle = build_evidence_bundle(session, document)
+    ev_span_id = bundle.primary_span_id() if bundle is not None else None
+    _loc = bundle.primary_locator() if bundle is not None else None
+    ev_loc = json.dumps(_loc) if _loc is not None else None
+    single_grid_rows: list[list[str]] | None = None
+    if bundle is not None and len(bundle.tables) == 1 and len(canonical_sheets) == 1:
+        single_grid_rows = [
+            ["" if c is None else str(c) for c in r] for r in bundle.tables[0].rows_preview
+        ]
+
     try:
         all_new_items: list[FinancialLineItem] = []
 
         for _sheet_name, sheet_type, sheet_text in canonical_sheets:
             if sheet_type == "quote":
                 items, sheet_res = _collect_quote_rows(
-                    document, sheet_text, extractor_version=extractor_version
+                    document,
+                    sheet_text,
+                    extractor_version=extractor_version,
+                    grid_rows=single_grid_rows,
+                    evidence_span_id=ev_span_id,
+                    evidence_locator_json=ev_loc,
                 )
             elif sheet_type == "extras":
                 items, sheet_res = _collect_extras_rows(
-                    document, sheet_text, extractor_version=EXTRACTOR_VERSION_EXTRAS
+                    document,
+                    sheet_text,
+                    extractor_version=EXTRACTOR_VERSION_EXTRAS,
+                    evidence_span_id=ev_span_id,
+                    evidence_locator_json=ev_loc,
                 )
                 # Fallback: if extras header not found, try the quote parser.
                 # Handles documents named "EXTRAS+ROOF" / "EXTRAS ACCEPTED" that
@@ -440,7 +485,12 @@ def populate_ledger_for_document(
                     and "quote" not in seen_types
                 ):
                     items, sheet_res = _collect_quote_rows(
-                        document, sheet_text, extractor_version=extractor_version
+                        document,
+                        sheet_text,
+                        extractor_version=extractor_version,
+                        grid_rows=single_grid_rows,
+                        evidence_span_id=ev_span_id,
+                        evidence_locator_json=ev_loc,
                     )
                     if not sheet_res.skipped:
                         result.sheet_type = "quote"

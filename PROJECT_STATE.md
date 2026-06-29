@@ -78,7 +78,16 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
 - SLICE 7 DONE 2026-06-26: `ai/evidence_verify.py` deterministic grounding; gate quarantines a
   reconcile whose stated_total is NOT in the cited evidence (`total_not_in_evidence`) -- catches
   hallucinated totals. Tests added.
-- **Next: live end-to-end validation + Slice 8.** (1) Run production `fill-ledger-llm` on real Rockland
+- GRID->EVIDENCE MIGRATION DONE 2026-06-26 (owner-chosen). `parse_financial_grid_rows(rows)` factored
+  out; `financial_grid_populator` reads `EvidenceSpan.rows_preview` for single-table docs + stamps
+  evidence_span_id on grid rows. Fixes a latent regression: the corpus re-parse rewrote DocumentText
+  to MARKDOWN, which the CSV grid parser couldn't read (927 -> 0 rows). ACCEPTED QUOTE now parses from
+  evidence + reconciles $66,539.65. KEY ARCH FINDING: grid parser handles only Material/Labour/Total
+  grids; current 927 QUOTE is Description+Total (sums $191,843.68 = the LLM number, CORRECT); the 56
+  old grid rows ($233k) were STALE. Grid (M/L/T) + LLM (Desc+Total/unstructured) are COMPLEMENTARY.
+  TODO: multi-sheet workbook tables still use text path; re-run fill-ledger + fill-ledger-llm to
+  refresh real rows (clears 927's stale grid rows so the LLM path owns it).
+- **Next: refresh real ledger + Slice 8.** (1) Run production `fill-ledger-llm` on real Rockland
   with gpt-4.1 + v2 prompt + Slice-7 gate; confirm the docs that pass write evidence-linked rows with
   correct totals and the rest quarantine; eyeball division margins vs reality. (2) Slice 8 =
   ReconciliationIssue storage + wire reconcile_financials_llm to evidence. Still pending: SOW multi-
