@@ -264,6 +264,36 @@ CREATE TABLE contract_obligation (
 )
 """
 
+SQLITE_RECONCILIATION_ISSUE_DDL = """
+CREATE TABLE reconciliation_issue (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    issue_type VARCHAR NOT NULL,
+    severity VARCHAR NOT NULL DEFAULT 'medium',
+    status VARCHAR NOT NULL DEFAULT 'open',
+    source VARCHAR NOT NULL DEFAULT 'deterministic',
+    description TEXT,
+    delta_amount NUMERIC(14, 2),
+    currency VARCHAR,
+    evidence_json TEXT,
+    dedupe_key VARCHAR,
+    prompt_version VARCHAR,
+    decided_by VARCHAR,
+    decided_at DATETIME,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_RECONCILIATION_ISSUE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_reconciliation_issue_project "
+    "ON reconciliation_issue (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_reconciliation_issue_dedupe "
+    "ON reconciliation_issue (dedupe_key)",
+)
+
 SQLITE_DOCUMENT_CHUNK_DDL = """
 CREATE TABLE document_chunk (
     canonical_id TEXT PRIMARY KEY,
@@ -824,6 +854,11 @@ def ensure_sqlite_schema(engine) -> None:
             _add_missing_columns(
                 conn, inspector, "contract_obligation", SQLITE_CONTRACT_OBLIGATION_COLUMNS
             )
+        _create_table_if_missing(
+            conn, tables, "reconciliation_issue", SQLITE_RECONCILIATION_ISSUE_DDL
+        )
+        for _idx_ddl in SQLITE_RECONCILIATION_ISSUE_INDEXES:
+            conn.execute(text(_idx_ddl))
         _create_table_if_missing(conn, tables, "document_chunk", SQLITE_DOCUMENT_CHUNK_DDL)
         for _idx_ddl in SQLITE_DOCUMENT_CHUNK_INDEXES:
             conn.execute(text(_idx_ddl))

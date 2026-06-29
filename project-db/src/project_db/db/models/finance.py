@@ -300,3 +300,54 @@ class DocumentFinancialStatus(Base):
     confirmed = Column(Boolean, nullable=False)
     decided_by = Column(String, nullable=True)
     decided_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+# Slice 8: cross-document reconciliation findings (advisory, human-reviewed).
+RECONCILIATION_ISSUE_TYPES = {
+    "rollup_double_count",  # a summary/SOW doc restates money priced in another doc
+    "duplicate_total",  # two docs with the same total (likely the same money twice)
+    "side_error",  # a doc sided revenue/cost against its issuer/BILL-TO evidence
+    "restatement",  # a later doc restates/supersedes an earlier one
+    "unreconciled",  # an extraction whose lines don't sum to its stated total
+    "missing_evidence",  # a trusted record with no evidence link
+    "other",
+}
+RECONCILIATION_SEVERITIES = {"high", "medium", "low"}
+# open -> a human acknowledges / resolves / dismisses it (advisory, never auto-acts).
+RECONCILIATION_STATUSES = {"open", "acknowledged", "resolved", "dismissed"}
+RECONCILIATION_SOURCES = {"deterministic", "llm"}
+
+
+class ReconciliationIssue(Base, CanonicalMixin):
+    """One cross-document reconciliation finding (Slice 8).
+
+    Advisory only -- like ``Proposal``, a human acknowledges/resolves/dismisses it;
+    nothing here mutates the ledger automatically. Stores the issue type, severity,
+    a human-readable description, the dollar delta it represents, and an
+    ``evidence_json`` blob naming the documents / records / EvidenceSpans involved
+    so a reviewer can trace it. Produced by the deterministic detector and/or the
+    LLM cross-doc auditor (``source``).
+    """
+
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=True,
+        index=True,
+    )
+    issue_type = Column(String, nullable=False)  # one of RECONCILIATION_ISSUE_TYPES
+    severity = Column(String, nullable=False, default="medium")
+    status = Column(String, nullable=False, default="open")
+    source = Column(String, nullable=False, default="deterministic")
+    description = Column(Text, nullable=True)
+    # The money this issue represents (e.g. the double-counted amount). Signed or
+    # absolute by convention of the detector; kept for ranking by impact.
+    delta_amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(String, nullable=True)
+    # JSON: {documents: [...], records: [...], evidence_span_ids: [...], amounts: {...}}
+    evidence_json = Column(Text, nullable=True)
+    # A stable key so the same finding isn't stored twice across re-runs.
+    dedupe_key = Column(String, nullable=True, index=True)
+    prompt_version = Column(String, nullable=True)  # set when source='llm'
+    decided_by = Column(String, nullable=True)
+    decided_at = Column(DateTime, nullable=True)

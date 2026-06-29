@@ -86,9 +86,17 @@ limitation is not a license to add a phase.**
       a reconcile built on a hallucinated total. Flat-text fallback keeps the reconcile-only gate.
       5 tests (test_evidence_verify.py) + 2 gate tests (test_financial_evidence.py). Also fixed the
       div-total + sub-line DOUBLE-COUNTING via prompt v2 (ACCEPTED QUOTE 2x -> exact reconcile).
-- [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence
-      spans. Also pending: enforce no-trusted-record-without-evidence; per-LINE span attribution;
-      live end-to-end fill-ledger-llm validation on real projects. ← NEXT
+- [x] **Slice 8 — ReconciliationIssue storage + deterministic cross-doc detector.** DONE 2026-06-26.
+      `ReconciliationIssue` model (issue_type/severity/status/source/delta_amount/evidence_json/
+      dedupe_key) + migration; `ai/reconciliation.py` with idempotent `record_issue` (preserves a
+      human's status across re-runs), a DETERMINISTIC `detect_duplicate_total_issues` (no LLM) that
+      catches the cross-doc double-count (coherent per-doc total = section totals, not raw sum), and
+      `record_llm_finding` to ingest the LLM auditor's flags. Real proof: flags Rockland's ACCEPTED
+      QUOTE + SOW both $66,539.65 (the $361k inflation). 7 tests (test_reconciliation.py). Advisory
+      only (human acknowledges/resolves/dismisses). **This caps the evidence refactor (Slices 1-8).**
+      Still open (post-cap, smaller): enforce no-trusted-record-without-evidence; per-LINE span
+      attribution; surface issues in the web ledger-health view; wire reconcile_financials_llm.py to
+      persist via record_llm_finding.
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
 - [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence spans.
 

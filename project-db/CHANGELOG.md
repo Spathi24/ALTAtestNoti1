@@ -9,6 +9,25 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Slice 8: ReconciliationIssue storage + cross-doc double-count detector (caps the refactor)
+
+The "flag, never silently sort" surface. `ReconciliationIssue` model (issue_type /
+severity / status / source / delta_amount / evidence_json / dedupe_key) + migration;
+advisory only (a human acknowledges/resolves/dismisses, like Proposal -- nothing
+auto-mutates the ledger).
+
+`ai/reconciliation.py`: idempotent `record_issue` (dedupe_key; preserves a human's
+status across re-detection), a DETERMINISTIC `detect_duplicate_total_issues` (no
+LLM, no cost) that flags document pairs whose coherent revenue totals match -- a
+rollup pair is `rollup_double_count`/high, else `duplicate_total`/medium -- and
+`record_llm_finding` to ingest the LLM cross-doc auditor's flags. The coherent
+per-doc total uses section (`division_total`) rows when present, NOT the raw sum
+(which double-counts the grid's section-total + material/labour structure).
+
+Real proof: flags Rockland's ACCEPTED QUOTE + SOW 923 both totalling $66,539.65 --
+the same money that inflated the bogus $361k "contracted revenue". 7 tests in
+`test_reconciliation.py`. **This caps the evidence refactor (Slices 1-8).**
+
 ## 2026-06-26 -- Grid ledger reads the evidence spine (single source of truth + links)
 
 The deterministic grid parser re-split DocumentText as CSV. After the corpus
