@@ -538,3 +538,17 @@ class TestGDriveDeltaContainment:
 
         assert session.query(Document).filter_by(storage_ref="r1").count() == 1
         assert fake.metadata_calls == []  # ROOTID matched directly, no API walk
+
+    def test_folders_are_never_ingested_as_documents(self, session, org):
+        from project_db.db.models.docs import Document
+
+        # A folder under root (would pass the ancestry check) must STILL be
+        # skipped -- folders are structure, not documents.
+        folder = _make_folder("923 Rockland_id", "923 Rockland")
+        folder["parents"] = ["ROOTID"]
+        changes = [{"fileId": "923 Rockland_id", "removed": False, "file": folder}]
+        fake = _FakeAncestryClient(changes, parents={})
+        self._connector(session, org, fake)._delta_sync("cursor0")
+
+        assert session.query(Document).count() == 0
+        assert fake.metadata_calls == []  # skipped before any ancestry lookup

@@ -397,6 +397,11 @@ class GDriveConnector(BaseConnector):
                 continue
 
             if file_data:
+                # Folders are structure, not documents -- the full crawl walks
+                # them; the delta path must not store them as Document rows (the
+                # old behaviour leaked project/bucket folders into `document`).
+                if file_data.get("mimeType") == _FOLDER_MIME:
+                    continue
                 # CONTAINMENT GUARD (privacy-critical): changes.list is NOT
                 # folder-scoped -- it returns every file the impersonated account
                 # can see across all drives. Without this check a private file

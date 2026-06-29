@@ -69,6 +69,10 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   + all derived rows; verified 0 orphans, deleted set confirmed under_root=False, 0 shortcuts. 1187
   team docs kept. DB backed up (project_db.sqlite.bak_foreignpurge_*). One-off script lived in
   scratchpad (not committed — destructive remediation, not a feature).
+- FOLLOW-UP 2026-06-26: delta sync also ingested FOLDERS as Document rows (full crawl skips them).
+  Found 9 team project/bucket folders (e.g. "923-927 Rockland", "655 Victoria") as junk Documents --
+  NOT private (team-owned), no derived rows. Fixed: `_delta_sync` now skips `mimeType==folder` before
+  the containment check. Purged the 9 (one-off). Live documents now = 1189 (all files under root).
 - NOTE for future: any time delta sync or impersonation config changes, re-check containment.
 
 ### STORAGE MODEL (answer to "where does parsed data live / does it replace the old?")
