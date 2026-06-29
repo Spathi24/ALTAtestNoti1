@@ -41,8 +41,8 @@ from project_db.db.models import Document, DocumentParse, EvidenceSpan
 # flip, not merely a thinner-looking row.
 LOW_CONFIDENCE_THRESHOLD = 0.5
 
-_MAX_ROWS_PER_TABLE = 25
-_DEFAULT_MAX_CHARS = 16_000
+_MAX_ROWS_PER_TABLE = 300  # render whole financial tables, not a 25-row sample
+_DEFAULT_MAX_CHARS = 60_000  # gpt-4.1 context is large; don't truncate quote tables
 
 
 def _loads(blob: str | None) -> Any:

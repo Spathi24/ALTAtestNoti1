@@ -57,11 +57,31 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   unchanged. Low header-confidence (<0.5) + `strong_extractor` -> stronger model (CLI:
   `OPENAI_EXTRACT_STRONG_MODEL`). Default model bumped gpt-4o-mini -> gpt-4.1 (owner-approved). 4
   tests (test_financial_evidence.py).
-- **Next: validate 6b live + Slice 7.** (1) Run `fill-ledger-llm` on a real active project with the
-  new gpt-4.1 default and confirm revenue/cost + totals improve vs the old flat path (costs OpenAI;
-  revert default via `OPENAI_EXTRACT_MODEL` if not better). (2) Slice 7 = deterministic verification
-  (amount exists in cited evidence, span/doc IDs resolve), then enforce "no NEW trusted record
-  without evidence". Per-LINE span attribution (vs current doc-primary-span) also pending.
+- 6b LIVE-VALIDATED 2026-06-26 on real Rockland (gpt-4.1 A/B). Fixed a truncation bug (table caps
+  25->300 rows; bundle/extractor char caps ->60k) so whole quote tables render -- "927 QUOTE" now
+  reconciles exactly ($191,843.68). vs flat+gpt-4o-mini baseline: clearly better (flat drove ~1.9x
+  double-counting; gpt-4o-mini mis-read the SOW; both fixed on most docs). Re-parse overwrote these
+  docs' DocumentText with the new rendering (intended "replace old flat" migration).
+- **TWO REAL RESIDUAL ISSUES (model-side, the actual next work):**
+  1. DOUBLE-COUNTING: the extractor still sometimes sums a division TOTAL row PLUS its material/labour
+     sub-rows (ACCEPTED QUOTE 63 lines $124k ~= 2x stated $66k; near-identical 927 QUOTE correct at 17
+     lines). FIX = prompt refinement: when a section has a Total row AND component (material/labour)
+     rows, extract the components OR the total, never both. Re-validate on Rockland after.
+  2. UNVERIFIED TOTALS: model's stated_total not trustworthy alone (927 swung $126k->$191k run to run).
+     FIX = Slice 7 deterministic verification: the stated_total / line sums must match a number that
+     actually appears in the cited EvidenceSpan; flag mismatches; only then enforce
+     no-trusted-record-without-evidence.
+- So 6b is plumbed + better, but DO NOT flip the ledger to "trusted" until (1)+(2) land. Per-LINE span
+  attribution (vs doc-primary-span) still pending too.
+
+## REFOUNDATION DOC (owner heads-up 2026-06-26) — synthesize in a dedicated session
+`docs/MEETING_SYNTHESIS_financial_refoundation.md` (repo) is a higher-level re-statement of ALTA's
+purpose/authority/goals from an owner+bosses review. NOT read/applied yet (owner said non-priority;
+finish the current CRITICAL parsing/evidence slices first). It's organizational/strategic; our
+parsing+evidence foundation is the substrate it depends on, so current work is ALIGNED, not in
+conflict. ACTION (later, ideally fresh session): read it, fold blatant load-bearing points into
+CLAUDE.md / README.md / PROJECT_STATE, keep the full md in repo. Do NOT make large permanent changes
+that pre-empt it before that synthesis.
 
 ### PRIVACY FIX 2026-06-26 (delta sync leaked files outside the team root) — RESOLVED
 - Symptom: corpus revamp processed private personal files NOT under the configured root.

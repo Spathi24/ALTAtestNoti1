@@ -341,7 +341,7 @@ class OpenAIFinancialLineExtractor(FinancialLineExtractor):
         api_key: str | None = None,
         model: str | None = None,
         base_url: str = "https://api.openai.com/v1",
-        max_chars: int = 16_000,
+        max_chars: int = 60_000,  # whole evidence-bundle tables fit; gpt-4.1 context is large
         timeout_seconds: float = 90.0,
     ) -> None:
         # Default to gpt-4.1: the financial ledger is the accuracy-critical path

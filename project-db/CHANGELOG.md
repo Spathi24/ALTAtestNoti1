@@ -9,6 +9,34 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Slice 6b real-data validation: caps fixed, honest findings
+
+Validated 6b on real Rockland docs (gpt-4.1, controlled A/B old-flat vs new-bundle).
+
+Found + fixed a truncation bug: parsers capped tables at 25 rows (rows_sample),
+so large quotes lost their grand-total row and later line items -> the structured
+extraction returned stated_total=None and got quarantined. Raised caps:
+`_MAX_SAMPLE_ROWS` 25->300 (csv + xlsx), bundle `_MAX_ROWS_PER_TABLE` 25->300 and
+render `_DEFAULT_MAX_CHARS` 16k->60k, OpenAI extractor `max_chars` 16k->60k
+(gpt-4.1 context is large). Re-parsed Rockland; "927 QUOTE" now renders whole and
+reconciles exactly (17 division lines sum == stated $191,843.68).
+
+HONEST findings (real numbers): vs the original flat+gpt-4o-mini baseline the new
+path is clearly better -- the flat text drove ~1.9x double-counting (ACCEPTED
+QUOTE $124k vs stated $66k) and gpt-4o-mini mis-read the SOW entirely; gpt-4.1 +
+whole structured tables fixed both on most docs. BUT two real issues remain, both
+MODEL-side not parsing: (1) the extractor still inconsistently double-counts a
+division TOTAL row plus its material/labour sub-rows (ACCEPTED QUOTE ~2x over while
+the near-identical 927 QUOTE is correct) -- needs a prompt refinement; (2) the
+model's stated_total is not yet trustworthy without deterministic verification
+against the cited evidence (927's total swung $126k->$191k between runs) -- that is
+Slice 7. So: better, but NOT yet flip-the-ledger trustworthy.
+
+Note: the re-parse used write_text=True, overwriting these docs' DocumentText with
+the new structure-preserving rendering (the intended "replace old flat data"
+migration). Next: (a) prompt refinement to stop division total+sub-line
+double-counting, re-validate; (b) Slice 7 deterministic verification.
+
 ## 2026-06-26 -- Financial extractor reads structured evidence + model upgrade (Slice 6b)
 
 The financial LLM extractor now reads the structured `EvidenceSpan` bundle

@@ -34,7 +34,7 @@ _XLSX_MIMES = {
 _MAX_SHEETS = 50
 _MAX_ROWS_PER_SHEET = 2000  # rows scanned for structure
 _MAX_RENDER_ROWS = 200  # rows put into the compat Markdown
-_MAX_SAMPLE_ROWS = 25  # rows put into rows_sample
+_MAX_SAMPLE_ROWS = 300  # rows put into rows_sample (financial tables run 40-60+ rows)
 _MAX_CELLS_MAP = 300  # formula/notable cells captured per sheet
 _MAX_TOTAL_CHARS = 60_000  # whole-workbook rendered_text cap
 

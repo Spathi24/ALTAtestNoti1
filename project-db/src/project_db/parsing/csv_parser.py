@@ -21,7 +21,7 @@ from project_db.parsing.tableutil import detect_header
 
 _CSV_MIMES = {"text/csv", "text/comma-separated-values", "application/csv"}
 _MAX_RENDER_ROWS = 1000  # cap the compatibility Markdown; structured sample is separate
-_MAX_SAMPLE_ROWS = 25
+_MAX_SAMPLE_ROWS = 300  # financial quote tables run 40-60+ rows; keep them whole
 
 
 def _cell(x: object) -> str:
