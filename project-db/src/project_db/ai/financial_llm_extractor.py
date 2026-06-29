@@ -215,8 +215,7 @@ FINANCIAL_LINE_SCHEMA: dict[str, Any] = {
                                 "E.g. a line that says only 'materials' or "
                                 "'labour' on a plumber's invoice is 22; a tile "
                                 "purchase is 09. Use '99' ONLY when the line is "
-                                "genuinely unclassifiable.\nThe codes:\n"
-                                + _DIVISION_GUIDE
+                                "genuinely unclassifiable.\nThe codes:\n" + _DIVISION_GUIDE
                             ),
                         },
                         "masterformat_hint": {
@@ -345,7 +344,11 @@ class OpenAIFinancialLineExtractor(FinancialLineExtractor):
         max_chars: int = 16_000,
         timeout_seconds: float = 90.0,
     ) -> None:
-        self.model = model or os.environ.get("OPENAI_EXTRACT_MODEL", "gpt-4o-mini")
+        # Default to gpt-4.1: the financial ledger is the accuracy-critical path
+        # and gpt-4o-mini/4o proved unreliable on the audit (owner-approved upgrade
+        # 2026-06-26). Override per-run with OPENAI_EXTRACT_MODEL; the escalation
+        # tier (low header-confidence docs) is OPENAI_EXTRACT_STRONG_MODEL.
+        self.model = model or os.environ.get("OPENAI_EXTRACT_MODEL", "gpt-4.1")
         self._max_chars = max_chars
         key = api_key or os.environ.get("OPENAI_API_KEY")
         if not key:
@@ -422,6 +425,7 @@ def populate_ledger_llm_for_document(
     extractor: FinancialLineExtractor,
     *,
     company_name: str | None = None,
+    strong_extractor: FinancialLineExtractor | None = None,
 ) -> DocLedgerResult:
     """LLM-extract one financial doc into FinancialLineItem rows. Flushes, not commits.
 
@@ -432,7 +436,17 @@ def populate_ledger_llm_for_document(
     never touches ``source='grid'`` rows. The same trust gate applies to both
     sides: rows are written only if they reconcile to a stated pre-tax total,
     else they are quarantined for review.
+
+    Slice 6b -- evidence-backed input: when the new parsers have produced a
+    structured ``EvidenceSpan`` bundle for this document, the LLM reads that
+    (labelled tables with sheet/page/range locators) instead of the flat
+    ``DocumentText`` blob, and every written row is linked to the citeable span
+    (``evidence_span_id``). If the bundle's header read is low-confidence and a
+    ``strong_extractor`` is supplied, the stronger model is used for this doc.
+    Documents with no successful parse fall back to the legacy flat-text path
+    unchanged.
     """
+    from project_db.ai.evidence_bundle import build_evidence_bundle
     from project_db.ai.financials import _company_name
 
     company = company_name or _company_name()
@@ -444,13 +458,41 @@ def populate_ledger_llm_for_document(
         ingestion_reason="unsupported_type",
     )
 
-    text = doc_text.extracted_text or ""
-    if not text.strip():
+    flat_text = doc_text.extracted_text or ""
+
+    # Prefer structured evidence (Slice 6b). Fall back to flat text when the doc
+    # has no successful parse yet -- additive migration, never a regression.
+    bundle = build_evidence_bundle(session, document)
+    if bundle is not None and not bundle.is_empty():
+        llm_text = bundle.render_for_llm()
+        evidence_span_id = bundle.primary_span_id()
+        ev_loc = bundle.primary_locator()
+        evidence_locator_json = json.dumps(ev_loc) if ev_loc is not None else None
+        escalate = bundle.is_low_confidence() and strong_extractor is not None
+        active_extractor = strong_extractor if escalate else extractor
+        result.warnings.append(
+            f"evidence: parser={bundle.parser_label} tables={len(bundle.tables)} "
+            f"pages={len(bundle.pages)}"
+            + (" [escalated to strong model: low header confidence]" if escalate else "")
+        )
+    else:
+        llm_text = flat_text
+        evidence_span_id = None
+        evidence_locator_json = None
+        active_extractor = extractor
+
+    if not llm_text.strip():
         result.ingestion_reason = "empty_extraction"
         return result
 
+    # Verify amounts against BOTH the flat extraction and the evidence rendering,
+    # so a value present in the structured bundle still counts as verified.
+    verify_text = _norm(f"{flat_text}\n{llm_text}")
+
     try:
-        raw = extractor.extract(doc_name=document.name or "", doc_text=text, company_name=company)
+        raw = active_extractor.extract(
+            doc_name=document.name or "", doc_text=llm_text, company_name=company
+        )
     except FinancialLineExtractorError as exc:
         result.ingestion_status = "failed"
         result.ingestion_reason = "parse_error"
@@ -469,9 +511,9 @@ def populate_ledger_llm_for_document(
         result.ingestion_reason = "no_money"
         return result
 
-    norm_text = _norm(text)
+    norm_text = verify_text  # amounts verified against flat text + evidence render
     unit = (raw.get("unit") or "").strip() or _extract_unit(document.name)
-    currency = (raw.get("currency") or "").strip() or _extract_currency(text)
+    currency = (raw.get("currency") or "").strip() or _extract_currency(flat_text)
     doc_date = document.modified_at_source.date() if document.modified_at_source else None
     # Advisory flag: a summary/rollup doc likely restates money priced elsewhere.
     # Stored on every row so the cross-document reconciliation pass (and a human)
@@ -549,6 +591,8 @@ def populate_ledger_llm_for_document(
                 classification_method="llm_assisted",
                 classification_confidence=conf,
                 source_doc_type=doc_type,
+                evidence_span_id=evidence_span_id,
+                evidence_locator_json=evidence_locator_json,
                 source_meta_json=json.dumps(
                     {
                         "masterformat_hint": hint,
@@ -574,9 +618,7 @@ def populate_ledger_llm_for_document(
         # pre-tax lines only. This keeps clean docs reconciling while stripping
         # the tax the model wrongly folded into a 'total' line + stated total.
         tol = max(_RECONCILE_ABS, (abs(stated) * _RECONCILE_PCT))
-        result.reconcile_ok = (
-            abs(pretax_total - stated) <= tol or abs(gross_total - stated) <= tol
-        )
+        result.reconcile_ok = abs(pretax_total - stated) <= tol or abs(gross_total - stated) <= tol
 
     # Always clear this document's prior LLM rows first (idempotent + cleans up
     # a previous bad extraction).
@@ -616,6 +658,7 @@ def populate_ledger_llm_for_project(
     *,
     company_name: str | None = None,
     limit: int | None = None,
+    strong_extractor: FinancialLineExtractor | None = None,
 ) -> ProjectLedgerResult:
     """LLM-extract revenue quotes for a project that the grid parser couldn't read.
 
@@ -657,7 +700,12 @@ def populate_ledger_llm_for_project(
             break
         processed += 1
         doc_result = populate_ledger_llm_for_document(
-            session, document, doc_text, extractor, company_name=company_name
+            session,
+            document,
+            doc_text,
+            extractor,
+            company_name=company_name,
+            strong_extractor=strong_extractor,
         )
         batch.docs.append(doc_result)
 

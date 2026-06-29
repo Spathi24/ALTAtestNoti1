@@ -50,13 +50,18 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   header_confidence + page text; `render_for_llm()`). Pure — no LLM/ledger/DocumentText. Hooks:
   `is_low_confidence()` (thr 0.5), `primary_span_id()`. Real proof on "927 QUOTE": renders from the
   true header row vs old flat text leading with ESTIMATE/metadata noise. 7 tests.
-- **Next: Slice 6b** (HIGH STAKES — moves the numbers) — wire the bundle into
-  `financial_llm_extractor.py::populate_ledger_llm_for_document`: build the bundle, use
-  `render_for_llm()` as the LLM input when a parse exists (fall back to flat `DocumentText` when
-  `build_evidence_bundle` returns None), SET `evidence_span_id`/`evidence_locator_json` on each
-  `FinancialLineItem`, and escalate low-confidence/empty bundles to a stronger model. Keep the
-  reconcile TRUST GATE unchanged. Validate downstream on real active-project docs (revenue/cost +
-  totals) before trusting.
+- Slice 6b (extractor reads structured evidence) — **DONE 2026-06-26**.
+  `populate_ledger_llm_for_document` builds the bundle and feeds `render_for_llm()` to the LLM when a
+  parse exists (else flat `DocumentText`); every `FinancialLineItem` stamped with
+  `evidence_span_id`/`evidence_locator_json`; amounts verified vs flat+evidence; reconcile TRUST GATE
+  unchanged. Low header-confidence (<0.5) + `strong_extractor` -> stronger model (CLI:
+  `OPENAI_EXTRACT_STRONG_MODEL`). Default model bumped gpt-4o-mini -> gpt-4.1 (owner-approved). 4
+  tests (test_financial_evidence.py).
+- **Next: validate 6b live + Slice 7.** (1) Run `fill-ledger-llm` on a real active project with the
+  new gpt-4.1 default and confirm revenue/cost + totals improve vs the old flat path (costs OpenAI;
+  revert default via `OPENAI_EXTRACT_MODEL` if not better). (2) Slice 7 = deterministic verification
+  (amount exists in cited evidence, span/doc IDs resolve), then enforce "no NEW trusted record
+  without evidence". Per-LINE span attribution (vs current doc-primary-span) also pending.
 
 ### PRIVACY FIX 2026-06-26 (delta sync leaked files outside the team root) — RESOLVED
 - Symptom: corpus revamp processed private personal files NOT under the configured root.

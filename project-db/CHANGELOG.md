@@ -9,6 +9,32 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Financial extractor reads structured evidence + model upgrade (Slice 6b)
+
+The financial LLM extractor now reads the structured `EvidenceSpan` bundle
+instead of the flat `DocumentText` blob, links every written row to its evidence,
+and uses a stronger model.
+
+`populate_ledger_llm_for_document` builds the evidence bundle (Slice 6a) and, when
+the doc has a successful parse, feeds the LLM `render_for_llm()` (labelled tables
+with sheet/page/range locators) instead of the flat text. Each written
+`FinancialLineItem` is stamped with `evidence_span_id` + `evidence_locator_json`
+(the citeable source). Amounts are verified against flat text AND the evidence
+render. Docs with no parse fall back to the flat-text path unchanged (additive).
+
+Escalation: when the bundle's header read is low-confidence (<0.5) and a
+`strong_extractor` is supplied, that doc is re-routed to the stronger model. Wired
+in the `fill-ledger-llm` CLI via `OPENAI_EXTRACT_STRONG_MODEL` (opt-in).
+
+Model upgrade (owner-approved): the default extractor model moves from
+`gpt-4o-mini` to **gpt-4.1** (the ledger is the accuracy-critical path; mini/4o
+proved unreliable on the audit). Override per-run with `OPENAI_EXTRACT_MODEL`.
+
+4 tests in `test_financial_evidence.py` (bundle-as-input, evidence link on rows,
+escalate-on-low-confidence, no-escalate-on-high). Existing flat-text path tests
+unchanged. NOTE: validate revenue/cost + totals on real active-project docs (live
+OpenAI) before fully trusting the new default; revertible via env in one line.
+
 ## 2026-06-26 -- PRIVACY FIX: delta sync leaked files outside the team root
 
 Found during the corpus revamp: it was processing private personal files (videos,

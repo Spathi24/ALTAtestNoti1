@@ -69,9 +69,16 @@ limitation is not a license to add a phase.**
       Returns None w/o a successful parse (caller falls back to flat text). Real proof: "927 QUOTE"
       renders from true header row 6 vs old flat text leading with ESTIMATE/metadata noise.
       7 tests (test_evidence_bundle.py).
-- [ ] Slice 6b — Wire the bundle into `financial_llm_extractor.py`: read bundle instead of flat
-      text, SET `evidence_span_id` on each row, refuse trusted records without evidence, escalate
-      low-confidence/empty bundles to a STRONGER model (owner approved off gpt-4o-mini). ← NEXT
+- [x] **Slice 6b — Extractor reads structured evidence.** DONE 2026-06-26.
+      `populate_ledger_llm_for_document` builds the bundle and feeds `render_for_llm()` to the LLM
+      when a parse exists (else flat text). Each `FinancialLineItem` stamped with
+      `evidence_span_id` + `evidence_locator_json`. Amounts verified vs flat+evidence. Low header
+      confidence (<0.5) + `strong_extractor` -> stronger model (CLI: `OPENAI_EXTRACT_STRONG_MODEL`).
+      Default model bumped gpt-4o-mini -> **gpt-4.1** (owner-approved). 4 tests
+      (test_financial_evidence.py). NOT yet done: per-LINE span attribution (rows link to the doc's
+      primary span, not each line's own span); REFUSE-without-evidence invariant not enforced yet
+      (still falls back to flat text during migration); live-OpenAI validation on real docs pending.
+- [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches). ← NEXT
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
 - [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence spans.
 

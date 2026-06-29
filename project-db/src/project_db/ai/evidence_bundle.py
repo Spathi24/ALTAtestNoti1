@@ -160,14 +160,29 @@ class EvidenceBundle:
         mn = self.min_header_confidence
         return mn is not None and mn < threshold
 
-    def primary_span_id(self) -> Any | None:
-        """The most representative span to cite on a record extracted from this
-        doc: the table with the most sampled rows, else the first page span."""
+    def _primary(self) -> BundleTable | BundlePage | None:
+        """The most representative span: the table with the most sampled rows,
+        else the first page span."""
         if self.tables:
-            return max(self.tables, key=lambda t: len(t.rows)).span_id
+            return max(self.tables, key=lambda t: len(t.rows))
         if self.pages:
-            return self.pages[0].span_id
+            return self.pages[0]
         return None
+
+    def primary_span_id(self) -> Any | None:
+        """The span id to cite on a record extracted from this doc (or None)."""
+        prim = self._primary()
+        return prim.span_id if prim is not None else None
+
+    def primary_locator(self) -> dict[str, Any] | None:
+        """A denormalized locator for the primary span (sheet/page/range), for
+        ``evidence_locator_json`` -- citation without a join."""
+        prim = self._primary()
+        if prim is None:
+            return None
+        if isinstance(prim, BundleTable):
+            return prim.locator or None
+        return {"page": prim.page} if prim.page is not None else None
 
     def render_for_llm(self, *, max_chars: int = _DEFAULT_MAX_CHARS) -> str:
         """Clean, labelled rendering: tables first (where money lives), then pages."""

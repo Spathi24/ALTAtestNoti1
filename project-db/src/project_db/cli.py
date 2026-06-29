@@ -786,7 +786,19 @@ def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
 
+    # Optional escalation tier (Slice 6b): docs whose structured header read is
+    # low-confidence are re-extracted with this stronger model. Opt-in via env.
+    strong = None
+    strong_model = os.environ.get("OPENAI_EXTRACT_STRONG_MODEL")
+    if strong_model:
+        try:
+            strong = OpenAIFinancialLineExtractor(model=strong_model)
+        except FinancialLineExtractorError:
+            strong = None
+
     print(f"Extractor: {extractor.name} ({extractor.model})  -- this calls OpenAI (costs tokens)")
+    if strong is not None:
+        print(f"Escalation model (low-confidence docs): {strong.model}")
 
     with session_scope() as s:
         if args.all:
@@ -804,7 +816,7 @@ def cmd_fill_ledger_llm(args: argparse.Namespace) -> int:
         grand_rows = 0
         for proj in projects:
             batch = populate_ledger_llm_for_project(
-                s, extractor, proj.canonical_id, limit=args.limit
+                s, extractor, proj.canonical_id, limit=args.limit, strong_extractor=strong
             )
             parsed = batch.parsed_docs
             if parsed:
