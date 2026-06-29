@@ -78,7 +78,17 @@ limitation is not a license to add a phase.**
       (test_financial_evidence.py). NOT yet done: per-LINE span attribution (rows link to the doc's
       primary span, not each line's own span); REFUSE-without-evidence invariant not enforced yet
       (still falls back to flat text during migration); live-OpenAI validation on real docs pending.
-- [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches). ← NEXT
+- [x] **Slice 7 — Deterministic evidence verification.** DONE 2026-06-26.
+      `ai/evidence_verify.py::verify_against_evidence` (pure, value-based 2-dp tolerant) checks the
+      model's stated_total + each line amount actually appear in the cited evidence render. Wired into
+      the extractor trust gate: when extracting from structured evidence, a reconcile is REJECTED
+      (quarantined, reason `total_not_in_evidence`) if the stated total isn't in the evidence -- catches
+      a reconcile built on a hallucinated total. Flat-text fallback keeps the reconcile-only gate.
+      5 tests (test_evidence_verify.py) + 2 gate tests (test_financial_evidence.py). Also fixed the
+      div-total + sub-line DOUBLE-COUNTING via prompt v2 (ACCEPTED QUOTE 2x -> exact reconcile).
+- [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence
+      spans. Also pending: enforce no-trusted-record-without-evidence; per-LINE span attribution;
+      live end-to-end fill-ledger-llm validation on real projects. ← NEXT
 - [ ] Slice 7 — Deterministic verification (amount-in-evidence, IDs resolve, hash matches).
 - [ ] Slice 8 — `ReconciliationIssue` storage; wire `reconcile_financials_llm.py` to consume evidence spans.
 

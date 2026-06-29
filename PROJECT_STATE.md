@@ -71,8 +71,19 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
      FIX = Slice 7 deterministic verification: the stated_total / line sums must match a number that
      actually appears in the cited EvidenceSpan; flag mismatches; only then enforce
      no-trusted-record-without-evidence.
-- So 6b is plumbed + better, but DO NOT flip the ledger to "trusted" until (1)+(2) land. Per-LINE span
-  attribution (vs doc-primary-span) still pending too.
+- DOUBLE-COUNTING FIXED 2026-06-26 (prompt v2): rule that a TOTAL-column row already sums its
+  material/labour sub-rows -> extract section totals OR components, never both. Re-validated:
+  ACCEPTED QUOTE 63 lines $124k (2x) -> 13 lines $66,539.65 EXACT; 927 QUOTE stays exact. SOW (multi-
+  table PDF) now under-counts and EXTRAS slightly over -> both correctly QUARANTINED by the gate.
+- SLICE 7 DONE 2026-06-26: `ai/evidence_verify.py` deterministic grounding; gate quarantines a
+  reconcile whose stated_total is NOT in the cited evidence (`total_not_in_evidence`) -- catches
+  hallucinated totals. Tests added.
+- **Next: live end-to-end validation + Slice 8.** (1) Run production `fill-ledger-llm` on real Rockland
+  with gpt-4.1 + v2 prompt + Slice-7 gate; confirm the docs that pass write evidence-linked rows with
+  correct totals and the rest quarantine; eyeball division margins vs reality. (2) Slice 8 =
+  ReconciliationIssue storage + wire reconcile_financials_llm to evidence. Still pending: SOW multi-
+  table PDF accuracy, per-LINE span attribution, enforce no-trusted-record-without-evidence,
+  full-sync to backfill the 189 NULL folder_paths.
 
 ## REFOUNDATION DOC (owner heads-up 2026-06-26) — synthesize in a dedicated session
 `docs/MEETING_SYNTHESIS_financial_refoundation.md` (repo) is a higher-level re-statement of ALTA's

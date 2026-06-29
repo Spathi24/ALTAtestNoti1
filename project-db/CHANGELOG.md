@@ -9,6 +9,20 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-26 -- Slice 7: deterministic evidence verification (anti-hallucination gate)
+
+A reconcile can pass on a HALLUCINATED total -- the model invents a grand total
+and emits lines that sum to it, so reconcile-to-stated approves numbers that are
+not in the document. `ai/evidence_verify.py::verify_against_evidence` (pure, no
+LLM, value-based 2-dp tolerant via the financial layer's matcher) checks that the
+stated_total and each line amount actually appear in the cited evidence render.
+
+Wired into the extractor trust gate: when extracting from structured evidence, a
+reconciled extraction is now REJECTED (quarantined, reason `total_not_in_evidence`)
+if the stated total isn't grounded in that evidence. Flat-text fallbacks keep the
+legacy reconcile-only gate (no structured evidence to check). 5 tests in
+`test_evidence_verify.py` + 2 gate tests in `test_financial_evidence.py`.
+
 ## 2026-06-26 -- Slice 6b real-data validation: caps fixed, honest findings
 
 Validated 6b on real Rockland docs (gpt-4.1, controlled A/B old-flat vs new-bundle).

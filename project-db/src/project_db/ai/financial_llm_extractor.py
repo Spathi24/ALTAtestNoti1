@@ -457,6 +457,7 @@ def populate_ledger_llm_for_document(
     unchanged.
     """
     from project_db.ai.evidence_bundle import build_evidence_bundle
+    from project_db.ai.evidence_verify import verify_against_evidence
     from project_db.ai.financials import _company_name
 
     company = company_name or _company_name()
@@ -473,7 +474,8 @@ def populate_ledger_llm_for_document(
     # Prefer structured evidence (Slice 6b). Fall back to flat text when the doc
     # has no successful parse yet -- additive migration, never a regression.
     bundle = build_evidence_bundle(session, document)
-    if bundle is not None and not bundle.is_empty():
+    used_evidence = bundle is not None and not bundle.is_empty()
+    if used_evidence:
         llm_text = bundle.render_for_llm()
         evidence_span_id = bundle.primary_span_id()
         ev_loc = bundle.primary_locator()
@@ -630,6 +632,19 @@ def populate_ledger_llm_for_document(
         tol = max(_RECONCILE_ABS, (abs(stated) * _RECONCILE_PCT))
         result.reconcile_ok = abs(pretax_total - stated) <= tol or abs(gross_total - stated) <= tol
 
+    # Slice 7 -- deterministic evidence grounding. A reconcile can pass on a
+    # HALLUCINATED total (the model invents a grand total and emits lines that sum
+    # to it). When we extracted from structured evidence, ALSO require the stated
+    # total to actually appear in that evidence before trusting the numbers. Flat-
+    # text fallbacks keep the legacy reconcile-only gate (no structured evidence to
+    # check against).
+    ev_verif = None
+    if used_evidence:
+        ev_verif = verify_against_evidence(
+            llm_text, line_amounts=[it.amount for it in items], stated_total=stated
+        )
+        result.warnings.append(f"evidence-verify: {ev_verif.summary()}")
+
     # Always clear this document's prior LLM rows first (idempotent + cleans up
     # a previous bad extraction).
     session.query(FinancialLineItem).filter(
@@ -645,7 +660,15 @@ def populate_ledger_llm_for_document(
     # "truth" into the margins. This is stricter than the deterministic grid path
     # on purpose: the grid's reconcile-fails are small real doc discrepancies; an
     # LLM's are extraction errors that could be 2x off.
-    if result.reconcile_ok is True:
+    trusted = result.reconcile_ok is True
+    gate_reason: str | None = None
+    # Evidence-grounding override: reconciled, but the stated total isn't in the
+    # cited evidence -> the total is likely hallucinated; quarantine for review.
+    if trusted and ev_verif is not None and ev_verif.total_in_evidence is False:
+        trusted = False
+        gate_reason = "total_not_in_evidence"
+
+    if trusted:
         session.add_all(items)
         result.rows_written = len(items)
         result.ingestion_status = "parsed"
@@ -653,11 +676,18 @@ def populate_ledger_llm_for_document(
     else:
         result.rows_written = 0
         result.ingestion_status = "quarantined"
-        result.ingestion_reason = "reconcile_fail" if stated is not None else "no_stated_total"
-        result.warnings.append(
-            f"extracted lines sum to {pretax_total} (pre-tax) / {gross_total} "
-            f"(incl tax) vs stated {stated}; quarantined (not written to ledger)"
-        )
+        if gate_reason is not None:
+            result.ingestion_reason = gate_reason
+            result.warnings.append(
+                f"reconciled to stated {stated}, but that total is NOT in the cited "
+                f"evidence ({ev_verif.summary()}); quarantined as possibly hallucinated"
+            )
+        else:
+            result.ingestion_reason = "reconcile_fail" if stated is not None else "no_stated_total"
+            result.warnings.append(
+                f"extracted lines sum to {pretax_total} (pre-tax) / {gross_total} "
+                f"(incl tax) vs stated {stated}; quarantined (not written to ledger)"
+            )
     return result
 
 

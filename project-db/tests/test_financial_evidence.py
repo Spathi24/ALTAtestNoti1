@@ -168,3 +168,59 @@ def test_high_confidence_does_not_escalate(session):
     session.commit()
 
     assert weak.seen and not strong.seen
+
+
+# Slice 7: evidence-grounding gate -- a reconcile on a hallucinated total is rejected.
+_HALLUCINATED = {
+    "document_type": "construction_quote",
+    "ledger_side": "revenue",
+    "unit": None,
+    "currency": "CAD",
+    "stated_total": 9999.0,  # NOT a value present in the table evidence
+    "is_summary_rollup": False,
+    "line_items": [
+        {
+            "description": "Phantom scope",
+            "division_code": "02",
+            "masterformat_hint": None,
+            "amount": 9999.0,  # lines sum to the stated total -> reconcile passes...
+            "amount_type": "total",
+            "quoted_excerpt": "Phantom $9,999.00",
+            "confidence": 0.9,
+        }
+    ],
+}
+
+
+def test_quarantines_when_total_not_in_evidence(session):
+    doc = _doc(session)
+    dt = _flat_text(session, doc, text="")  # force the bundle to be the only input
+    _parse_with_table(session, doc)  # table evidence contains 1000.00, NOT 9999
+    ext = _RecordingExtractor(_HALLUCINATED)
+
+    res = populate_ledger_llm_for_document(session, doc, dt, ext, company_name="Alta")
+    session.commit()
+
+    # Reconciles ($9,999 lines == $9,999 stated) but the total is absent from the
+    # cited evidence -> Slice-7 gate quarantines it instead of writing it.
+    assert res.ingestion_status == "quarantined"
+    assert res.ingestion_reason == "total_not_in_evidence"
+    assert session.query(FinancialLineItem).filter_by(document_id=doc.canonical_id).count() == 0
+
+
+def test_grounded_total_still_writes(session):
+    doc = _doc(session)
+    dt = _flat_text(session, doc, text="")
+    _parse_with_table(session, doc)  # evidence contains 1000.00
+    grounded = {
+        **_HALLUCINATED,
+        "stated_total": 1000.0,  # present in the table evidence
+        "line_items": [{**_HALLUCINATED["line_items"][0], "amount": 1000.0}],
+    }
+    ext = _RecordingExtractor(grounded)
+
+    res = populate_ledger_llm_for_document(session, doc, dt, ext, company_name="Alta")
+    session.commit()
+
+    assert res.ingestion_status == "parsed"
+    assert session.query(FinancialLineItem).filter_by(document_id=doc.canonical_id).count() == 1
