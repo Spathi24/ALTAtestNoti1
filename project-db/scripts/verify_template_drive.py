@@ -34,7 +34,7 @@ PROJECT_DIR = MOCK_DRIVE / "2026001 — Rockland"
 QUOTE_DIR = PROJECT_DIR / "quotes"
 
 EXPECTED = {
-    "2026001_QUOTE_22-Plumbing_PlombertInc_pending.xlsx": {
+    "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx": {
         "division": "22",
         "grand_total": 6800.0,
         "min_line_items": 3,

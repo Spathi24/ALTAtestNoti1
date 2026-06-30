@@ -16,11 +16,19 @@ come before heavy implementation).
 
 ## Build phases (ordered — do not skip ahead)
 
-**Phase 1 — Mock template Drive** `docs/templates/mock_drive/` ← **CURRENT**
+**Phase 1 — Mock template Drive** `docs/templates/mock_drive/` ← **CURRENT, patched 2026-06-30**
 Files + naming convention + template .xlsx (SOW, PKG, QUOTE, GREENSHEET, PO, BUDGET,
 JOBCOST). No schema/model/migration code. Owner must approve templates before Phase 2.
 Verify: XlsxParser reads every data sheet → clean table, correct headers, real values.
 Gold standard to mirror: `docs/JOB_COST_TEMPLATE_structured.xlsx` (owner-built).
+**The mock `2026001_JOBCOST.xlsx` is a pilot-scale demo, NOT a replacement for the gold
+standard** — see `docs/templates/NAMING_CONVENTIONS.md` "JOBCOST: gold-standard template
+is canonical" section. Production rule: copy `JOB_COST_TEMPLATE_structured.xlsx` per
+project as `{project_code}_JOBCOST.xlsx`, use its own `Parser_Contract`.
+Patches applied 2026-06-30: fixed BUDGET README `#NAME?` formula-text cells; renamed
+plumbing QUOTE to `_selected` (was inconsistent with its `awarded` PO); fixed Greensheet
+plumbing status to `awarded` to match; documented Quote_Lines control rows (section-total
++ Pre-Tax Total) explicitly in each file's Parser_Contract Notes.
 
 **Phase 2 — Project code migration** (additive, no rename of existing id/hash)
 Extend `db/models/work.py` Project + `_add_missing_columns`:
@@ -140,3 +148,31 @@ compare by **coverage not just price**, mark one `selected`, freeze a `BudgetSna
 Reuse the grid parser + CSI vocab + the evidence links already in place. Gate of done:
 owner/PM opens ALTA (not Drive) to see real-vs-quoted per trade + spend vs budget on
 the pilot, it's right, and they come back next week unprompted.
+
+---
+
+## PARKED — Drive Write Capability (gated, NOT started, no automatic mutation)
+
+Recorded 2026-06-30 as a future option, not a commitment. Only relevant if the owner
+decides ALTA should construct/reorganize the real project Drive automatically from
+parsed project data, instead of the team manually copying templates into folders.
+**This requires an explicit owner decision before any code is written.** Do not start
+on this without that decision, and do not let it block or distract from Phases 2–6.
+
+If undertaken, build in this strict order — each step is a hard gate on the next:
+
+1. **Read-only Drive audit** — scan real Drive folders/filenames, report against
+   `NAMING_CONVENTIONS.md`. No writes.
+2. **Proposed folder/filename migration plan** — a diff-style plan (current → proposed
+   path), surfaced for human review. No writes.
+3. **Dry-run output** — simulate the plan, log what would happen, byte-for-byte
+   preview of new files where applicable. No writes.
+4. **Human approval** — explicit per-project or per-batch sign-off before anything
+   touches the real Drive. Reuse the `Proposal` gate pattern already in place.
+5. **Copy-first write mode** — new/reorganized files are written as copies; existing
+   files are never moved or deleted in this phase.
+6. **Operation log and rollback manifest** — every write logged with enough detail
+   to reverse it; no destructive operation without a corresponding rollback path.
+
+No direct Drive mutation happens before step 4 (human approval) on every run, every
+time — this is not a one-time approval that unlocks future autonomous writes.

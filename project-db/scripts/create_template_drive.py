@@ -12,12 +12,21 @@ Column-shape rules:
   QUOTE / PKG  -> grid-readable: Material Amount / Labour Amount / Total Amount
                   (deterministic grid parser reads these to the penny)
   SOW          -> scope grid: Item_ID / CSI_Div_Code / Description / Included / Material_Spec
-  JOBCOST      -> Cost_Ledger shape (mirrors JOB_COST_TEMPLATE_structured.xlsx)
+  JOBCOST      -> pilot-scale MOCK only, mirrors the SHAPE of JOB_COST_TEMPLATE_structured.xlsx.
+                  NOT a replacement. Production rule: copy the real
+                  docs/JOB_COST_TEMPLATE_structured.xlsx into each project folder as
+                  {project_code}_JOBCOST.xlsx and use its own Parser_Contract.
   BUDGET       -> Budget_Lines flat table
   PO           -> PO_Header key-value + PO_Lines with M/L/T
   GREENSHEET   -> display only, all sheets Ingest=N
 
 Every file carries a Parser_Contract sheet so ALTA knows which sheets to ingest.
+
+Data provenance (so generated files are never mistaken for real data):
+  - Gold JOBCOST shape  = docs/JOB_COST_TEMPLATE_structured.xlsx (structure/template contract)
+  - CSI division/trade list = real Rockland project DB query (project_db.sqlite)
+  - All dollar amounts, vendor names, and line descriptions in this script = MOCK EXAMPLES,
+    not migrated or authoritative financial data.
 """
 from __future__ import annotations
 
@@ -257,8 +266,10 @@ def build_quote(
     _pc_sheet(wb, [
         ("Quote_Lines", "Y", "tblQuoteLines", "Item_ID",
          "Subcontractor quote. Grid-readable: Material Amount / Labour Amount / Total Amount. "
-         "Row 2 = section total (sets CSI division). Line items follow. "
-         "Pre-Tax Total row has empty Description so grand_total is captured."),
+         "Only QI-* rows are real quote line items. Row 2 (Item_ID empty) is a parser-control "
+         "section-total row that sets the current CSI division for all QI-* rows that follow. "
+         "The final row (Item_ID='Pre-Tax Total', Description empty) is a parser-control row "
+         "that the grid parser captures as grand_total, not a line item."),
         ("Parser_Contract", "N", "—", "—", "Parser instructions"),
     ])
     _save(wb, path)
@@ -277,7 +288,7 @@ def build_greensheet(path: Path) -> None:
         ["08",   "DoorsWindows",         6000,  5800,  6100,  "",    5800,  5800,  5800,  0,    5800, "committed"],
         ["09",   "Finishes",             22000, 21500, 22800, 23000, 21500, 21500, 21500, 0,    21500,"committed"],
         ["1012", "Fixtures",             9000,  8800,  9200,  "",    8800,  8800,  8800,  0,    8800, "pending"],
-        ["22",   "Plumbing",             7000,  6800,  7200,  "",    6800,  6800,  6800,  0,    6800, "selected"],
+        ["22",   "Plumbing",             7000,  6800,  7200,  "",    6800,  6800,  6800,  0,    6800, "awarded"],
         ["23",   "HVAC",                 4500,  4200,  4800,  "",    4200,  4200,  4200,  0,    4200, "pending"],
         ["26",   "Electrical",           8000,  7700,  8300,  "",    7700,  7700,  7700,  0,    7700, "pending"],
     ]
@@ -375,8 +386,8 @@ def build_budget(path: Path) -> None:
     ws2["A1"] = "Budget Snapshot — 2026001 Rockland"
     ws2["A1"].font = Font(bold=True, size=12)
     for r, (k, v) in enumerate([
-        ("Client_Price_Pre_Global", "= Budget_Amount x Line_Markup_Factor (per-line inflation only)."),
-        ("Final Client Price", "= SUM(Client_Price_Pre_Global) x 1.15 (global 15% markup applied at subtotal)."),
+        ("Client_Price_Pre_Global", "Equals Budget_Amount x Line_Markup_Factor (per-line inflation only)."),
+        ("Final Client Price", "Equals SUM(Client_Price_Pre_Global) x 1.15 (global 15% markup applied at subtotal)."),
         ("Rule", "This snapshot is frozen. Do not edit after owner approval. Create v2 for revisions."),
     ], 3):
         ws2.cell(r, 1, k).font = Font(bold=True)
@@ -398,12 +409,19 @@ def build_jobcost(path: Path) -> None:
 
     # README
     ws = wb.create_sheet("README")
-    ws["A1"] = f"JOBCOST — {PC} Rockland"
+    ws["A1"] = f"JOBCOST — {PC} Rockland (MOCK, pilot-scale demo)"
     ws["A1"].font = Font(bold=True, size=12)
     for r, (k, v) in enumerate([
-        ("Purpose", "Canonical job-cost ledger: actuals (Cost_Ledger) + forecast (Scope_Budget) + change orders + order quantities."),
+        ("NOT the canonical template", "This file is a lightweight pilot-scale mock for Drive-organization "
+         "and parser-shape demonstration only. The canonical, owner-built gold-standard JOBCOST workbook is "
+         "docs/JOB_COST_TEMPLATE_structured.xlsx (Project_Setup, Cost_Ledger, Scope_Budget, Change_Orders, "
+         "Order_Quantities, Cost_Code_Summary, Progress_Valuation, Dashboard, Lists, Parser_Contract)."),
+        ("Production rule", "For each real project, copy JOB_COST_TEMPLATE_structured.xlsx into the project "
+         "folder as {project_code}_JOBCOST.xlsx and use ITS Parser_Contract as the ingestion contract. "
+         "Do not build a separate simplified JOBCOST model."),
+        ("Purpose of this mock", "Demonstrate the same sheet roles at smaller scale: actuals (Cost_Ledger) + "
+         "forecast (Scope_Budget) + change orders + order quantities."),
         ("Main input tables", "tblCostLedger, tblScopeBudget, tblChangeOrders, tblOrderQuantities."),
-        ("Summary logic", "Dashboard uses SUMIFS by Cost_Class, Cost_Code, and Include flags."),
         ("Append rule", "Append rows inside named tables. Do not build summaries from fixed row ranges."),
         ("Parser rule", "Only ingest sheets listed Ingest=Y in Parser_Contract."),
     ], 3):
@@ -532,7 +550,7 @@ def main() -> None:
         build_package(PROJECT_DIR / "SOW" / "packages" / f"{PC}_PKG_{csi}-{trade}.xlsx", csi, trade)
 
     build_quote(
-        PROJECT_DIR / "quotes" / f"{PC}_QUOTE_22-Plumbing_PlombertInc_pending.xlsx",
+        PROJECT_DIR / "quotes" / f"{PC}_QUOTE_22-Plumbing_PlombertInc_selected.xlsx",
         "22", "Plumbing", "Plombert Inc.",
         [
             ("Rough-in plumbing (drain, supply, vent)",  "22", 800.00,  2400.00, 3200.00, "Y","N","", "PEX-A; per SOW-025"),
