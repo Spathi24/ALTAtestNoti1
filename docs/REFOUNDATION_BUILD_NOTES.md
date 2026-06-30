@@ -8,10 +8,42 @@ code — nothing here is built yet, by design (the working practices / SOP conve
 come before heavy implementation).
 
 > Status 2026-06-26: evidence refactor Slices 1–8 COMPLETE, parser capped.
-> **§12 conventions SETTLED 2026-06-30** — see `docs/MEETING_SYNTHESIS_financial_refoundation.md §12`
-> and the PROJECT_STATE.md REFOUNDATION PLAN section for full detail.
-> Build is unblocked pending the mock template Drive (plan §5/§10.2, process-first, no schema).
-> Build freeze still applies until mock Drive is built and the pilot SOW exists.
+> **§12 conventions SETTLED 2026-06-30.** Build phases below. Follow in order; do not
+> start the next phase until the current one is committed, lint-green, and (for Phase 1)
+> owner-approved. One slice per prompt. Build freeze holds through Phase 1.
+
+---
+
+## Build phases (ordered — do not skip ahead)
+
+**Phase 1 — Mock template Drive** `docs/templates/mock_drive/` ← **CURRENT**
+Files + naming convention + template .xlsx (SOW, PKG, QUOTE, GREENSHEET, PO, BUDGET,
+JOBCOST). No schema/model/migration code. Owner must approve templates before Phase 2.
+Verify: XlsxParser reads every data sheet → clean table, correct headers, real values.
+Gold standard to mirror: `docs/JOB_COST_TEMPLATE_structured.xlsx` (owner-built).
+
+**Phase 2 — Project code migration** (additive, no rename of existing id/hash)
+Extend `db/models/work.py` Project + `_add_missing_columns`:
++project_code (YYYYNNN, unique) +display_name +legacy_job_number +aliases (JSON).
+Assign 2026001 to 923-927 Rockland. Tests. Commit.
+
+**Phase 3 — SowItem + SowPackage models**
+New `db/models/sow.py`. Migration in FK order (SowPackage before SowItem). Tests. Commit.
+
+**Phase 4 — SubcontractorQuote + FinancialLineItem extensions**
+SubcontractorQuote model in `db/models/finance.py`; status vocab pending/recommended/
+selected/rejected/awarded; evidence_span_id FK reused. Extend FinancialLineItem:
++purchase_type +cost_status +sow_item_id +line_markup_factor. Tests. Commit.
+
+**Phase 5 — PurchaseOrder → ContractObligation**
+PurchaseOrder in `db/models/finance.py`; auto po_number (YYYYNNN-PPP); emits
+ContractObligation on award. Tests. Commit.
+
+**Phase 6 — BudgetSnapshot + green-sheet report + variance view**
+BudgetSnapshot model; green sheet report fn in `ai/`; variable-cost tolerance flags
+wired into ledger-health. Tests. Commit. Demo: owner sees real-vs-quoted on pilot.
+
+---
 
 ---
 
