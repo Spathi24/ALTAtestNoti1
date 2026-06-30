@@ -99,15 +99,34 @@ class XlsxParser:
                     values = [c.value for c in row]
                     if not any(v not in (None, "") for v in values):
                         continue
-                    rows.append([c.value for c in row])
+                    # Resolve formula cells to their cached COMPUTED value (so the
+                    # ledger shows 103523.0, not "=SUM(C6:C520)"). The cached value
+                    # exists whenever the file was saved by Excel/Sheets (the norm);
+                    # if it's missing we keep the formula text as a last resort.
+                    resolved_row = []
                     for c in row:
-                        if is_formula(c.value) and len(formula_cells) < _MAX_CELLS_MAP:
-                            formula_cells[c.coordinate] = {
-                                "formula": c.value,
-                                "number_format": c.number_format,
-                                "raw_value": None,
-                                "displayed_value": None,
-                            }
+                        v = c.value
+                        if is_formula(v):
+                            if cached_wb is None:
+                                with warnings.catch_warnings():
+                                    warnings.simplefilter("ignore")
+                                    cached_wb = load_workbook(
+                                        io.BytesIO(content), read_only=False, data_only=True
+                                    )
+                            try:
+                                cv = cached_wb[ws.title][c.coordinate].value
+                            except Exception:
+                                cv = None
+                            resolved_row.append(cv if cv is not None else v)
+                            if len(formula_cells) < _MAX_CELLS_MAP:
+                                formula_cells[c.coordinate] = {
+                                    "formula": v,
+                                    "number_format": c.number_format,
+                                    "displayed_value": cv,
+                                }
+                        else:
+                            resolved_row.append(v)
+                    rows.append(resolved_row)
 
                 if not rows:
                     sheet_meta.append(
@@ -120,21 +139,7 @@ class XlsxParser:
                     )
                     continue
 
-                # Resolve formula results from a data_only load, only if needed.
-                if formula_cells:
-                    if cached_wb is None:
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            cached_wb = load_workbook(
-                                io.BytesIO(content), read_only=False, data_only=True
-                            )
-                    cws = cached_wb[ws.title]
-                    for addr in formula_cells:
-                        try:
-                            formula_cells[addr]["displayed_value"] = cws[addr].value
-                        except Exception:
-                            pass
-
+                # (Formula cells were already resolved to cached values above.)
                 header_idx, header_conf = detect_header(rows)
                 headers = [(_cell(h) or f"col{i}") for i, h in enumerate(rows[header_idx])]
                 width = max(len(headers), max((len(r) for r in rows), default=0))
