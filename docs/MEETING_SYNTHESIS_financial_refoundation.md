@@ -441,22 +441,124 @@ Alta costs → seeds green-sheet entry #1 → the actuals booked via POs/varianc
 
 ---
 
-## 12. Open questions to settle with the owner/PM BEFORE building
+## 12. Conventions — SETTLED 2026-06-30
 
-1. **Usage-gate sentence** for the *financial* spine (CLAUDE.md still has it "being
-   whiteboarded" — the whiteboards may be it; confirm).
-2. **Markup model:** per-line %, global %, or target-profit backsolve from budget?
-3. **Quote selection rule:** cheapest vs best-coverage — manual, or AI-proposed? (Keep
-   human-selected, AI-advisory — matches the Proposal invariant. Coverage check is
-   mandatory regardless.)
-4. **PO ↔ `ContractObligation`:** new `PurchaseOrder` that *emits* obligations (lean
-   yes), vs extending obligations directly.
-5. **SOW granularity:** is a SOW item == a `FinancialLineItem` line, or coarser (one
-   SOW item → several ledger lines)? Determines the FK direction.
-6. **Tolerance threshold for types 3 & 4:** what $ / % of a job may live in the
-   "unassigned variable" bucket before it flags?
-7. **Legacy data:** old projects seed the Alta number later but are pre-SOP — confirm
-   read-only history, not retro-fitted.
+All seven questions (plus job-numbering) are now resolved. Do not reopen these;
+build against them. If reality forces a change, update here and in PROJECT_STATE.md.
+
+### §12.1 Usage-gate sentence
+**Settled.** For the pilot project (923 Rockland / project code `2026001`), the
+owner/PM can open ALTA — not Drive — and accurately see: budget vs committed cost vs
+actual spend; quoted vs actual by trade/package; selected quotes; unresolved variable
+costs; current over/under status; forecasted cost exposure. Success = ALTA becomes
+trusted as the financial source of truth, and the owner/PM comes back the following
+week without being prompted. Written to CLAUDE.md.
+
+### §12.2 Markup model
+**Settled: two-layer markup.**
+
+1. **Per-line inflation** — each internal line item may carry a line-specific markup
+   factor (trade risk, material volatility, difficulty, expected margin).
+2. **Global percentage markup** on the inflated subtotal — default **15%**.
+
+Formula:
+```
+Line client-adjusted cost = internal line cost × line markup factor
+Subtotal                  = Σ all client-adjusted line costs
+Final client price        = subtotal × 1.15
+```
+
+Internal cost, vendor quotes, committed cost, actual cost, and margin are INTERNAL
+ONLY. The client-facing estimate is derived from the marked-up price, never raw
+internal costs.
+
+### §12.3 Quote selection rule
+**Settled: AI recommends via Proposal gate; human approves.**
+
+AI evaluates quotes on: time, cost, quality, scope coverage, exclusions, assumptions,
+materials included, schedule risk, vendor reliability (when known). AI may propose
+using assumed values when information is incomplete. AI flags missing scope, low-quality
+assumptions, timing risks, and suspiciously cheap or incomplete quotes.
+
+**Status vocabulary (one vocabulary, everywhere):**
+`pending` → `recommended` → `selected` / `rejected` → `awarded`
+
+Flow: quotes enter as `pending` → AI compares and proposes via `Proposal` gate →
+human approves/rejects/edits → approved quote becomes `selected` → PO conversion
+makes it `awarded`. The PM/owner may change the selection later if conditions change.
+
+### §12.4 PO ↔ ContractObligation
+**Settled: new `PurchaseOrder` entity that emits `ContractObligation`(s) on award.**
+
+Flow: selected quote → PurchaseOrder → ContractObligation(s) → committed cost →
+actual spend reconciliation.
+
+PO is the operational artifact (project#, PO#, vendor, package, purchase type,
+contract amount, budget line, terms, status). ContractObligation is the
+legal/financial consequence. Keeping them separate gives clean tracking without
+stretching obligations into the primary award object.
+
+### §12.5 SOW granularity
+**Settled: SowItem is COARSER than FinancialLineItem.**
+
+One `SowItem` → many `FinancialLineItem` rows. Hierarchy:
+```
+Project → SowPackage → SowItem → FinancialLineItem(s) → Quote / PO / Actual
+```
+Each `FinancialLineItem` carries an optional but strongly preferred `sow_item_id`.
+- Inside original SOW → original budget/contract.
+- Outside original SOW → ChangeOrder.
+- Unclear SOW link → needs human review / flagged.
+
+### §12.6 Tolerance threshold (types 3 & 4)
+**Settled: priority thresholds, time-sensitive.**
+
+Applies to: Home Depot/Rona, hourly labour, and any variable purchase not cleanly
+assigned to a trade/SOW item/budget line.
+
+| Level | Condition |
+|---|---|
+| **Warning** | unassigned variable > 3% of project budget, OR unresolved for > 1 week, OR materially large even if < 3% |
+| **Hard flag** | unassigned variable > 5% of project budget, OR unresolved for > 2 weeks, OR unresolved cost threatens job margin |
+
+Operational rule: every HD/Rona purchase and labour entry MUST include the job number.
+ALTA tolerates temporary uncertainty in trade/SOW assignment; it does NOT tolerate
+missing job identity or unresolved variable costs sitting > 1 week without review.
+
+### §12.7 Project code + PO numbering format
+**Settled: YYYYNNN / YYYYNNN-PPP. Internal hash unchanged.**
+
+Three separate identifiers:
+- `Project.id` / `Project.project_hash` — existing internal DB identity. **DO NOT REPLACE.**
+- `Project.project_code` — operational code, format `YYYYNNN` (year + 3-digit sequence
+  within that year). E.g. `2026001` = first project opened in 2026.
+- `Project.display_name` — readable label, e.g. `2026001 — Rockland`.
+- `Project.legacy_job_number` — old short code if needed, e.g. `923`.
+- Aliases (`923 Rockland`, `Tanya`, `Rockland`, address labels) → stored via
+  `Project.aliases` / `ExternalId`; accepted for lookup, not canonical.
+
+PO number: `YYYYNNN-PPP` where PPP = sequential PO within the project.
+E.g. `2026001-001`, `2026001-002`.
+
+**Validation regexes:**
+- Project code: `^\d{7}$`
+- PO number: `^\d{7}-\d{3}$`
+
+**Normalisation (system must accept all variants and resolve to canonical):**
+- Project inputs → `2026001`: `2026-001`, `2026 001`, `Project 2026001`, `Job 2026001`,
+  `923 Rockland`, `Rockland`, `Tanya`.
+- PO inputs → `2026001-001`: `2026001 001`, `PO 2026001-001`, `PO-2026001-001`,
+  `2026-001-001`.
+
+**Pilot assignment:** 923 Rockland = project code `2026001`, display `2026001 — Rockland`.
+
+### §12.8 Legacy data
+**Settled: read-only history; do not retrofit.**
+
+Legacy projects are not backfilled into the new SOP structure. They may inform the
+Alta-number estimator later, after review and normalisation, and should be marked
+lower-confidence than post-SOP data. Legacy data can inform; it does not control the
+new pilot structure.
 
 ---
 

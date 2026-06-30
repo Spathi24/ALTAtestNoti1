@@ -113,31 +113,71 @@ finishing conditions: **[EVIDENCE_REFACTOR.md](EVIDENCE_REFACTOR.md)**.
   table PDF accuracy, per-LINE span attribution, enforce no-trusted-record-without-evidence,
   full-sync to backfill the 189 NULL folder_paths.
 
-## REFOUNDATION PLAN (READ 2026-06-29) — `docs/MEETING_SYNTHESIS_financial_refoundation.md`
-Authoritative plan (owner+PM) kept in repo. Read it before big parser/ledger changes. Full distilled
-invariants in memory [[project-refoundation-plan]]. The parser/ledger/DB-relevant constraints:
+## REFOUNDATION PLAN — `docs/MEETING_SYNTHESIS_financial_refoundation.md`
+Authoritative plan (owner+PM). Read it before big parser/ledger changes. §12 conventions
+SETTLED 2026-06-30 (see §12 in the plan doc for full detail). Distilled invariants:
+
 - NORTH STAR: STRUCTURE & TRACEABILITY over prediction. Every cost traces SOW item -> package -> quote
   -> PO -> budget line -> actual. Alta-number estimator (§11) PARKED until ~20-50 clean projects.
 - LEAVE ALONE (§9): 13-entity core + ExternalId; Project=join nucleus; LLM-advisor->Proposal gate;
   SQL/SQLite; **evidence spine (DocumentParse/EvidenceSpan) keep as-is**; CSI vocab; HD + labour spines.
-- PARSING (§9): deterministic GRID parser becomes the MAIN path under templated SOP inputs; evidence/
-  LLM tolerance (Docling/XlsxParser/LLM) DEMOTED to FALLBACK for legacy + third-party docs. My grid->
-  evidence migration is aligned. The VALUE is the per-division LINE-ITEM material/labour split, NOT the
-  aggregate total (PM confirmed). => the $361k "contracted revenue" is a WRONG aggregation, not a target.
-- DON'T OVER-INVEST IN (SOPs supersede): folder_path/category project attribution (-> `job_number` on
-  Project); quote-status GUESSING (accepted/verified/1/2/3 -> deterministic status-label read; this
-  guessing IS the $361k bug: 927 mis-counted as contracted); forcing HD/hourly to line items (tolerance
-  buckets vs job#, not precision).
-- INVARIANTS: outside-SOW -> tracked ChangeOrder never silent; flag never silently sort; material spec
-  drives material/labour; client never sees internal numbers; takeoff(quantities) vs site-visit
-  (conditions) kept separate; cross-doc rollups must not double-count (the $361k = ACCEPTED QUOTE
-  $66,539.65 + its SOW $66,539.65 same money + 927 mis-classified).
-- NEW entities (build LATER): SowItem, SowPackage, SubcontractorQuote (has evidence_span_id <- my
-  spine), BudgetSnapshot, PurchaseOrder (emits ContractObligation), ChangeOrder (generalize
-  extras_grid). EXTEND FinancialLineItem +purchase_type +cost_status(estimated->quoted->committed->
-  actual); EXTEND Project +job_number.
-- ACTION: do NOT start building this yet (owner: settle conventions first, doc §10 step 1 + §12 Qs).
-  HOLD Slice 8. Structure current work to fit; don't pre-empt with large permanent parser changes.
+- PARSING (§9): deterministic GRID parser = MAIN path under templated SOP inputs; evidence/LLM tolerance
+  (Docling/XlsxParser/LLM) = FALLBACK for legacy + third-party docs. VALUE = per-division line-item
+  material/labour split, NOT aggregate totals.
+- DON'T OVER-INVEST IN: folder_path attribution (-> project_code); quote-status guessing (->
+  deterministic status read); forcing HD/hourly to line items (tolerance buckets vs job#).
+- INVARIANTS: outside-SOW -> tracked ChangeOrder; flag never silently sort; material spec drives
+  cost; client never sees internal numbers; takeoff vs site-visit separate; no cross-doc double-counts.
+
+### §12 SETTLED CONVENTIONS (2026-06-30) — build against these, do not reopen
+
+**Usage gate (financial, pilot 2026001 Rockland):** owner/PM opens ALTA (not Drive) and accurately
+sees budget vs committed vs actual; quoted vs actual by trade/package; selected quotes; unresolved
+variable costs; over/under status; forecasted exposure. Comes back next week unprompted. → in CLAUDE.md.
+
+**Markup model (two-layer):**
+  Line client price = internal cost × line markup factor
+  Subtotal = Σ all client-adjusted lines
+  Final client price = subtotal × 1.15 (default global markup)
+  Internal cost/margin stays INTERNAL; client sees only the marked-up number.
+
+**Quote status vocabulary (one vocabulary, everywhere):**
+  pending → recommended → selected / rejected → awarded
+  AI recommends via Proposal gate; human approves; PM/owner may change later.
+
+**PO → ContractObligation:** new PurchaseOrder entity emits ContractObligation(s) on award.
+  selected quote → PurchaseOrder → ContractObligation(s) → committed cost → actual reconciliation.
+
+**SOW granularity:** SowItem is COARSER than FinancialLineItem.
+  Project → SowPackage → SowItem → FinancialLineItem(s) → Quote/PO/Actual.
+  FinancialLineItem carries optional but strongly preferred sow_item_id.
+  Inside SOW = original contract. Outside SOW = ChangeOrder. Unclear = flagged.
+
+**Variable cost tolerance (types 3 & 4):**
+  Warning: unassigned variable > 3% of project budget, OR unresolved > 1 week.
+  Hard flag: unassigned variable > 5%, OR unresolved > 2 weeks, OR threatens margin.
+  Operational rule: every HD/labour entry MUST include the job/project code.
+
+**Project code + PO format:**
+  Project.id (existing internal hash) = UNCHANGED; DB joins never broken.
+  Project.project_code = YYYYNNN (year + 3-digit sequence within year). E.g. 2026001.
+  Project.display_name = "2026001 — Rockland". Project.legacy_job_number = "923".
+  Aliases (923 Rockland, Tanya, Rockland, address labels) → ExternalId / aliases; not canonical.
+  PO number = YYYYNNN-PPP (PPP = sequential per project). E.g. 2026001-001.
+  Regex: project_code=^\d{7}$  po_number=^\d{7}-\d{3}$
+  System normalises all variants (2026-001, "Rockland", "Tanya", "PO-2026001-001" etc.) to canonical.
+  Pilot assignment: 923 Rockland = 2026001.
+
+**Legacy data:** read-only history; do not retrofit. May seed estimator later after review, marked
+  lower-confidence than post-SOP data.
+
+### New entities (build LATER, unblocked now that §12 is settled)
+SowItem, SowPackage, SubcontractorQuote (has evidence_span_id), BudgetSnapshot,
+PurchaseOrder (emits ContractObligation), ChangeOrder (generalises extras_grid).
+EXTEND FinancialLineItem +purchase_type +cost_status(estimated/quoted/committed/actual).
+EXTEND Project +project_code +display_name +legacy_job_number +aliases.
+Build order: plan §10. Start only after mock template Drive is built (plan §5/§10.2).
+Full entity→repo map: docs/REFOUNDATION_BUILD_NOTES.md.
 
 ### PRIVACY FIX 2026-06-26 (delta sync leaked files outside the team root) — RESOLVED
 - Symptom: corpus revamp processed private personal files NOT under the configured root.

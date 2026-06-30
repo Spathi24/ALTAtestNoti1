@@ -34,10 +34,12 @@ watched are (1) **Home Depot daily purchases** (Home Depot Pro account) and
 Work is "done" when **a real person uses ALTA for a real task and comes back to
 it** — not when the code is complete or the tests pass.
 
-> ⚠ The exact gate sentence is being set with the owner (whiteboard in
-> progress). Until it's written here, the working gate is: *"the owner opens
-> ALTA instead of Drive/Monday to answer one real question, it's right, and they
-> do it again next week unprompted."* **Fill this in — don't leave it vague.**
+**Financial gate (settled 2026-06-30, pilot = 923 Rockland / project code `2026001`):**
+For the pilot project, the owner/PM can open ALTA — not Drive — and accurately see:
+budget vs committed cost vs actual spend; quoted vs actual by trade/package; selected
+quotes; unresolved variable costs; current over/under status; forecasted cost exposure.
+Success means ALTA becomes trusted as the financial source of truth and the owner/PM
+comes back to it the following week without being prompted.
 
 ---
 

@@ -9,6 +9,38 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-06-30 — §12 refoundation conventions settled with owner
+
+All seven open questions from the meeting synthesis (plus job-number format) are now
+decided and written to documentation. No code written today — this is a pure
+conventions checkpoint that unblocks the front-of-spine build.
+
+Settled decisions (full detail in `docs/MEETING_SYNTHESIS_financial_refoundation.md §12`
+and `PROJECT_STATE.md` REFOUNDATION PLAN, `docs/REFOUNDATION_BUILD_NOTES.md` entity table):
+
+- **Usage gate** — financial gate for pilot 2026001 Rockland written to CLAUDE.md.
+- **Markup model** — two-layer: per-line `line_markup_factor` × global 15%. Internal
+  costs stay internal; client sees only the marked-up number.
+- **Quote status vocabulary** — `pending → recommended → selected / rejected → awarded`.
+  AI recommends via Proposal gate; human approves; selection may change.
+- **PO ↔ ContractObligation** — new `PurchaseOrder` entity emits ContractObligation(s)
+  on award. PO is the operational artifact; obligation is the legal/financial consequence.
+- **SOW granularity** — SowItem is COARSER than FinancialLineItem. One SowItem → many
+  FinancialLineItem rows. FinancialLineItem gains optional `sow_item_id` FK.
+- **Variable cost tolerance** — Warning: >3% of budget or >1 week unresolved.
+  Hard flag: >5% or >2 weeks or margin-threatening. Every HD/labour entry must carry
+  the project code; missing job identity is not tolerated.
+- **Project code format** — `YYYYNNN` (e.g. `2026001`). Internal hash unchanged.
+  PO number: `YYYYNNN-PPP` (e.g. `2026001-001`). Pilot 923 Rockland = `2026001`.
+  System normalises all aliases/variants to canonical. Regex: `^\d{7}$` / `^\d{7}-\d{3}$`.
+- **Legacy data** — read-only history; no retrofit. May seed estimator later after
+  review, marked lower-confidence than post-SOP data.
+
+Build freeze remains in effect. Next step: mock template Drive (plan §5/§10.2) before
+any schema/entity code. Suite: 1556 green; ruff clean.
+
+---
+
 ## 2026-06-26 -- Slice 8: ReconciliationIssue storage + cross-doc double-count detector (caps the refactor)
 
 The "flag, never silently sort" surface. `ReconciliationIssue` model (issue_type /

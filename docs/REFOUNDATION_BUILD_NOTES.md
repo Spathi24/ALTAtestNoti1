@@ -7,11 +7,11 @@ into the current repo, so a fresh instance with less context can execute precise
 code — nothing here is built yet, by design (the working practices / SOP conventions
 come before heavy implementation).
 
-> Status 2026-06-26: evidence refactor Slices 1–8 are COMPLETE and the parser is
-> capped. This blueprint is the *front-of-spine* (SOW → package → quote → PO →
-> budget → variance) that sits on top of that ledger. **Do not start building it
-> until the owner settles §12** (job-number format, status vocabulary, markup model,
-> SOW granularity, tolerance thresholds). Build freeze still applies.
+> Status 2026-06-26: evidence refactor Slices 1–8 COMPLETE, parser capped.
+> **§12 conventions SETTLED 2026-06-30** — see `docs/MEETING_SYNTHESIS_financial_refoundation.md §12`
+> and the PROJECT_STATE.md REFOUNDATION PLAN section for full detail.
+> Build is unblocked pending the mock template Drive (plan §5/§10.2, process-first, no schema).
+> Build freeze still applies until mock Drive is built and the pilot SOW exists.
 
 ---
 
@@ -59,20 +59,26 @@ come before heavy implementation).
 
 Legend: **NEW** model · **EXTEND** existing · **VIEW** (computed, no table) · **REUSE**.
 
-| Entity | Action | Where | Key fields | FK / reuse | Blocking Q (§12) |
+§12 conventions settled 2026-06-30 — blocking questions are now resolved. See
+`docs/MEETING_SYNTHESIS_financial_refoundation.md §12` for full detail.
+
+| Entity | Action | Where | Key fields | FK / reuse | §12 status |
 |---|---|---|---|---|---|
-| `Project.job_number` | EXTEND | `db/models/work.py` Project + migration `_add_missing_columns` | `job_number` (canonical, unique) | replaces name-based id; Drive attribution updates | #1 format |
-| `SowItem` | NEW | `db/models/` new `sow.py` | description, `division_code` (CSI), `included` bool, `material_spec` (JSON), `package_id` | → Project, → SowPackage; CSI vocab in `ai/financial_divisions.py` | #5 granularity (SowItem == FinancialLineItem line, or coarser?) |
-| `SowPackage` | NEW | `db/models/sow.py` | trade/`division_code`, drawings/notes refs, status | → Project; has many SowItem | — |
-| `SubcontractorQuote` | NEW | `db/models/finance.py` (near ledger) | vendor_id, package_id, amount, coverage, exclusions, assumptions, materials_incl, quote_date, `status`, **`evidence_span_id`** | → SowPackage, → Vendor, **→ EvidenceSpan (already built)** | #3 selection rule |
-| Green sheet | VIEW | `ai/` report fn | per trade-line: Alta vs quotes vs selected vs actual | computed over FinancialLineItem + SubcontractorQuote | — |
-| `BudgetSnapshot` (+lines) | NEW | `db/models/finance.py` | frozen targets per line/unit; immutable | → Project, → FinancialLineItem | #2 markup |
-| `PurchaseOrder` | NEW | `db/models/finance.py` | project#, `po_number` (auto), package_id, vendor_id, `trade_type`, `purchase_type`, `contract_amount`, terms, budget_line_id, status | → SowPackage, → Vendor; **emits ContractObligation** | #4 PO↔obligation |
-| `ChangeOrder` | NEW | generalize `ai/extras_grid.py` → `db/models/` | what changed, why-not-original, trade/package, added_cost, added_time, client_approval_status | → Project, → SowItem/package | — |
-| `FinancialLineItem.purchase_type` | EXTEND | `db/models/finance.py` + migration | enum: vendor/supplier/home_depot/hourly/transportation | — | — |
-| `FinancialLineItem.cost_status` | EXTEND | `db/models/finance.py` + migration | enum: estimated/quoted/committed/actual (the §7 lifecycle) | — | — |
-| Quote-vs-actual variance | VIEW | `ai/` report fn | diffs across cost_status columns per line | computed | — |
-| Alta-number estimator | PARKED | `ai/` (later) | regularized least squares (plan §11) | inputs = takeoff quantities (NEW capture); targets = actuals via POs/variance | needs §11 data |
+| `Project.project_code` | EXTEND | `db/models/work.py` + migration `_add_missing_columns` | `project_code` YYYYNNN, `display_name`, `legacy_job_number`, `aliases` (JSON) | internal hash/id unchanged; Drive attribution updates to project_code | ✓ format settled (#7) |
+| `SowItem` | NEW | `db/models/` new `sow.py` | description, `division_code` (CSI), `included` bool, `material_spec` (JSON), `package_id`, optional `sow_item_id` FK on FinancialLineItem | → Project, → SowPackage; CSI vocab in `ai/financial_divisions.py` | ✓ granularity settled (#5): SowItem coarser than FinancialLineItem |
+| `SowPackage` | NEW | `db/models/sow.py` | trade/`division_code`, drawings/notes refs, status | → Project; has many SowItem | ✓ |
+| `SubcontractorQuote` | NEW | `db/models/finance.py` (near ledger) | vendor_id, package_id, amount, coverage, exclusions, assumptions, materials_incl, quote_date, `status` (pending/recommended/selected/rejected/awarded), **`evidence_span_id`** | → SowPackage, → Vendor, **→ EvidenceSpan (already built)** | ✓ status vocab + selection rule settled (#3) |
+| Green sheet | VIEW | `ai/` report fn | per trade-line: Alta vs quotes vs selected vs actual | computed over FinancialLineItem + SubcontractorQuote | ✓ |
+| `BudgetSnapshot` (+lines) | NEW | `db/models/finance.py` | frozen targets per line/unit; immutable; carries markup metadata | → Project, → FinancialLineItem | ✓ markup model settled (#2): line factor × 1.15 global |
+| `PurchaseOrder` | NEW | `db/models/finance.py` | `project_code`, `po_number` (YYYYNNN-PPP, auto), package_id, vendor_id, `trade_type`, `purchase_type`, `contract_amount`, terms, budget_line_id, status | → SowPackage, → Vendor; **emits ContractObligation** | ✓ PO↔obligation settled (#4) |
+| `ChangeOrder` | NEW | generalize `ai/extras_grid.py` → `db/models/` | what changed, why-not-original, trade/package, added_cost, added_time, client_approval_status | → Project, → SowItem/package | ✓ |
+| `FinancialLineItem.purchase_type` | EXTEND | `db/models/finance.py` + migration | enum: vendor/supplier/home_depot/hourly/transportation | — | ✓ |
+| `FinancialLineItem.cost_status` | EXTEND | `db/models/finance.py` + migration | enum: estimated/quoted/committed/actual | — | ✓ |
+| `FinancialLineItem.sow_item_id` | EXTEND | `db/models/finance.py` + migration | nullable FK → SowItem | — | ✓ |
+| `FinancialLineItem.line_markup_factor` | EXTEND | `db/models/finance.py` + migration | float, default 1.0; client price = internal × factor; subtotal × 1.15 = final | — | ✓ markup model (#2) |
+| Variable cost tolerance flags | LOGIC | `ai/` or ledger-health | warn > 3% / > 1 wk; hard > 5% / > 2 wk; mandatory job code on HD/labour | reuse ledger-health surface | ✓ thresholds settled (#6) |
+| Quote-vs-actual variance | VIEW | `ai/` report fn | diffs across cost_status columns per line | computed | ✓ |
+| Alta-number estimator | PARKED | `ai/` (later) | regularized least squares (plan §11) | inputs = takeoff quantities (NEW capture); targets = actuals via POs/variance | needs §11 data (~20–50 clean projects) |
 
 **Reuse as-is (do not rebuild):** 13-entity core + `ExternalId`; `Project` join
 nucleus; evidence spine `DocumentParse`/`EvidenceSpan` (+ `evidence_span_id` already
