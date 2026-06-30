@@ -59,6 +59,23 @@ a $4,973.56 pair). **Suite: 1556 green; ruff clean.**
   certificates, plans). Re-enabling OCR is a deferred decision.
 - **Multi-sheet workbooks aren't Material/Labour/Total grids** → the single-table
   grid gating loses no *grid* data; such docs are LLM-path or correctly skipped.
+- **Layout-driven workbooks scramble (the XlsxParser limit).** Verified on the
+  real ST-Laurent `JOB COSTING.xlsx`: simple single-table sheets (Order Quantities,
+  EXTRAS, Order Qty) parse cleanly, but the rich `Material` sheet (3 horizontal
+  zones A:F / H:L / P:U + ~11 stacked sub-tables + separator cols G/O) gets
+  FLATTENED into one 21-col grid that interleaves unrelated tables per row (and
+  falsely reports header_confidence=1.0). Our `openpyxl` one-header-per-sheet reader
+  cannot infer spatial layout. ALSO: `rows_sample` shows FORMULAS not computed values
+  (`=I5+I6+I7+I9`) — the `data_only` cached-value path isn't feeding rows_sample
+  (a real, scoped fix worth doing). FORWARD PLAN (owner, plan §5): this is a legacy
+  hand-built sheet = the *fallback* case, not a reason to over-engineer the cell
+  reader. (1) Adopt its DATA MODEL (material-by-phase/supplier, labour-by-
+  subcontractor, extras-with-status, proportional spending) as the SOP job-costing
+  TEMPLATE but with ONE clean table per sheet / real headers / no side-by-side zones
+  → deterministic parser then reads it perfectly AND keeps the richness. (2) Spike
+  Docling-on-rendered-PDF (xlsx→PDF via LibreOffice headless) for legacy layout-
+  driven sheets — visual segmentation + displayed values. (3) Fix formula→value in
+  rows_sample regardless (helps every spreadsheet).
 - **~72 llm rows are flat-text fallback** (their doc has no successful parse) so
   they're unlinked. Acceptable during migration.
 - **Aggregate roll-ups are still wrong** portfolio-wide (e.g. a bogus $361k
