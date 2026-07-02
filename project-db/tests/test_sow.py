@@ -240,18 +240,50 @@ class TestItemCodeUniqueness:
             _item(session, project, pkg, item_code="SOW-030")
             session.commit()
 
-    def test_same_item_code_different_package_allowed(self, session):
-        """item_code uniqueness is scoped to (project, package), not global."""
+    def test_same_item_code_different_package_rejected(self, session):
+        """item_code is unique PER PROJECT, not per package. SOW_Item_Ref on a
+        quote line carries only "SOW-001" with no package context, so the same
+        code in two packages of one project would make it an ambiguous join key.
+        """
         _org, client = _org_client(session)
         project = _project(session, client)
         pkg_a = _package(session, project, division_code="09", title="09-Finishes")
         pkg_b = _package(session, project, division_code="22", title="22-Plumbing")
         _item(session, project, pkg_a, item_code="SOW-001")
-        _item(session, project, pkg_b, item_code="SOW-001")
+        session.commit()
+
+        with pytest.raises(IntegrityError):
+            _item(session, project, pkg_b, item_code="SOW-001")
+            session.commit()
+
+    def test_same_item_code_different_project_allowed(self, session):
+        """Uniqueness is project-scoped -- two DIFFERENT projects may each have
+        their own SOW-001."""
+        _org, client = _org_client(session)
+        proj_a = _project(session, client, name="Project A", code="2026001")
+        proj_b = _project(session, client, name="Project B", code="2026002")
+        pkg_a = _package(session, proj_a)
+        pkg_b = _package(session, proj_b)
+        _item(session, proj_a, pkg_a, item_code="SOW-001")
+        _item(session, proj_b, pkg_b, item_code="SOW-001")
         session.commit()  # should not raise
 
-        count = session.query(SowItem).filter_by(item_code="SOW-001").count()
-        assert count == 2
+        assert session.query(SowItem).filter_by(item_code="SOW-001").count() == 2
+
+    def test_duplicate_null_package_item_code_rejected(self, session):
+        """The division-01 hole: package-less (NULL package_id) items must STILL
+        be uniqueness-checked on item_code. A package-scoped constraint would let
+        duplicate (project, NULL, SOW-001) rows through because NULLs compare
+        distinct; the project-scoped partial index closes that.
+        """
+        _org, client = _org_client(session)
+        project = _project(session, client)
+        _item(session, project, None, item_code="SOW-001", division_code="01")
+        session.commit()
+
+        with pytest.raises(IntegrityError):
+            _item(session, project, None, item_code="SOW-001", division_code="01")
+            session.commit()
 
     def test_multiple_null_item_codes_allowed(self, session):
         _org, client = _org_client(session)

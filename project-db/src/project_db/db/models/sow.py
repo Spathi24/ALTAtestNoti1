@@ -18,10 +18,11 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -80,6 +81,9 @@ class SowItem(Base, CanonicalMixin):
 
     # Human-facing scope item code, e.g. "SOW-025". Structural join key for
     # Quote_Lines.SOW_Item_Ref in Phase 4 -- never parsed out of Notes text.
+    # MUST resolve unambiguously within a project (a quote line's SOW_Item_Ref
+    # carries only "SOW-025", no package context), so uniqueness is scoped to
+    # (project_id, item_code), NOT (project, package) -- see __table_args__.
     item_code = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     division_code = Column(String, nullable=False, default="99")  # CSI code
@@ -93,12 +97,20 @@ class SowItem(Base, CanonicalMixin):
     source_meta_json = Column(Text, nullable=True)  # raw parser row, kept for audit
 
     __table_args__ = (
-        # item_code is unique within a project+package when set (NULLs are
-        # unconstrained by SQLite's default unique-index NULL handling).
-        UniqueConstraint(
+        # item_code is unique PER PROJECT when set. Scoping to the project (not
+        # the package) makes SOW_Item_Ref a clean structural join key: a quote
+        # line references only "SOW-025", so "SOW-025" must identify exactly one
+        # scope item in the project. A partial index (WHERE item_code IS NOT
+        # NULL) leaves the code optional -- and, critically, closes the hole a
+        # plain UniqueConstraint would leave for division-01 items where
+        # package_id IS NULL (NULLs compare distinct, so a package-scoped
+        # constraint would let duplicate null-package codes through).
+        Index(
+            "uq_sow_item_project_item_code",
             "project_id",
-            "package_id",
             "item_code",
-            name="uq_sow_item_project_package_code",
+            unique=True,
+            sqlite_where=text("item_code IS NOT NULL"),
+            postgresql_where=text("item_code IS NOT NULL"),
         ),
     )

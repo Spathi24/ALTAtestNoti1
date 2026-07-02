@@ -439,10 +439,18 @@ CREATE TABLE sow_item (
     exclusions TEXT,
     source_meta_json TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
-    FOREIGN KEY (package_id) REFERENCES sow_package(canonical_id),
-    CONSTRAINT uq_sow_item_project_package_code UNIQUE (project_id, package_id, item_code)
+    FOREIGN KEY (package_id) REFERENCES sow_package(canonical_id)
 )
 """
+
+# item_code unique PER PROJECT when set (partial). SOW_Item_Ref on a quote line
+# carries only "SOW-025" (no package context), so the code must identify exactly
+# one scope item in the project. Partial (WHERE item_code IS NOT NULL) also
+# closes the null-package hole a package-scoped constraint would leave open.
+SQLITE_SOW_ITEM_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_sow_item_project_item_code "
+    "ON sow_item (project_id, item_code) WHERE item_code IS NOT NULL",
+)
 
 # Columns added to worker after initial DDL (role/tags/verified for PM categorization).
 SQLITE_WORKER_COLUMNS: dict[str, str] = {
@@ -1000,3 +1008,5 @@ def ensure_sqlite_schema(engine) -> None:
         # Phase 3: Scope of Work -- SowPackage before SowItem (FK order).
         _create_table_if_missing(conn, tables, "sow_package", SQLITE_SOW_PACKAGE_DDL)
         _create_table_if_missing(conn, tables, "sow_item", SQLITE_SOW_ITEM_DDL)
+        for _idx_ddl in SQLITE_SOW_ITEM_INDEXES:
+            conn.execute(text(_idx_ddl))

@@ -128,11 +128,28 @@ the same already-approved mock `SOW_ITEMS` list (not new/fabricated data) — 11
 packages, 31 items, 3 correctly package-less General Requirements items, all
 division codes match the trade table. No `FinancialLineItem` row created —
 Phase 3 touches no ledger table. Full suite 1581 passed.
+**Uniqueness correction (2026-07-02, post-review):** `SowItem.item_code` uniqueness
+changed from `(project_id, package_id, item_code)` to a project-scoped **partial
+unique index** `uq_sow_item_project_item_code ON sow_item (project_id, item_code)
+WHERE item_code IS NOT NULL` — in the model `__table_args__` (so `create_all`
+produces it for tests, which use `create_all` without the migration) **and** the
+migration DDL (for existing DBs). Reason: `SOW_Item_Ref` on a quote line carries
+only `SOW-025` with no package context, so the code must resolve to exactly one
+scope item per project; and the nullable `package_id` (div-01) made the old
+package-scoped constraint leak (NULLs compare distinct). Tests updated: same code
+in two packages of one project now REJECTED; same code across two projects allowed;
+duplicate null-package code rejected. Suite 1583.
 
 **Phase 4 — SubcontractorQuote + FinancialLineItem extensions**
 SubcontractorQuote model in `db/models/finance.py`; status vocab pending/recommended/
 selected/rejected/awarded; evidence_span_id FK reused. Extend FinancialLineItem:
 +purchase_type +cost_status +sow_item_id +line_markup_factor. Tests. Commit.
+**Hard boundary (owner review 2026-07-02):** Phase 4 is ONLY the two items above.
+NO PurchaseOrder, NO BudgetSnapshot, NO green-sheet report/UI. A *selected* quote
+must NOT become committed cost — commitment starts at PO award (Phase 5). Resolve
+the division_total double-count trap (see wiring map §5) before writing any
+quote-derived cost rows. Read the "Phase 4 wiring map" below FIRST — most of the
+plumbing already exists and must be reused, not rebuilt.
 
 **Phase 5 — PurchaseOrder → ContractObligation**
 PurchaseOrder in `db/models/finance.py`; auto po_number (YYYYNNN-PPP); emits
@@ -143,6 +160,83 @@ BudgetSnapshot model; green sheet report fn in `ai/`; variable-cost tolerance fl
 wired into ledger-health. Tests. Commit. Demo: owner sees real-vs-quoted on pilot.
 
 ---
+
+## Phase 4 wiring map — existing mechanisms (READ BEFORE BUILDING)
+
+Recorded 2026-07-02 after a full codebase read of the parse/evidence/financial
+spine. These are present-tense facts about what already exists. The parsing
+system built last week is the **chokepoint for nearly all data this layer uses** —
+Phase 4 wires into it, it does not replace it. Reuse everything here; rebuild
+nothing.
+
+**1. The parse → evidence → ledger spine (the chokepoint).**
+`Document → DocumentParse (status='success') → EvidenceSpan (evidence_type
+'table_region', content_json = {headers, rows_sample, rows_preview,
+header_confidence}) → ai/evidence_bundle.build_evidence_bundle() → EvidenceBundle`.
+The grid ledger populator (`ai/financial_grid_populator.populate_ledger_for_document`)
+already: builds the bundle, and for a single-table sheet parses the **structured
+span grid** (`bundle.tables[0].rows_preview`) instead of re-splitting flat text,
+linking each written row to `evidence_span_id` + a denormalized
+`evidence_locator_json`. `evidence_span_id` FK columns already exist on
+`FinancialRecord`, `FinancialLineItem`, and `ContractObligation`. **Phase 4
+`SubcontractorQuote` must carry `evidence_span_id` too** (plan says so) and get it
+the same way — from the bundle. This spine is built but under-exercised; it is the
+intended path for all new structured ingestion.
+
+**2. The deterministic grid parser (`ai/financial_grid.py`).**
+`parse_financial_grid_rows(rows)` → `GridParseResult` with `ParsedGridRow`s
+(`kind` = division_total | line_item; `amount_type` = material/labour/total/…;
+`division_code`; `amount`; `description`; `masterformat_hint`). It captures
+`grand_total` (Pre-Tax) separately as a cross-check; `GridParseResult.division_total`
+= Σ of section subtotals. **Gap for Phase 4:** `_map_columns` maps only
+material/labour/total/masterformat/description by keyword — it does **NOT** capture
+`SOW_Item_Ref`, and `ParsedGridRow` has no field for it. To set
+`FinancialLineItem.sow_item_id`, Phase 4 must extend `_map_columns` +
+`ParsedGridRow` (or read the column off the evidence bundle's `headers`/`rows`
+by name) and resolve `SOW_Item_Ref` → `SowItem.canonical_id` via the project-scoped
+`item_code` (now unique — that's why the gate above mattered).
+
+**3. The populator hardcodes `side="revenue"` — WRONG for subcontractor quotes.**
+`_collect_quote_rows` was built for *client* quotes (`923 ACCEPTED QUOTE` →
+revenue). A subcontractor QUOTE (`2026001_QUOTE_22-Plumbing_PlombertInc_selected`)
+is `side="cost"` (contractor_out). `classify_financial_sheet` routes on
+filename/first-row markers and `_QUOTE_MARKERS` includes "quote", so the new files
+classify as `quote` — but the classifier does NOT distinguish client-vs-subcontractor.
+Phase 4 needs a cost-quote path (own populator branch or a new collector) that sets
+`side="cost"`, `cost_status="quoted"`, `purchase_type` per trade, and links
+`sow_item_id`. Do NOT bend `_collect_quote_rows`'s revenue assumption.
+
+**4. `cost_status` is a NEW axis — do not conflate with existing `status`.**
+`FinancialLineItem.status` already exists (accepted/proposed/actual/superseded/
+unknown) and gates *revenue recognition* (proposed = pipeline, kept out of margin).
+Phase 4's `cost_status` (estimated → quoted → committed → actual) is a *separate*
+cost-lifecycle axis. A subcontractor quote line = `side=cost`, `cost_status=quoted`,
+`status` irrelevant. Selected quote stays `cost_status=quoted` (intent); only a PO
+(Phase 5) moves it to `committed`. See Permanent semantic rule #1.
+
+**5. The division_total double-count trap — the existing guard CONFLICTS with the
+material/labour-split goal.** `report_project_financials` (views.py ~L2547) dedups
+per `(unit, division_code, side)` bucket by letting `total` rows **win over**
+`items`. For a client quote that's fine. For a subcontractor COST quote it is
+actively harmful: preferring the `division_total` row drops the material/labour
+line items — and the per-division material/labour split IS the product value
+(Working practice #6). Resolution for Phase 4 (matches the reviewer's rule):
+`division_total` rows are **check/context rows, never aggregated**; `line_item`
+(material/labour) rows are the aggregatable cost facts; `grand_total` is a
+reconciliation cross-check. Phase 4 cost aggregation must sum material/labour line
+items and use division_total only to verify the sum — NOT reuse the "total-wins"
+suppression. (This is why Permanent rule #2 says aggregate only
+`amount_type IN (material, labour)`.)
+
+**6. Reuse, don't rebuild.** `Vendor` exists (name/email/payment_terms/
+organization_id) → `SubcontractorQuote.vendor_id`; resolve from the QUOTE
+filename's VendorSlug via the identity resolver (ExactFieldMatcher-style — there is
+no vendor matcher yet, a small Phase 4 wiring task). `ReconciliationIssue` (Slice 8:
+duplicate_total / rollup_double_count / unreconciled / missing_evidence) and
+`DocumentFinancialStatus` (human confirm survives re-extraction) are the advisory
+surfaces — new quote anomalies flag through them. The `Proposal` gate owns quote
+*selection* (human marks selected; never auto-mutate). The populator is idempotent
+per document (delete+insert) — keep that.
 
 ---
 
