@@ -140,16 +140,35 @@ package-scoped constraint leak (NULLs compare distinct). Tests updated: same cod
 in two packages of one project now REJECTED; same code across two projects allowed;
 duplicate null-package code rejected. Suite 1583.
 
-**Phase 4 — SubcontractorQuote + FinancialLineItem extensions**
-SubcontractorQuote model in `db/models/finance.py`; status vocab pending/recommended/
-selected/rejected/awarded; evidence_span_id FK reused. Extend FinancialLineItem:
-+purchase_type +cost_status +sow_item_id +line_markup_factor. Tests. Commit.
-**Hard boundary (owner review 2026-07-02):** Phase 4 is ONLY the two items above.
-NO PurchaseOrder, NO BudgetSnapshot, NO green-sheet report/UI. A *selected* quote
-must NOT become committed cost — commitment starts at PO award (Phase 5). Resolve
-the division_total double-count trap (see wiring map §5) before writing any
-quote-derived cost rows. Read the "Phase 4 wiring map" below FIRST — most of the
-plumbing already exists and must be reused, not rebuilt.
+**Phase 4 — SubcontractorQuote + FinancialLineItem extensions** ✓ COMPLETE 2026-07-02
+`SubcontractorQuote` in `db/models/finance.py` (project/package/vendor/document/
+evidence_span links; status pending/recommended/selected/rejected/awarded;
+amount/coverage/exclusions/assumptions/materials_included/quote_date). Extended
+`FinancialLineItem`: +purchase_type +cost_status +sow_item_id(FK) +line_markup_factor.
+New `ai/subcontractor_quote_ingest.py` — a SEPARATE cost-quote path (did NOT bend
+`_collect_quote_rows`, which stays revenue-only). Reuses the spine:
+build_evidence_bundle → picks the quote grid table by money-column signature
+(ignores the Parser_Contract metadata sheet — a real gap the single-span test
+missed, caught by running the real 2-sheet file) → parse_financial_grid_rows →
+resolves SOW_Item_Ref against SowItem.item_code (project-scoped). Cost rows are
+`side=cost`, `cost_status=quoted`, `purchase_type=vendor`; division_total rows are
+NOT written (grand_total is a reconcile cross-check only) so the material/labour
+split is preserved and nothing double-counts. Unresolved/missing SOW refs are
+FLAGGED (warnings + source_meta), never silently assigned. Parser gap fixed:
+`_map_columns`+`ParsedGridRow` now carry `sow_item_ref` (tested before the
+description branch so "item" in "sow_item_ref" isn't swallowed). Migration: new
+table + 4 `_add_missing_columns` on financial_line_item; fresh + existing DB both
+work. 17 tests. Manually verified on the REAL Rockland DB by parsing the actual
+mock Plumbing xlsx through the real XlsxParser: 1 SubcontractorQuote (Plombert,
+div 22, selected, $6800, evidence-linked), 6 cost rows → SOW-025/026/027,
+sum=$6800=grand_total (no 2x), 0 total rows, 0 committed. **NO PurchaseOrder, NO
+ContractObligation, NO BudgetSnapshot, NO green-sheet built; selected quote stays
+`cost_status=quoted` — commitment is Phase 5.** Full suite 1600.
+Known small gaps (recorded, not blocking): FinancialLineItem has no
+`subcontractor_quote_id` FK (spec listed only 4 columns) — quote↔line association
+is via shared `document_id`; quote-level coverage/assumptions columns exist but are
+only best-effort populated (exclusions/materials_included from cells); package/
+vendor resolution is caller-supplied, not yet auto-resolved from the filename.
 
 **Phase 5 — PurchaseOrder → ContractObligation**
 PurchaseOrder in `db/models/finance.py`; auto po_number (YYYYNNN-PPP); emits

@@ -123,6 +123,11 @@ class ParsedGridRow:
     amount: Decimal
     description: str
     masterformat_hint: str = ""
+    # Structural join key back to a SowItem (Quote_Lines.SOW_Item_Ref, e.g.
+    # "SOW-025"). Empty when the sheet has no such column or the cell is blank.
+    # Phase 4 resolves this to FinancialLineItem.sow_item_id; NEVER parsed from
+    # free text.
+    sow_item_ref: str = ""
 
 
 @dataclass
@@ -185,6 +190,11 @@ def _map_columns(header_cells: list[str]) -> dict[str, int]:
             col.setdefault("labour", idx)
         elif "total" in name:
             col.setdefault("total", idx)
+        # SOW_Item_Ref MUST be tested before the description branch: its
+        # lowercased name "sow_item_ref" contains "item", which would otherwise
+        # be swallowed by the description rule.
+        elif "sow" in name and ("ref" in name or "item" in name):
+            col.setdefault("sow_item_ref", idx)
         elif "master format" in name or "masterformat" in name or name.startswith("notes"):
             col.setdefault("masterformat", idx)
         elif "description" in name or "item" in name or "phase" in name:
@@ -256,11 +266,12 @@ def parse_financial_grid_rows(rows: list[list[str]]) -> GridParseResult:
     col = _map_columns(rows[header_idx])
     col.setdefault("description", 0)
     desc_i = col["description"]
-    mat_i, lab_i, tot_i, mf_i = (
+    mat_i, lab_i, tot_i, mf_i, sow_i = (
         col.get("material"),
         col.get("labour"),
         col.get("total"),
         col.get("masterformat"),
+        col.get("sow_item_ref"),
     )
 
     def cell(row: list[str], i: int | None) -> str:
@@ -272,6 +283,7 @@ def parse_financial_grid_rows(rows: list[list[str]]) -> GridParseResult:
             continue
         desc = cell(row, desc_i)
         mf = cell(row, mf_i)
+        sow_ref = cell(row, sow_i)
         material = parse_money(cell(row, mat_i))
         labour = parse_money(cell(row, lab_i))
         total = parse_money(cell(row, tot_i))
@@ -289,6 +301,7 @@ def parse_financial_grid_rows(rows: list[list[str]]) -> GridParseResult:
                         material,
                         line_desc,
                         mf,
+                        sow_ref,
                     )
                 )
             if labour is not None:
@@ -301,6 +314,7 @@ def parse_financial_grid_rows(rows: list[list[str]]) -> GridParseResult:
                         labour,
                         line_desc,
                         mf,
+                        sow_ref,
                     )
                 )
             continue

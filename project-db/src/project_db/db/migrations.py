@@ -205,12 +205,22 @@ CREATE TABLE financial_line_item (
     source_meta_json TEXT,
     evidence_span_id TEXT,
     evidence_locator_json TEXT,
+    classification_method VARCHAR,
+    classification_confidence FLOAT,
+    source_doc_type VARCHAR,
+    source_region VARCHAR,
+    purchase_type VARCHAR,
+    cost_status VARCHAR,
+    sow_item_id TEXT,
+    line_markup_factor FLOAT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
-    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (sow_item_id) REFERENCES sow_item(canonical_id) ON DELETE SET NULL
 )
 """
 
-# Columns added to financial_line_item after the initial DDL (Phase 1c-MVP).
+# Columns added to financial_line_item after the initial DDL (Phase 1c-MVP +
+# Phase 4). `_add_missing_columns` adds any of these absent from an existing DB.
 SQLITE_FINANCIAL_LINE_ITEM_COLUMNS: dict[str, str] = {
     "classification_method": "VARCHAR",
     "classification_confidence": "FLOAT",
@@ -219,6 +229,11 @@ SQLITE_FINANCIAL_LINE_ITEM_COLUMNS: dict[str, str] = {
     # Evidence link (Slice 5) -- see SQLITE_FINANCIAL_RECORD_COLUMNS.
     "evidence_span_id": "TEXT",
     "evidence_locator_json": "TEXT",
+    # Phase 4: cost lifecycle + SOW traceability.
+    "purchase_type": "VARCHAR",
+    "cost_status": "VARCHAR",
+    "sow_item_id": "TEXT",
+    "line_markup_factor": "FLOAT",
 }
 
 # Columns added to contract_obligation after the initial DDL (Slice 5 evidence link).
@@ -450,6 +465,48 @@ CREATE TABLE sow_item (
 SQLITE_SOW_ITEM_INDEXES = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_sow_item_project_item_code "
     "ON sow_item (project_id, item_code) WHERE item_code IS NOT NULL",
+)
+
+# Phase 4: one subcontractor/vendor quote for one SowPackage. References project,
+# sow_package, vendor, document, evidence_span -- all created before it.
+SQLITE_SUBCONTRACTOR_QUOTE_DDL = """
+CREATE TABLE subcontractor_quote (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    package_id TEXT,
+    vendor_id TEXT,
+    document_id TEXT,
+    division_code VARCHAR,
+    status VARCHAR NOT NULL DEFAULT 'pending',
+    amount NUMERIC(14, 2),
+    currency VARCHAR,
+    quote_date DATE,
+    coverage TEXT,
+    exclusions TEXT,
+    assumptions TEXT,
+    materials_included TEXT,
+    evidence_span_id TEXT,
+    evidence_locator_json TEXT,
+    source VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (package_id) REFERENCES sow_package(canonical_id),
+    FOREIGN KEY (vendor_id) REFERENCES vendor(canonical_id),
+    FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (evidence_span_id) REFERENCES evidence_span(id) ON DELETE SET NULL
+)
+"""
+
+SQLITE_SUBCONTRACTOR_QUOTE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_subcontractor_quote_project_id "
+    "ON subcontractor_quote (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_subcontractor_quote_package_id "
+    "ON subcontractor_quote (package_id)",
+    "CREATE INDEX IF NOT EXISTS ix_subcontractor_quote_document_id "
+    "ON subcontractor_quote (document_id)",
 )
 
 # Columns added to worker after initial DDL (role/tags/verified for PM categorization).
@@ -1009,4 +1066,10 @@ def ensure_sqlite_schema(engine) -> None:
         _create_table_if_missing(conn, tables, "sow_package", SQLITE_SOW_PACKAGE_DDL)
         _create_table_if_missing(conn, tables, "sow_item", SQLITE_SOW_ITEM_DDL)
         for _idx_ddl in SQLITE_SOW_ITEM_INDEXES:
+            conn.execute(text(_idx_ddl))
+        # Phase 4: subcontractor quotes (after sow_package + vendor + document).
+        _create_table_if_missing(
+            conn, tables, "subcontractor_quote", SQLITE_SUBCONTRACTOR_QUOTE_DDL
+        )
+        for _idx_ddl in SQLITE_SUBCONTRACTOR_QUOTE_INDEXES:
             conn.execute(text(_idx_ddl))

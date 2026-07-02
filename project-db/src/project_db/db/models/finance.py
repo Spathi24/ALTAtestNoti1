@@ -92,6 +92,31 @@ LINE_ITEM_CLASSIFICATION_METHODS = {
 # Source document type (matches classify_financial_sheet output).
 LINE_ITEM_SOURCE_DOC_TYPES = {"quote", "extras", "job_cost", "order_quantities", "unknown"}
 
+# --- Phase 4 vocabularies (subcontractor quotes + cost lifecycle) -----------
+# SubcontractorQuote lifecycle (the ONE quote status vocabulary, settled §12):
+#   pending    -- collected, not yet evaluated
+#   recommended-- AI-proposed via the Proposal gate, awaiting human decision
+#   selected   -- human INTENT to use it (NOT a commitment; cost stays "quoted")
+#   rejected   -- not chosen
+#   awarded    -- a PO has been issued for it (set at PO conversion, Phase 5 -- NOT here)
+SUBCONTRACTOR_QUOTE_STATUSES = {"pending", "recommended", "selected", "rejected", "awarded"}
+
+# FinancialLineItem.cost_status -- the COST lifecycle axis. Distinct from the
+# existing `status` column (accepted/proposed/... = revenue recognition). A
+# subcontractor quote line is cost_status="quoted"; only a PO (Phase 5) moves it
+# to "committed"; an invoice/receipt moves it to "actual".
+COST_STATUSES = {"estimated", "quoted", "committed", "actual", "unknown"}
+
+# FinancialLineItem.purchase_type -- what kind of spend the cost row is.
+PURCHASE_TYPES = {
+    "vendor",  # a subcontractor trade quote/invoice
+    "supplier",  # a material supplier
+    "home_depot",  # Home Depot Pro purchases (type 3)
+    "hourly",  # hourly labour (type 4)
+    "transportation",  # delivery / transport
+    "other",
+}
+
 
 class InvoiceStatus(str, enum.Enum):
     DRAFT = "DRAFT"
@@ -275,6 +300,94 @@ class FinancialLineItem(Base, CanonicalMixin):
     evidence_locator_json = Column(Text, nullable=True)
     # Sub-region within a multi-block document (e.g. "material_spending_block").
     source_region = Column(String, nullable=True)
+
+    # --- Phase 4 additions (cost lifecycle + SOW traceability) --------------
+    # What kind of spend this cost row is (PURCHASE_TYPES). None on pre-Phase-4
+    # rows and on revenue rows.
+    purchase_type = Column(String, nullable=True)
+    # The COST lifecycle (COST_STATUSES): estimated -> quoted -> committed ->
+    # actual. SEPARATE from `status` (which is revenue recognition). A
+    # subcontractor quote line is "quoted"; a *selected* quote stays "quoted"
+    # (selection is intent) -- only a PO (Phase 5) makes it "committed".
+    cost_status = Column(String, nullable=True)
+    # The scope item this cost prices, resolved from the quote's SOW_Item_Ref
+    # against SowItem.item_code (project-scoped). Nullable: unresolved refs are
+    # flagged, never silently assigned. One SowItem may back many line items.
+    sow_item_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("sow_item.canonical_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Client-price multiplier applied at REPORT time (presentation only); the
+    # ledger amount stays the internal cost. Default 1.0 = no markup stored.
+    line_markup_factor = Column(Float, nullable=True)
+
+
+class SubcontractorQuote(Base, CanonicalMixin):
+    """One subcontractor/vendor quote for one SowPackage (trade).
+
+    Phase 4 of the refoundation. The quote is the priced response to a tendering
+    package: a vendor's amount to do a trade's scope, with the coverage /
+    exclusions / assumptions that determine whether the price actually covers the
+    whole SOW (the owner's "compare coverage, not just price" rule).
+
+    Status is the ONE settled quote vocabulary (SUBCONTRACTOR_QUOTE_STATUSES):
+    pending -> recommended -> selected/rejected -> awarded. ``selected`` is human
+    INTENT only -- it does NOT create committed cost. ``awarded`` is set later at
+    PO conversion (Phase 5); this model never issues a PO or emits a
+    ContractObligation.
+
+    Evidence-linked like the rest of the ledger: ``evidence_span_id`` cites the
+    parsed table region the amount was read from. Cost line items derived from
+    this quote live in ``FinancialLineItem`` (side=cost, cost_status=quoted),
+    associated by shared ``document_id``.
+    """
+
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=True,
+    )
+    package_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("sow_package.canonical_id"),
+        nullable=True,
+    )
+    vendor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("vendor.canonical_id"),
+        nullable=True,
+    )
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document.canonical_id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    division_code = Column(String, nullable=True)  # CSI code of the package/trade
+    status = Column(String, nullable=False, default="pending")  # SUBCONTRACTOR_QUOTE_STATUSES
+
+    amount = Column(Numeric(14, 2), nullable=True)  # pre-tax quote total (grand_total)
+    currency = Column(String, nullable=True)
+    quote_date = Column(Date, nullable=True)
+
+    # Coverage evidence -- how the quote maps against the SOW. Free text /
+    # concatenated cell values; the structured line-level linkage lives on the
+    # derived FinancialLineItem rows via sow_item_id.
+    coverage = Column(Text, nullable=True)  # what it covers / Coverage_Y_N summary
+    exclusions = Column(Text, nullable=True)  # concatenated Exclusions cells
+    assumptions = Column(Text, nullable=True)
+    materials_included = Column(Text, nullable=True)  # Mat_Incl summary
+
+    # Evidence + provenance (same pattern as FinancialLineItem/FinancialRecord).
+    evidence_span_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("evidence_span.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    evidence_locator_json = Column(Text, nullable=True)
+    source = Column(String, nullable=True)  # "grid" -- which populator produced it
+    source_meta_json = Column(Text, nullable=True)
 
 
 class DocumentFinancialStatus(Base):
