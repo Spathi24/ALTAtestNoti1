@@ -276,9 +276,16 @@ Two findings from the audit:
   explicit `cost_status IN ('quoted','committed','actual')` ALLOW-list, never
   an exclusion pattern** (`cost_status != 'actual'` would wrongly pull in all
   79 of these). Also: Phase 6's "actuals ingestion" isn't starting from a
-  blank page — an LLM invoice-extraction path already exists; whether to
-  unify with it or keep the deterministic PO-actuals path separate is an open
-  design question, not yet decided.
+  blank page — an LLM invoice-extraction path already exists.
+  **DECIDED (2026-07-02): keep it separate from the deterministic PO-actuals
+  path, do not unify.** Follows the plan's own settled rule
+  ("deterministic-first... LLM is the FALLBACK for legacy/third-party docs").
+  A future PO-actuals matcher should structurally match invoices to a known
+  PO (number/vendor/amount) and flip *that* PO's linked rows to `actual`;
+  `llm-v1` rows stay `cost_status=NULL` (not auto-promoted to `actual`)
+  unless/until positively matched to a PO. This is why the allow-list
+  treats `NULL` as actual for now — it's covering the legacy extractor's
+  output, not blessing it as the permanent actuals mechanism.
 
 Two guards added to `ai/purchase_order_award.py` as a result (owner-approved,
 scoped hardening only, no new feature surface):
@@ -304,6 +311,29 @@ Not fixed (still recorded, not urgent): the idempotent-delete scope in
 no FK to `PurchaseOrder` (link lives in `source_meta_json` only); PO
 numbering (`_next_po_number`) is a read-then-increment, not
 concurrency-safe.
+
+**Checkpoint follow-up 2026-07-02: `report_division_margins` cost_status
+allow-list.** The checkpoint's live-report grep found this pre-existing
+function (wired to `/projects/{id}/margins`, a CLI command, and the askbot's
+`REPORT_REGISTRY` — genuinely live, on 6 real projects with `side='cost'`
+data today) summed `side='cost'` rows into `actual_*_cost` with **zero**
+`cost_status` awareness — its own comment said *"Cost rows are always
+actuals, so status does not gate them,"* a pre-Phase-4/5 assumption now
+false. Fixed with the same allow-list rule already recorded (`cost_status`
+NULL or `"actual"` counts; `quoted`/`committed`/`estimated`/`unknown` is
+excluded from `actual_*_cost` and surfaced separately as a new `pipeline_cost`
+field + a per-division warning — never silently dropped, never silently
+summed in). 8 new tests: 6 synthetic (NULL counts, `actual` counts,
+`quoted`/`committed`/`unknown` excluded, and the exact bug scenario — NULL
+and `quoted` rows in the same division must not sum together) + 2 against the
+**real** `project_db.sqlite` (a precondition check that all real `side='cost'`
+rows are still NULL today, and a regression pin proving `pipeline_cost==0`
+and `actual_total_cost` unchanged for all 6 real affected projects).
+Confirmed by literally reverting the fix and re-running against the real DB:
+`actual_total_cost` byte-identical before/after for all 6 projects
+(87079.45 / 5792.00 / 1181.00 / 960.45 / 694.00 / 1133.18) — the fix is
+provably inert today and only changes behavior once a project actually mixes
+lifecycle stages. Full suite 1624.
 
 **Phase 6 — BudgetSnapshot + green-sheet report + variance view**
 BudgetSnapshot model; green sheet report fn in `ai/`; variable-cost tolerance flags

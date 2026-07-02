@@ -2455,7 +2455,18 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
     """Per-(unit, division) margin pivot from the FinancialLineItem ledger.
 
     Revenue side = own-authored quote rows populated by ``fill-ledger``.
-    Cost side    = actual-spend rows (future LLM/job-cost extractor).
+    Cost side    = actual-spend rows: the legacy llm-v1 invoice/estimate/
+    expense extractor (``cost_status`` is NULL on those rows -- they always
+    represented real spend, so NULL is treated as actual here) PLUS any
+    Phase-4/5 subcontractor-cost row explicitly at ``cost_status="actual"``.
+
+    Cost-side allow-list (checkpoint 2026-07-02, see
+    REFOUNDATION_BUILD_NOTES.md): a cost row counts toward
+    ``actual_*_cost`` ONLY when ``cost_status`` is NULL or ``"actual"``.
+    Anything else -- ``"quoted"``, ``"committed"``, ``"estimated"``,
+    ``"unknown"`` -- is pipeline/committed money, not spend yet, and is
+    excluded from the actual-cost totals; its amount is surfaced separately
+    as ``pipeline_cost`` (never silently folded in, never silently dropped).
 
     Where only one side is populated the flag column says so explicitly —
     this is by design; the ledger is sparse until cost data arrives.
@@ -2484,6 +2495,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
               "actual_material_cost":<float|None>,
               "actual_labour_cost":  <float|None>,
               "actual_total_cost":   <float|None>,
+              "pipeline_cost":       <float|None>,  # quoted/committed, excluded from actual
               "gross_margin":        <float|None>,
               "gross_margin_pct":    <float|None>,
               "status_flag":         "<flag>",
@@ -2570,10 +2582,25 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
             "cost_material": _zero,
             "cost_labour": _zero,
             "cost_other": _zero,
+            "pipeline_cost": _zero,
+            "pipeline_cost_status_seen": set(),
             "doc_ids": set(),
             "warnings": [],
         }
     )
+    # Cost-side allow-list: this report's cost fields are literally named
+    # "actual_*_cost" (see docstring), so a row only counts if it IS actual
+    # spend. NULL cost_status = a pre-Phase-4/5 row (the llm-v1 invoice/
+    # estimate/expense extractor never set this column; those rows always
+    # represented real spend, so NULL is treated as actual here, not as
+    # "unclassified" for THIS report's purposes). Anything with an explicit
+    # cost_status OTHER than "actual" -- "quoted"/"committed"/"estimated"/
+    # "unknown" -- is pipeline or unresolved money, not spend, and must be
+    # excluded from actual_cost. This is an ALLOW-list (NULL or "actual"),
+    # never an exclusion pattern (e.g. "!= 'quoted'" would let NULL AND
+    # "committed" AND "unknown" all through, which is exactly the mixing this
+    # guards against). See REFOUNDATION_BUILD_NOTES.md checkpoint 2026-07-02.
+    _ACTUAL_COST_STATUSES = (None, "actual")
     for r in effective:
         # Revenue status gates whether a row is CONTRACTED money:
         #   superseded -> the quote was replaced by a newer version; never count.
@@ -2581,20 +2608,26 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
         #                 revenue actually sold, so it is tracked SEPARATELY and
         #                 kept out of the margin (you can't bank money you haven't
         #                 won). accepted / actual / unknown all count as revenue.
-        # Cost rows are always actuals, so status does not gate them.
         status = (r.status or "unknown") if r.side == "revenue" else "actual"
         if r.side == "revenue" and status == "superseded":
             continue
         key = (r.unit, r.division_code)
         bucket = pivot[key]
-        bucket["doc_ids"].add(r.document_id)
         amount = _Decimal(str(r.amount or 0))
         if r.side == "revenue":
+            bucket["doc_ids"].add(r.document_id)
             if status == "proposed":
                 bucket["proposed_revenue"] += amount
             else:
                 bucket["revenue_rows"].append(amount)
         elif r.side == "cost":
+            if r.cost_status not in _ACTUAL_COST_STATUSES:
+                # Pipeline/unresolved cost (quoted/committed/estimated/unknown)
+                # -- flagged, never silently folded into "actual" spend.
+                bucket["pipeline_cost"] += amount
+                bucket["pipeline_cost_status_seen"].add(r.cost_status)
+                continue
+            bucket["doc_ids"].add(r.document_id)
             if r.amount_type == "material":
                 bucket["cost_material"] += amount
             elif r.amount_type == "labour":
@@ -2646,6 +2679,15 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
             {doc_names.get(did, str(did)) for did in bucket["doc_ids"] if did},
         )
 
+        pipeline_cost = bucket["pipeline_cost"] or None
+        if pipeline_cost:
+            seen = sorted(s or "NULL" for s in bucket["pipeline_cost_status_seen"])
+            bucket["warnings"].append(
+                f"{float(pipeline_cost):.2f} of cost-side amount excluded from "
+                f"actual_total_cost (cost_status in {seen} -- pipeline/committed, "
+                "not yet actual spend)"
+            )
+
         division_rows.append(
             {
                 "unit": unit,
@@ -2656,6 +2698,7 @@ def report_division_margins(session: Session, project_ref: str) -> dict[str, Any
                 "actual_material_cost": float(mat) if mat is not None else None,
                 "actual_labour_cost": float(lab) if lab is not None else None,
                 "actual_total_cost": float(actual_cost) if actual_cost is not None else None,
+                "pipeline_cost": float(pipeline_cost) if pipeline_cost is not None else None,
                 "gross_margin": float(gross_margin) if gross_margin is not None else None,
                 "gross_margin_pct": gross_margin_pct,
                 "status_flag": flag,

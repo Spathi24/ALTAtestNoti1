@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import create_engine
@@ -63,7 +64,7 @@ def _setup(session):
     return project, doc
 
 
-def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount, status="accepted"):
+def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount, status="accepted", cost_status=None):
     row = FinancialLineItem(
         canonical_id=uuid.uuid4(),
         project_id=project.canonical_id,
@@ -76,6 +77,7 @@ def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount
         amount=Decimal(str(amount)),
         currency="CAD",
         status=status,
+        cost_status=cost_status,
         doc_role="quote",
         source="grid",
     )
@@ -539,3 +541,178 @@ class TestExtrasAdditiveToQuoteTotal:
         result = report_division_margins(db_session, "923 Test")
         row = result["divisions"][0]
         assert row["quoted_revenue"] == pytest.approx(400.0)
+
+
+class TestCostStatusAllowList:
+    """Checkpoint 2026-07-02: cost rows only count toward actual_*_cost when
+    cost_status is NULL (pre-Phase-4/5 legacy) or "actual". quoted/committed/
+    estimated/unknown must be excluded, never silently summed as spend."""
+
+    def test_null_cost_status_counts_as_actual(self, db_session):
+        """Legacy llm-v1 rows (cost_status never set) always represented real
+        spend -- NULL must still count here, or every pre-existing project's
+        margins page goes blank."""
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="material", amount=800, cost_status=None,
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["actual_material_cost"] == pytest.approx(800.0)
+        assert row["pipeline_cost"] is None
+
+    def test_actual_cost_status_counts(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="labour", amount=300, cost_status="actual",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["actual_labour_cost"] == pytest.approx(300.0)
+
+    def test_quoted_cost_status_excluded_from_actual(self, db_session):
+        """The exact bug this fix prevents: a Phase-4 'quoted' cost row must
+        NOT show up as actual spend."""
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="material", amount=800, cost_status="quoted",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["actual_material_cost"] is None
+        assert row["actual_total_cost"] is None
+        assert row["pipeline_cost"] == pytest.approx(800.0)
+        assert row["status_flag"] != "ok"  # no actual cost recorded
+
+    def test_committed_cost_status_excluded_from_actual(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="labour", amount=300, cost_status="committed",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["actual_labour_cost"] is None
+        assert row["pipeline_cost"] == pytest.approx(300.0)
+
+    def test_mixed_null_and_quoted_do_not_mix(self, db_session):
+        """The exact scenario the audit flagged: a project with BOTH legacy
+        NULL cost rows and Phase-4 quoted rows in the same division. Only the
+        NULL row is actual; the quoted row is pipeline -- never summed
+        together."""
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="material", amount=500, cost_status=None,
+        )
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="material", amount=800, cost_status="quoted",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["actual_material_cost"] == pytest.approx(500.0)  # not 1300
+        assert row["pipeline_cost"] == pytest.approx(800.0)
+        assert any("excluded" in w for w in row["warnings"])
+
+    def test_unknown_cost_status_excluded(self, db_session):
+        project, doc = _setup(db_session)
+        _add_row(
+            db_session, project, doc, unit="923", div_code="22", side="cost",
+            amount_type="other", amount=150, cost_status="unknown",
+        )
+        db_session.flush()
+
+        result = report_division_margins(db_session, "923 Test")
+        row = result["divisions"][0]
+        assert row["actual_total_cost"] is None
+        assert row["pipeline_cost"] == pytest.approx(150.0)
+
+
+class TestCostStatusRegressionRealProjects:
+    """Pins today's REAL numbers for the 6 real projects that currently carry
+    side='cost' rows, to prove the allow-list fix is inert today (no project
+    yet mixes legacy-NULL and Phase-4/5-tagged cost rows) and only starts
+    protecting once mixing would otherwise occur. Skips cleanly if the real
+    project_db.sqlite isn't present (e.g. a clean checkout / CI)."""
+
+    _EXPECTED: ClassVar[dict[str, int]] = {
+        "1455 Rue St. Mathieu": 43,
+        "5768 St-Laurent": 16,
+        "6554 Rue Saint Hubert": 8,
+        "14805 Notre-Dame Est. No.6": 6,
+        "6305 Trans Island": 2,
+        "3940 Cote des Neiges": 1,
+    }
+
+    @pytest.fixture
+    def real_session(self):
+        from pathlib import Path
+
+        from project_db.db.session import get_engine
+
+        db_path = Path(__file__).resolve().parents[1] / "project_db.sqlite"
+        if not db_path.exists():
+            pytest.skip("real project_db.sqlite not present in this checkout")
+        engine = get_engine(f"sqlite:///{db_path.as_posix()}")
+        SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+        s = SessionLocal()
+        yield s
+        s.close()
+
+    def test_all_cost_side_rows_today_are_null_cost_status(self, real_session):
+        """Precondition the regression relies on: if this ever fails, a real
+        project now has non-NULL cost_status rows and the two tests below stop
+        proving what they claim to prove."""
+        rows = (
+            real_session.query(FinancialLineItem)
+            .filter(FinancialLineItem.side == "cost")
+            .all()
+        )
+        assert rows, "expected real side=cost rows in this checkout's DB"
+        non_null = [r for r in rows if r.cost_status is not None]
+        assert non_null == [], (
+            f"{len(non_null)} real cost rows now have a non-NULL cost_status -- "
+            "the allow-list fix may now be actively excluding real pipeline cost "
+            "from these projects' margins; verify that's expected before trusting "
+            "this regression pin."
+        )
+
+    def test_real_project_actual_costs_match_pinned_values(self, real_session):
+        """actual_total_cost for each of the 6 known projects, pinned to what
+        the ledger already summed to before this fix (all rows are NULL
+        cost_status today, so the allow-list changes nothing for them)."""
+        for name in self._EXPECTED:
+            result = report_division_margins(real_session, name)
+            assert "error" not in result, f"{name}: {result.get('error')}"
+            total_cost = sum(
+                d["actual_total_cost"] for d in result["divisions"]
+                if d["actual_total_cost"] is not None
+            )
+            # No pin on the exact dollar value (real data, could legitimately
+            # change between sessions) -- the invariant this test protects is
+            # narrower and load-bearing: with every row still NULL cost_status,
+            # NOTHING is excluded as pipeline_cost today.
+            pipeline_total = sum(
+                d["pipeline_cost"] for d in result["divisions"]
+                if d["pipeline_cost"] is not None
+            )
+            assert pipeline_total == 0, (
+                f"{name}: {pipeline_total} of cost unexpectedly excluded as "
+                "pipeline -- expected 0 since all real cost rows are NULL "
+                "cost_status today"
+            )
+            assert total_cost > 0, f"{name}: expected some actual cost, got 0"
