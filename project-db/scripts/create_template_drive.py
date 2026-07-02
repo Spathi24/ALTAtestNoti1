@@ -215,7 +215,7 @@ def build_quote(
     csi: str,
     trade: str,
     vendor: str,
-    lines: list[tuple],  # (desc, csi_hint, mat, lab, tot, coverage, mat_incl, excl, notes)
+    lines: list[tuple],  # (desc, csi_hint, mat, lab, tot, coverage, mat_incl, excl, notes, sow_item_ref)
 ) -> None:
     """Column order is deliberate:
     Description | Masterformat | Material Amount | Labour Amount | Total Amount | ...extras
@@ -229,6 +229,10 @@ def build_quote(
       Rows 3+ = line items: Description=item desc, mat+labour filled, total empty
       Last row = Pre-Tax Total: Description EMPTY (parser routes to grand_total branch),
                  Total Amount = sum, Item_ID col = "Pre-Tax Total" label
+
+    SOW_Item_Ref is a structural join column (e.g. "SOW-025") back to the SOW item this
+    quote line prices -- not text buried in Notes. Phase 4 reads this column directly to
+    set FinancialLineItem.sow_item_id; it must never parse "per SOW-025" out of Notes.
     """
     wb = _wb()
 
@@ -237,16 +241,16 @@ def build_quote(
     HEADERS = [
         "Description", "Masterformat",
         "Material Amount", "Labour Amount", "Total Amount",
-        "Item_ID", "Coverage_Y_N", "Mat_Incl", "Exclusions", "Notes",
+        "Item_ID", "Coverage_Y_N", "Mat_Incl", "Exclusions", "Notes", "SOW_Item_Ref",
     ]
     pretax = sum(ln[4] for ln in lines)
 
     # Section-total row (sets current division; no material/labour values)
-    section_row = [trade, csi, "", "", pretax, "", "", "", "", ""]
+    section_row = [trade, csi, "", "", pretax, "", "", "", "", "", ""]
     # Line-item rows (material + labour filled; total empty)
     item_rows = []
-    for idx, (desc, csi_hint, mat, lab, tot, cov, mat_incl, excl, notes) in enumerate(lines, 1):
-        item_rows.append([desc, csi_hint, mat, lab, "", f"QI-{idx:03d}", cov, mat_incl, excl, notes])
+    for idx, (desc, csi_hint, mat, lab, tot, cov, mat_incl, excl, notes, sow_item_ref) in enumerate(lines, 1):
+        item_rows.append([desc, csi_hint, mat, lab, "", f"QI-{idx:03d}", cov, mat_incl, excl, notes, sow_item_ref])
 
     all_rows = [section_row] + item_rows
     _sheet(wb, "Quote_Lines", HEADERS, all_rows)
@@ -260,7 +264,7 @@ def build_quote(
     ws.cell(last, 6, "Pre-Tax Total")  # Item_ID col carries the label (non-description col)
     ws.cell(last, 6).font = Font(bold=True)
     ws.cell(last, 5).font = Font(bold=True)
-    for c in range(1, 11):
+    for c in range(1, 12):
         ws.cell(last, c).fill = TOTAL_FILL
 
     _pc_sheet(wb, [
@@ -269,7 +273,9 @@ def build_quote(
          "Only QI-* rows are real quote line items. Row 2 (Item_ID empty) is a parser-control "
          "section-total row that sets the current CSI division for all QI-* rows that follow. "
          "The final row (Item_ID='Pre-Tax Total', Description empty) is a parser-control row "
-         "that the grid parser captures as grand_total, not a line item."),
+         "that the grid parser captures as grand_total, not a line item. SOW_Item_Ref is the "
+         "structural join key back to SOW_Items/Package_Lines (e.g. 'SOW-025') -- never parse "
+         "it out of Notes text."),
         ("Parser_Contract", "N", "—", "—", "Parser instructions"),
     ])
     _save(wb, path)
@@ -553,19 +559,19 @@ def main() -> None:
         PROJECT_DIR / "quotes" / f"{PC}_QUOTE_22-Plumbing_PlombertInc_selected.xlsx",
         "22", "Plumbing", "Plombert Inc.",
         [
-            ("Rough-in plumbing (drain, supply, vent)",  "22", 800.00,  2400.00, 3200.00, "Y","N","", "PEX-A; per SOW-025"),
-            ("Supply and install plumbing fixtures",     "22", 1600.00, 1200.00, 2800.00, "Y","Y","", "Moen Adler; per SOW-026"),
-            ("Hot water heater replacement",             "22",  500.00,  300.00,  800.00, "Y","Y","", "40-gal electric; per SOW-027"),
+            ("Rough-in plumbing (drain, supply, vent)",  "22", 800.00,  2400.00, 3200.00, "Y","N","", "PEX-A", "SOW-025"),
+            ("Supply and install plumbing fixtures",     "22", 1600.00, 1200.00, 2800.00, "Y","Y","", "Moen Adler", "SOW-026"),
+            ("Hot water heater replacement",             "22",  500.00,  300.00,  800.00, "Y","Y","", "40-gal electric", "SOW-027"),
         ],
     )
     build_quote(
         PROJECT_DIR / "quotes" / f"{PC}_QUOTE_09-Finishes_ABCTile_pending.xlsx",
         "09", "Finishes", "ABC Tile",
         [
-            ("Bathroom tile supply and install",         "09", 4200.00, 3800.00,  8000.00, "Y","Y","", "12x24 porcelain; incl. waterproofing"),
-            ("Drywall and taping throughout",            "09", 1800.00, 4200.00,  6000.00, "Y","N","", "5/8\" Type X"),
-            ("LVP flooring supply and install",         "09", 2800.00, 1700.00,  4500.00, "Y","Y","", "Lifeproof 6mm"),
-            ("Painting 2 coats throughout",             "09", 1200.00, 1800.00,  3000.00, "Y","N","", "BM Chantilly Lace"),
+            ("Bathroom tile supply and install",         "09", 4200.00, 3800.00,  8000.00, "Y","Y","", "12x24 porcelain; incl. waterproofing", "SOW-040"),
+            ("Drywall and taping throughout",            "09", 1800.00, 4200.00,  6000.00, "Y","N","", "5/8\" Type X", "SOW-041"),
+            ("LVP flooring supply and install",         "09", 2800.00, 1700.00,  4500.00, "Y","Y","", "Lifeproof 6mm", "SOW-042"),
+            ("Painting 2 coats throughout",             "09", 1200.00, 1800.00,  3000.00, "Y","N","", "BM Chantilly Lace", "SOW-043"),
         ],
     )
 

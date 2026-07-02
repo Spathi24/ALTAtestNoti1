@@ -76,6 +76,11 @@ from project_db.db.models.roadmap import (
     RoadmapPhase,
     RoadmapTask,
 )
+from project_db.db.models.sow import (
+    SOW_PACKAGE_STATUSES,
+    SowItem,
+    SowPackage,
+)
 from project_db.db.models.telegram_identity import TelegramIdentity
 from project_db.db.models.work import (
     DailyLog,
@@ -112,6 +117,7 @@ __all__ = [
     "RECONCILIATION_SOURCES",
     "RECONCILIATION_STATUSES",
     "ROADMAP_PHASE_ORDER",
+    "SOW_PACKAGE_STATUSES",
     "WORKER_ALIAS_SOURCES",
     "Client",
     "ContractObligation",
@@ -153,6 +159,8 @@ __all__ = [
     "RoadmapPhase",
     "RoadmapTask",
     "SourceSystem",
+    "SowItem",
+    "SowPackage",
     "Task",
     "TaskDependency",
     "TaskStatus",

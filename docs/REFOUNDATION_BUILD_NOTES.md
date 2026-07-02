@@ -109,8 +109,25 @@ Assign code='2026001', display_name='2026001 — Rockland', legacy_job_number='9
 aliases='["Rockland","Tanya","923 Rockland","923-927 Rockland"]' to pilot project
 (query by name, never by hardcoded UUID). Tests. Manual DB verify. Commit.
 
-**Phase 3 — SowItem + SowPackage models**
-New `db/models/sow.py`. Migration in FK order (SowPackage before SowItem). Tests. Commit.
+**Phase 3 — SowItem + SowPackage models** ✓ COMPLETE 2026-07-02
+New `db/models/sow.py`: `SowPackage` (per-trade tendering package) + `SowItem` (one
+scope line; deliberately coarser than `FinancialLineItem` — Phase 4 links many
+line items back to one SowItem via `sow_item_id`, not built yet). Migration DDL
+in FK order (`sow_package` before `sow_item`) wired into `ensure_sqlite_schema`.
+Exported from `db/models/__init__.py`. 13 tests (schema creation, ALTER-TABLE
+path, project/package linkage, included/excluded scope, material_spec JSON
+persistence, item_code uniqueness scoped to project+package (not global), no
+ledger mutation). `SowItem.package_id` is nullable — division 01 (General
+Requirements) items are GC overhead with no subcontractor package, a real state
+surfaced while populating real data, not an oversight.
+Mock-drive `Quote_Lines` regenerated with a structural `SOW_Item_Ref` column
+(e.g. `SOW-025`) replacing the old "per SOW-025" text buried in `Notes` —
+`verify_template_drive.py` still passes both QUOTE files.
+Manually verified against the real DB: Rockland (`code=2026001`) populated from
+the same already-approved mock `SOW_ITEMS` list (not new/fabricated data) — 11
+packages, 31 items, 3 correctly package-less General Requirements items, all
+division codes match the trade table. No `FinancialLineItem` row created —
+Phase 3 touches no ledger table. Full suite 1581 passed.
 
 **Phase 4 — SubcontractorQuote + FinancialLineItem extensions**
 SubcontractorQuote model in `db/models/finance.py`; status vocab pending/recommended/

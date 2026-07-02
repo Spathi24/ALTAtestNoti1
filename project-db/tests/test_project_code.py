@@ -24,7 +24,6 @@ from project_db.db.migrations import ensure_sqlite_schema
 from project_db.db.models import Client, Organization, Project
 from project_db.db.models.work import ProjectStatus
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -116,7 +115,7 @@ class TestResolveProject:
     def session(self):
         engine = _make_engine()
         s = _make_session(engine)
-        org, client = _org_client(s)
+        _org, client = _org_client(s)
         _project(
             s, client,
             name="923 Rockland",
@@ -176,7 +175,7 @@ class TestProjectCodeUnique:
     def test_duplicate_code_raises(self):
         engine = _make_engine()
         session = _make_session(engine)
-        org, client = _org_client(session)
+        _org, client = _org_client(session)
         _project(session, client, name="Project A", code="2026001")
         session.commit()
 
@@ -188,7 +187,7 @@ class TestProjectCodeUnique:
     def test_multiple_null_codes_allowed(self):
         engine = _make_engine()
         session = _make_session(engine)
-        org, client = _org_client(session)
+        _org, client = _org_client(session)
         _project(session, client, name="Legacy A", code=None)
         _project(session, client, name="Legacy B", code=None)
         session.commit()  # should not raise

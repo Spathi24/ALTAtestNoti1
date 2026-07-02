@@ -402,6 +402,48 @@ SQLITE_EMAIL_INGEST_INDEXES = (
     "ON email_ingest (gmail_message_id)",
 )
 
+# Phase 3: Scope of Work -- SowPackage before SowItem (FK order).
+SQLITE_SOW_PACKAGE_DDL = """
+CREATE TABLE sow_package (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT NOT NULL,
+    division_code VARCHAR NOT NULL DEFAULT '99',
+    trade_name VARCHAR,
+    title VARCHAR,
+    status VARCHAR NOT NULL DEFAULT 'draft',
+    drawings_refs_json TEXT,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_SOW_ITEM_DDL = """
+CREATE TABLE sow_item (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT NOT NULL,
+    package_id TEXT,
+    item_code VARCHAR,
+    description TEXT,
+    division_code VARCHAR NOT NULL DEFAULT '99',
+    included BOOLEAN NOT NULL DEFAULT 1,
+    material_spec TEXT,
+    quantity NUMERIC(14, 2),
+    unit VARCHAR,
+    assumptions TEXT,
+    exclusions TEXT,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (package_id) REFERENCES sow_package(canonical_id),
+    CONSTRAINT uq_sow_item_project_package_code UNIQUE (project_id, package_id, item_code)
+)
+"""
+
 # Columns added to worker after initial DDL (role/tags/verified for PM categorization).
 SQLITE_WORKER_COLUMNS: dict[str, str] = {
     "role": "VARCHAR",
@@ -955,3 +997,6 @@ def ensure_sqlite_schema(engine) -> None:
                     "ON project (code) WHERE code IS NOT NULL"
                 )
             )
+        # Phase 3: Scope of Work -- SowPackage before SowItem (FK order).
+        _create_table_if_missing(conn, tables, "sow_package", SQLITE_SOW_PACKAGE_DDL)
+        _create_table_if_missing(conn, tables, "sow_item", SQLITE_SOW_ITEM_DDL)
