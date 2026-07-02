@@ -840,10 +840,16 @@ class MondayConnector(BaseConnector):
         """
         project_attrs: dict[str, Any] = {
             "name": board["name"],
-            "code": f"MONDAY-BOARD-{board['id']}",
             "status": ProjectStatus.ACTIVE,
             "client_id": self._resolve_client_id(None),
         }
+        # Deliberately no "code" here: `Project.code` now holds the human
+        # YYYYNNN job code (see db/models/work.py). Monday must never write
+        # it -- it used to stuff "MONDAY-BOARD-<id>" in here, which every
+        # re-sync would silently overwrite any human code with (code isn't
+        # in create_only_attrs, so resolve_or_create re-applies every attrs
+        # key on each sync). Code is assigned once, out of band, when a
+        # project gets a real job number.
         project_result = self.resolver.resolve_or_create(
             source=self.source,
             external_key=f"board:{board['id']}",
