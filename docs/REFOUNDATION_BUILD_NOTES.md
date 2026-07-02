@@ -217,9 +217,41 @@ owner request — not yet coded):**
    function that reads `SubcontractorQuote` + writes `PurchaseOrder` +
    `ContractObligation`, one direction only.
 
-**Phase 5 — PurchaseOrder → ContractObligation**
-PurchaseOrder in `db/models/finance.py`; auto po_number (YYYYNNN-PPP); emits
-ContractObligation on award. Tests. Commit.
+**Phase 5 — PurchaseOrder → ContractObligation** ✓ COMPLETE 2026-07-02
+`PurchaseOrder` in `db/models/finance.py`: `subcontractor_quote_id` (NOT NULL,
+UNIQUE — one PO per quote, a re-award attempt fails at the DB level, not
+silently re-issued), `po_number` auto-generated `{project.code}-{PPP}`
+sequential per project, `project_id`/`package_id`/`vendor_id` denormalized from
+the quote, `status` (`awarded`/`cancelled`), `contract_amount`/`currency`/
+`awarded_date`/`terms`. Added `FinancialLineItem.subcontractor_quote_id` FK
+(per the recorded Phase-5 decision #1) so a cost row traces to the quote that
+priced it — Phase 4's ingester now stamps it at creation.
+New `ai/purchase_order_award.award_purchase_order(session, quote, ...)` — the
+ONE place that creates committed cost. Refuses to award anything but a
+`status="selected"` quote (`PurchaseOrderAwardError`, not a silent no-op).
+Effects, all in place, never delete+reinsert: (a) `SubcontractorQuote.status`
+→ `awarded` on the same row — quote history/coverage/evidence survives; (b)
+every `FinancialLineItem` row linked via `subcontractor_quote_id` gets
+`cost_status` → `committed` by UPDATE, isolated to exactly this quote's rows
+(verified: awarding one quote never touches another quote's rows, even in the
+same project); (c) exactly one `ContractObligation` emitted
+(`kind="po_commitment"` — added to `OBLIGATION_KINDS`, `direction="owed_by_us"`),
+citing the quote's `evidence_span_id`. 14 tests: schema (fresh + migrated),
+the full award sequence, sequential PO numbering (per-project, not global),
+guards (pending/rejected/already-awarded quotes rejected; duplicate award
+rejected at the DB unique-constraint level even if the status guard is
+bypassed), isolation between quotes. Full suite 1614.
+Manually verified on the REAL Rockland DB, chained onto Phase 4's real parse:
+ingested the actual mock Plumbing quote, then awarded it — `po_number
+2026001-001`, quote flipped to `awarded` in place (same `canonical_id`, amount
+unchanged), 6 cost rows flipped `quoted`→`committed` with sum still `$6800`
+(no drift/duplication), 1 `ContractObligation` (`po_commitment`, owed_by_us,
+`$6800`, counterparty "Plombert Inc."), 0 committed rows outside this quote.
+Rolled back — real DB unchanged.
+Deliberately NOT built: filename→package/vendor auto-resolution (Phase-5
+decision #3, still open — `award_purchase_order` takes an already-resolved
+`SubcontractorQuote` object, no filename parsing here); BudgetSnapshot;
+green-sheet report/UI (both Phase 6).
 
 **Phase 6 — BudgetSnapshot + green-sheet report + variance view**
 BudgetSnapshot model; green sheet report fn in `ai/`; variable-cost tolerance flags

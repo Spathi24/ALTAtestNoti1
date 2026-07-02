@@ -38,6 +38,7 @@ OBLIGATION_KINDS = {
     "insurance_expiry",  # a certificate/coverage that expires
     "permit_deadline",  # a permit / filing deadline
     "settlement",  # a settlement / buyout payment (e.g. tenant key return)
+    "po_commitment",  # a Purchase Order awarded to a subcontractor/vendor (Phase 5)
     "other",
 }
 # Direction of the commitment, from OUR point of view:

@@ -213,14 +213,16 @@ CREATE TABLE financial_line_item (
     cost_status VARCHAR,
     sow_item_id TEXT,
     line_markup_factor FLOAT,
+    subcontractor_quote_id TEXT,
     FOREIGN KEY (project_id) REFERENCES project(canonical_id),
     FOREIGN KEY (document_id) REFERENCES document(canonical_id) ON DELETE CASCADE,
-    FOREIGN KEY (sow_item_id) REFERENCES sow_item(canonical_id) ON DELETE SET NULL
+    FOREIGN KEY (sow_item_id) REFERENCES sow_item(canonical_id) ON DELETE SET NULL,
+    FOREIGN KEY (subcontractor_quote_id) REFERENCES subcontractor_quote(canonical_id) ON DELETE SET NULL
 )
 """
 
 # Columns added to financial_line_item after the initial DDL (Phase 1c-MVP +
-# Phase 4). `_add_missing_columns` adds any of these absent from an existing DB.
+# Phase 4/5). `_add_missing_columns` adds any of these absent from an existing DB.
 SQLITE_FINANCIAL_LINE_ITEM_COLUMNS: dict[str, str] = {
     "classification_method": "VARCHAR",
     "classification_confidence": "FLOAT",
@@ -234,6 +236,8 @@ SQLITE_FINANCIAL_LINE_ITEM_COLUMNS: dict[str, str] = {
     "cost_status": "VARCHAR",
     "sow_item_id": "TEXT",
     "line_markup_factor": "FLOAT",
+    # Phase 5: which quote priced this row (read by PO award to find rows to commit).
+    "subcontractor_quote_id": "TEXT",
 }
 
 # Columns added to contract_obligation after the initial DDL (Slice 5 evidence link).
@@ -507,6 +511,44 @@ SQLITE_SUBCONTRACTOR_QUOTE_INDEXES = (
     "ON subcontractor_quote (package_id)",
     "CREATE INDEX IF NOT EXISTS ix_subcontractor_quote_document_id "
     "ON subcontractor_quote (document_id)",
+)
+
+# Phase 5: PurchaseOrder -- always created by awarding a SubcontractorQuote, so
+# subcontractor_quote_id is NOT NULL + unique (one PO per quote; a re-award
+# attempt is rejected, not silently re-issued). Created after subcontractor_quote,
+# vendor, project (FK order).
+SQLITE_PURCHASE_ORDER_DDL = """
+CREATE TABLE purchase_order (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT,
+    package_id TEXT,
+    vendor_id TEXT,
+    subcontractor_quote_id TEXT NOT NULL,
+    po_number VARCHAR NOT NULL,
+    division_code VARCHAR,
+    status VARCHAR NOT NULL DEFAULT 'awarded',
+    contract_amount NUMERIC(14, 2),
+    currency VARCHAR,
+    awarded_date DATE,
+    terms TEXT,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    FOREIGN KEY (package_id) REFERENCES sow_package(canonical_id),
+    FOREIGN KEY (vendor_id) REFERENCES vendor(canonical_id),
+    FOREIGN KEY (subcontractor_quote_id) REFERENCES subcontractor_quote(canonical_id),
+    CONSTRAINT uq_purchase_order_po_number UNIQUE (po_number),
+    CONSTRAINT uq_purchase_order_subcontractor_quote_id UNIQUE (subcontractor_quote_id)
+)
+"""
+
+SQLITE_PURCHASE_ORDER_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_purchase_order_project_id "
+    "ON purchase_order (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_purchase_order_package_id "
+    "ON purchase_order (package_id)",
 )
 
 # Columns added to worker after initial DDL (role/tags/verified for PM categorization).
@@ -1072,4 +1114,8 @@ def ensure_sqlite_schema(engine) -> None:
             conn, tables, "subcontractor_quote", SQLITE_SUBCONTRACTOR_QUOTE_DDL
         )
         for _idx_ddl in SQLITE_SUBCONTRACTOR_QUOTE_INDEXES:
+            conn.execute(text(_idx_ddl))
+        # Phase 5: purchase orders (after subcontractor_quote + vendor + project).
+        _create_table_if_missing(conn, tables, "purchase_order", SQLITE_PURCHASE_ORDER_DDL)
+        for _idx_ddl in SQLITE_PURCHASE_ORDER_INDEXES:
             conn.execute(text(_idx_ddl))

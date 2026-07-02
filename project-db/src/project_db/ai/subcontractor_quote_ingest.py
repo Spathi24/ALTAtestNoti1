@@ -178,10 +178,55 @@ def ingest_subcontractor_quote(
             )
     result.resolved_refs = len(ref_to_id)
 
+    result.grand_total = grid.grand_total
+    result.division_total = grid.division_total
+    check = grid.grand_total if grid.grand_total is not None else (grid.division_total or None)
+
+    cov = _extract_coverage_fields(qtable)
+    quote = SubcontractorQuote(
+        project_id=project_id,
+        package_id=package_id,
+        vendor_id=vendor_id,
+        document_id=document.canonical_id,
+        division_code=division_code or (line_rows[0].division_code if line_rows else None),
+        status=status,
+        amount=grid.grand_total if grid.grand_total is not None else (grid.division_total or None),
+        currency="CAD",
+        quote_date=doc_date,
+        coverage=cov["coverage"],
+        exclusions=cov["exclusions"],
+        assumptions=cov["assumptions"],
+        materials_included=cov["materials_included"],
+        evidence_span_id=ev_span_id,
+        evidence_locator_json=ev_loc,
+        source="grid",
+        source_meta_json=json.dumps({"unresolved_sow_refs": result.unresolved_refs}),
+    )
+
+    # Idempotent per document: replace this document's quote + cost rows.
+    # FUTURE HARDENING (recorded 2026-07-02, not yet needed): this deletes ALL
+    # FinancialLineItem rows for the document_id, not just the ones THIS
+    # extractor wrote. Fine while one document has exactly one extractor. If a
+    # second extractor (e.g. an LLM fallback) can ever touch the same
+    # document_id, narrow this to
+    # filter_by(document_id=..., extractor_version=EXTRACTOR_VERSION) so one
+    # extractor's re-run can't silently delete another extractor's rows.
+    session.query(SubcontractorQuote).filter(
+        SubcontractorQuote.document_id == document.canonical_id
+    ).delete(synchronize_session="fetch")
+    session.query(FinancialLineItem).filter(
+        FinancialLineItem.document_id == document.canonical_id
+    ).delete(synchronize_session="fetch")
+
+    session.add(quote)
+    session.flush()  # populate quote.canonical_id so cost rows can reference it
+
     # Build the cost line items: material/labour ONLY. division_total rows are
     # NOT written (they are section checks); grand_total is a reconciliation
     # cross-check. This preserves the material/labour split and prevents any
-    # section-total-vs-line-item double count.
+    # section-total-vs-line-item double count. Every row is stamped with
+    # subcontractor_quote_id so a later PO award (Phase 5) can find exactly the
+    # rows this quote produced.
     items: list[FinancialLineItem] = []
     line_sum = Decimal(0)
     for row in line_rows:
@@ -204,6 +249,7 @@ def ingest_subcontractor_quote(
                 cost_status="quoted",  # COST lifecycle: quoted (selected stays quoted)
                 purchase_type="vendor",  # subcontractor trade quote
                 sow_item_id=sow_item_id,
+                subcontractor_quote_id=quote.canonical_id,
                 line_markup_factor=1.0,
                 doc_role="quote",
                 description=row.description,
@@ -231,10 +277,7 @@ def ingest_subcontractor_quote(
             )
         )
 
-    result.grand_total = grid.grand_total
-    result.division_total = grid.division_total
     result.line_item_sum = line_sum
-    check = grid.grand_total if grid.grand_total is not None else (grid.division_total or None)
     if check is not None:
         result.reconcile_ok = line_sum == check
         if not result.reconcile_ok:
@@ -242,49 +285,6 @@ def ingest_subcontractor_quote(
                 f"line-item sum {line_sum} != stated total {check} (reconcile flag)"
             )
 
-    cov = _extract_coverage_fields(qtable)
-    quote = SubcontractorQuote(
-        project_id=project_id,
-        package_id=package_id,
-        vendor_id=vendor_id,
-        document_id=document.canonical_id,
-        division_code=division_code or (line_rows[0].division_code if line_rows else None),
-        status=status,
-        amount=grid.grand_total if grid.grand_total is not None else (grid.division_total or None),
-        currency="CAD",
-        quote_date=doc_date,
-        coverage=cov["coverage"],
-        exclusions=cov["exclusions"],
-        assumptions=cov["assumptions"],
-        materials_included=cov["materials_included"],
-        evidence_span_id=ev_span_id,
-        evidence_locator_json=ev_loc,
-        source="grid",
-        source_meta_json=json.dumps(
-            {
-                "unresolved_sow_refs": result.unresolved_refs,
-                "line_item_count": len(items),
-            }
-        ),
-    )
-
-    # Idempotent per document: replace this document's quote + cost rows.
-    # FUTURE HARDENING (recorded 2026-07-02, not yet needed): this deletes ALL
-    # FinancialLineItem rows for the document_id, not just the ones THIS
-    # extractor wrote. Fine while one document has exactly one extractor. If a
-    # second extractor (e.g. an LLM fallback) can ever touch the same
-    # document_id, narrow this to
-    # filter_by(document_id=..., extractor_version=EXTRACTOR_VERSION) so one
-    # extractor's re-run can't silently delete another extractor's rows.
-    session.query(SubcontractorQuote).filter(
-        SubcontractorQuote.document_id == document.canonical_id
-    ).delete(synchronize_session="fetch")
-    session.query(FinancialLineItem).filter(
-        FinancialLineItem.document_id == document.canonical_id
-    ).delete(synchronize_session="fetch")
-
-    session.add(quote)
-    session.flush()  # populate quote.canonical_id
     session.add_all(items)
 
     result.quote_id = str(quote.canonical_id)

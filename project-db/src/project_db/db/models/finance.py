@@ -29,6 +29,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy import (
     Enum as SAEnum,
@@ -116,6 +117,14 @@ PURCHASE_TYPES = {
     "transportation",  # delivery / transport
     "other",
 }
+
+# --- Phase 5 vocabulary (PurchaseOrder lifecycle) ----------------------------
+# A PurchaseOrder row is created BY the award action (see
+# ai/purchase_order_award.award_purchase_order) -- there is no "draft PO" state
+# in this model. "cancelled" exists for a PO that is voided after issuance
+# (e.g. the sub falls through); cancelling a PO does not delete it or its
+# ContractObligation -- that is a future reconciliation concern, not Phase 5.
+PURCHASE_ORDER_STATUSES = {"awarded", "cancelled"}
 
 
 class InvoiceStatus(str, enum.Enum):
@@ -321,6 +330,16 @@ class FinancialLineItem(Base, CanonicalMixin):
     # Client-price multiplier applied at REPORT time (presentation only); the
     # ledger amount stays the internal cost. Default 1.0 = no markup stored.
     line_markup_factor = Column(Float, nullable=True)
+    # Which SubcontractorQuote priced this cost row (Phase 5). Set at ingest
+    # time by subcontractor_quote_ingest; read by the PO-award conversion to
+    # find which rows flip cost_status quoted -> committed. Do NOT add a
+    # redundant purchase_order_id here -- PurchaseOrder.subcontractor_quote_id
+    # is the other end of that join.
+    subcontractor_quote_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subcontractor_quote.canonical_id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class SubcontractorQuote(Base, CanonicalMixin):
@@ -388,6 +407,63 @@ class SubcontractorQuote(Base, CanonicalMixin):
     evidence_locator_json = Column(Text, nullable=True)
     source = Column(String, nullable=True)  # "grid" -- which populator produced it
     source_meta_json = Column(Text, nullable=True)
+
+
+class PurchaseOrder(Base, CanonicalMixin):
+    """One Purchase Order: the operational artifact created by AWARDING a
+    ``selected`` SubcontractorQuote (Phase 5). A PurchaseOrder is always
+    created BY the award action (``ai/purchase_order_award.award_purchase_order``)
+    -- there is no separate "create a draft PO" path, so ``subcontractor_quote_id``
+    is required (one PO per quote; a duplicate award attempt is rejected by the
+    unique constraint below, not silently re-issued).
+
+    The PO is the OPERATIONAL fact ("we ordered this"); the ``ContractObligation``
+    it emits is the LEGAL/FINANCIAL consequence ("we now owe this money"). Awarding
+    a PO does not delete or rewrite the originating quote or its cost line items --
+    it flips their lifecycle fields in place (SubcontractorQuote.status ->
+    "awarded", the linked FinancialLineItem rows' cost_status -> "committed") so
+    quote history and SOW linkage survive the conversion.
+    """
+
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=True,
+    )
+    package_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("sow_package.canonical_id"),
+        nullable=True,
+    )
+    vendor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("vendor.canonical_id"),
+        nullable=True,
+    )
+    # The quote this PO converts. Required + unique: exactly one PO per quote.
+    subcontractor_quote_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subcontractor_quote.canonical_id"),
+        nullable=False,
+    )
+
+    po_number = Column(String, nullable=False)  # YYYYNNN-PPP, auto-generated
+    division_code = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="awarded")  # PURCHASE_ORDER_STATUSES
+
+    contract_amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(String, nullable=True)
+    awarded_date = Column(Date, nullable=True)
+    terms = Column(Text, nullable=True)
+
+    source_meta_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("po_number", name="uq_purchase_order_po_number"),
+        UniqueConstraint(
+            "subcontractor_quote_id", name="uq_purchase_order_subcontractor_quote_id"
+        ),
+    )
 
 
 class DocumentFinancialStatus(Base):
