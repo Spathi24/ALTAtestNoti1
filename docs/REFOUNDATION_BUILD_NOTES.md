@@ -170,6 +170,53 @@ is via shared `document_id`; quote-level coverage/assumptions columns exist but 
 only best-effort populated (exclusions/materials_included from cells); package/
 vendor resolution is caller-supplied, not yet auto-resolved from the filename.
 
+**Owner review 2026-07-02 (post-Phase-4): reuse verdict = accepted, not spaghetti.**
+The core distinction to keep enforcing: reusing *generic* structures (EvidenceSpan,
+DocumentParse, FinancialLineItem, Vendor, ReconciliationIssue, Proposal, the
+deterministic grid parser) is correct and intended by the plan. Reusing/bending
+*revenue-specific* logic (`_collect_quote_rows`, the `total`-wins-over-`items`
+dedup in `report_project_financials`, the old accepted/proposed status meaning)
+is NOT — Phase 4 correctly built a separate cost-side path instead. **The
+spaghetti failure mode to actively prevent:** `financial_grid.py` starting to do
+SOW DB lookups, `financial_grid_populator.py` special-casing vendor quotes,
+`views.py` "correcting" ingestion mistakes, `docs.py` deciding selected/awarded
+semantics, or the same entity being created from multiple unrelated code paths.
+One ingestion path per entity; identity/resolution logic stays out of parsers.
+
+**Recorded design decisions for Phase 5 (answered before implementation, per
+owner request — not yet coded):**
+1. **`FinancialLineItem.subcontractor_quote_id` FK:** not added in Phase 4 (spec
+   listed exactly 4 columns). Add it in Phase 5 alongside `PurchaseOrder` — by
+   then there are three things a cost row can trace to (quote / PO / actual) and
+   a direct FK is worth the schema churn once, not twice.
+2. **Idempotent delete scope (documented hardening, not urgent):**
+   `subcontractor_quote_ingest.ingest_subcontractor_quote` currently deletes ALL
+   `FinancialLineItem` rows for the `document_id` before re-inserting. Fine while
+   one document → one extractor. Narrow to
+   `filter_by(document_id=..., extractor_version="subquote-v1")` before any
+   second extractor (e.g. a future LLM fallback) can touch the same document —
+   otherwise one extractor's re-run could silently delete another's rows.
+3. **Filename → package/vendor resolution:** stays OUT of the ingester (which
+   only takes `project_id`/`package_id`/`vendor_id` as caller-supplied args —
+   correct, keep it that way). Phase 5 adds a small resolver/router *above* the
+   ingester — parses `{YYYYNNN}_QUOTE_{DD}-{TradeName}_{VendorSlug}_{status}.xlsx`
+   per `NAMING_CONVENTIONS.md`, looks up `SowPackage` by `division_code` and
+   `Vendor` by name (reuse `ExactFieldMatcher`-style matching, do not invent a
+   new fuzzy matcher). Lives in its own small module, not inside
+   `financial_grid.py` or `subcontractor_quote_ingest.py`.
+4. **PO award → committed conversion:** Phase 5's `PurchaseOrder` model gets
+   awarded from a `selected` `SubcontractorQuote` by an explicit human/Proposal-
+   gated action, never automatically. On award: (a) `SubcontractorQuote.status`
+   → `awarded` (the quote row itself is never deleted or rewritten — award is a
+   status transition, quote history stays intact); (b) the cost `FinancialLineItem`
+   rows already linked to that quote's `document_id` get `cost_status` →
+   `committed` (an UPDATE, not a delete+reinsert — the SOW linkage and amounts
+   must not change, only the lifecycle field); (c) a new `ContractObligation` row
+   is emitted per PO. This must NOT be built inside
+   `subcontractor_quote_ingest.py` — it belongs in a Phase 5 PO-conversion
+   function that reads `SubcontractorQuote` + writes `PurchaseOrder` +
+   `ContractObligation`, one direction only.
+
 **Phase 5 — PurchaseOrder → ContractObligation**
 PurchaseOrder in `db/models/finance.py`; auto po_number (YYYYNNN-PPP); emits
 ContractObligation on award. Tests. Commit.

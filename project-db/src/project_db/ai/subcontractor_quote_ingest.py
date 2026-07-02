@@ -269,6 +269,13 @@ def ingest_subcontractor_quote(
     )
 
     # Idempotent per document: replace this document's quote + cost rows.
+    # FUTURE HARDENING (recorded 2026-07-02, not yet needed): this deletes ALL
+    # FinancialLineItem rows for the document_id, not just the ones THIS
+    # extractor wrote. Fine while one document has exactly one extractor. If a
+    # second extractor (e.g. an LLM fallback) can ever touch the same
+    # document_id, narrow this to
+    # filter_by(document_id=..., extractor_version=EXTRACTOR_VERSION) so one
+    # extractor's re-run can't silently delete another extractor's rows.
     session.query(SubcontractorQuote).filter(
         SubcontractorQuote.document_id == document.canonical_id
     ).delete(synchronize_session="fetch")
