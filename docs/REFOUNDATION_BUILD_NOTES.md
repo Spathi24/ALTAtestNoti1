@@ -532,6 +532,48 @@ fully decoupled from the two quarantined pages — narrow scope without
 duplicate infrastructure. Not yet built in this pass; still waiting on an
 explicit go-ahead for both the auto-resolution work and the UI route.
 
+**Phase 5 item #3 closed 2026-07-02: `ai/quote_document_resolver.py`.**
+Owner directive: sequence auto-resolution before UI (so the first UI
+screenshot is backed by proven data flow, not just plumbing that hasn't
+sprung a leak yet); scope narrowly by reusing
+`connectors/homedepot/importer.py::link_job_to_project`'s pattern rather
+than building a general matcher. Built exactly that:
+`parse_quote_filename()` (pure regex against the settled convention
+`{YYYYNNN}[-{PPP}]_{DOCTYPE}[_{DD}-{TradeName}][_{VendorSlug}][_{status}].ext`
+— verified against every real filename shape in the mock Drive BEFORE being
+written into production code, not after) + `resolve_quote_document()`
+(project/package/vendor, each resolved INDEPENDENTLY, never guessed). Same
+discipline as Home Depot's linker: descending-confidence deterministic
+passes only (project = exact `Project.code` lookup via `_resolve_project`,
+since the SOP embeds the code directly, unlike Home Depot's fuzzy till-code
+problem; package = exact `division_code` match scoped to the resolved
+project; vendor = normalize-and-fold exact match, then substring either
+direction — both tiers require the match set to be exactly size 1, or the
+field stays unresolved with a warning, same as Home Depot's "ambiguous ==
+unresolved, never pick arbitrarily"). 26 tests: every real filename shape,
+non-convention filenames rejected cleanly, unknown project code, missing
+package, ambiguous package (two `SowPackage` rows for one division — must
+NOT guess), package resolution correctly project-scoped, vendor exact fold,
+vendor substring both directions, no vendor match, ambiguous vendor
+(genuine normalized-string collision, not just similar-looking names),
+documents with no `VendorSlug` at all (SOW/BUDGET/JOBCOST — a valid shape,
+not a failure), partial resolution (project+vendor resolve, package
+doesn't). Plus a real-DB smoke test: resolves Rockland's actual
+`2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx` filename correctly
+against Rockland's real, persisted `SowPackage` data.
+**Honest limitation, stated plainly, not glossed over:** this does NOT
+produce "a second real project" today. Confirmed by direct query before
+writing any code: zero real Drive-synced documents anywhere match the new
+naming convention (settled as policy 2026-06-30, not yet operationally
+adopted for real files by the team), and zero real projects besides
+Rockland have any `SowPackage` data to resolve against even if a correctly-
+named file existed. Both are adoption gaps outside this resolver's scope —
+the resolver is ready for when either closes, but building it does not
+itself close them. Per owner decision, held as a known gap rather than
+manufacturing a workaround (a second mock project would still be circular
+by the same logic already established).
+Full suite 1674.
+
 ---
 
 ## Phase 4 wiring map — existing mechanisms (READ BEFORE BUILDING)
