@@ -8,16 +8,24 @@ The award action:
   1. Requires the quote to be `status="selected"` (human intent already
      recorded) -- pending/recommended/rejected/already-awarded quotes are
      refused, not silently converted.
-  2. Creates ONE PurchaseOrder (auto po_number `{project.code}-{PPP}`), unique
+  2. Requires at least one FinancialLineItem with cost_status="quoted" linked
+     to this quote (owner review 2026-07-02, "checkpoint" pass) -- refuses to
+     create a PO/obligation backed by zero cost rows ("phantom money-at-risk":
+     a recorded commitment with nothing in the ledger behind it).
+  3. Creates ONE PurchaseOrder (auto po_number `{project.code}-{PPP}`), unique
      per quote -- a duplicate award raises (UniqueConstraint), it does not
      re-issue a second PO.
-  3. Flips SubcontractorQuote.status -> "awarded" IN PLACE. The quote row is
+  4. Flips SubcontractorQuote.status -> "awarded" IN PLACE. The quote row is
      never deleted or rewritten -- award is a status transition, so quote
      history (coverage/exclusions/amount/evidence) survives.
-  4. Flips cost_status "quoted" -> "committed" on exactly the FinancialLineItem
-     rows this quote produced (found via subcontractor_quote_id, an UPDATE,
-     never a delete+reinsert -- SOW linkage and amounts must not change).
-  5. Emits exactly one ContractObligation (owed_by_us, kind="po_commitment"),
+  5. Flips cost_status "quoted" -> "committed" on exactly the FinancialLineItem
+     rows this quote produced AND that are currently "quoted" (found via
+     subcontractor_quote_id + cost_status='quoted', an UPDATE, never a
+     delete+reinsert -- SOW linkage and amounts must not change). Scoping the
+     UPDATE to cost_status='quoted' is defense-in-depth: no code path today
+     produces a quote-linked row in any other cost_status, but the guard means
+     a future one couldn't be silently overwritten by an award.
+  6. Emits exactly one ContractObligation (owed_by_us, kind="po_commitment"),
      reusing the quote's evidence_span_id for traceability.
 
 Deliberately narrow: no filename parsing, no vendor/package resolution (those
@@ -102,6 +110,24 @@ def award_purchase_order(
             "generate a PO number"
         )
 
+    # Find the rows this award will commit BEFORE creating anything. A quote
+    # with zero "quoted" cost rows (e.g. ingestion silently produced none)
+    # must not become a PO/obligation with nothing backing it in the ledger.
+    lines = (
+        session.query(FinancialLineItem)
+        .filter(
+            FinancialLineItem.subcontractor_quote_id == quote.canonical_id,
+            FinancialLineItem.cost_status == "quoted",
+        )
+        .all()
+    )
+    if not lines:
+        raise PurchaseOrderAwardError(
+            f"SubcontractorQuote {quote.canonical_id} has no FinancialLineItem rows "
+            "with cost_status='quoted' -- refusing to award a PO backed by zero cost "
+            "rows (would create an obligation with nothing in the ledger behind it)"
+        )
+
     project = session.query(Project).filter_by(canonical_id=quote.project_id).one()
     po_number = _next_po_number(session, project)
     amount = contract_amount if contract_amount is not None else quote.amount
@@ -129,12 +155,11 @@ def award_purchase_order(
     # Status transition IN PLACE -- never delete/rewrite the quote.
     quote.status = "awarded"
 
-    # Commit exactly this quote's cost rows -- an UPDATE, not delete+reinsert.
-    lines = (
-        session.query(FinancialLineItem)
-        .filter(FinancialLineItem.subcontractor_quote_id == quote.canonical_id)
-        .all()
-    )
+    # Commit exactly the "quoted" rows found above -- an UPDATE, not a
+    # delete+reinsert. Re-querying here (rather than reusing `lines`) would
+    # risk a race against concurrent writes between the guard check and this
+    # point; iterating the already-fetched `lines` list keeps the guard and
+    # the mutation looking at the exact same row set.
     for line in lines:
         line.cost_status = "committed"
 

@@ -253,6 +253,58 @@ decision #3, still open — `award_purchase_order` takes an already-resolved
 `SubcontractorQuote` object, no filename parsing here); BudgetSnapshot;
 green-sheet report/UI (both Phase 6).
 
+**Checkpoint 2026-07-02: freeze-and-map audit + 2 hardening guards.**
+Read-only audit of the full chain (`Project → SowPackage → SowItem →
+SubcontractorQuote → FinancialLineItem → PurchaseOrder → ContractObligation`)
+before Phase 6, confirmed against the live DB (all 7 tables exist; the FKs,
+unique indexes, and `code`→PO-prefix link all verified by `PRAGMA` inspection).
+Two findings from the audit:
+- **FK enforcement:** globally ON via `session.py`'s `event.listens_for(Engine,
+  "connect")` (`PRAGMA foreign_keys=ON`), for prod and test connections alike.
+  BUT `financial_line_item.sow_item_id`/`subcontractor_quote_id` are not
+  *declared* FKs on the real DB (added via bare `ALTER TABLE ADD COLUMN`, no
+  `REFERENCES`) — so referential integrity there is application-level only,
+  even though fresh test DBs (via `create_all`) get the real constraint. A
+  false-confidence gap: tests can pass against a constraint production doesn't
+  enforce.
+- **A pre-existing, separate cost-side ledger exists**: 79 real
+  `financial_line_item` rows with `side='cost', cost_status=NULL` from an
+  older LLM extractor (`source='llm', extractor_version='llm-v1'`,
+  `doc_role` in estimate/expense/**invoice** — 68 of the 79 are invoices).
+  This predates the Phase 4/5 `cost_status` lifecycle entirely. **Binding
+  rule for any future green-sheet/aggregator: filter cost rows with an
+  explicit `cost_status IN ('quoted','committed','actual')` ALLOW-list, never
+  an exclusion pattern** (`cost_status != 'actual'` would wrongly pull in all
+  79 of these). Also: Phase 6's "actuals ingestion" isn't starting from a
+  blank page — an LLM invoice-extraction path already exists; whether to
+  unify with it or keep the deterministic PO-actuals path separate is an open
+  design question, not yet decided.
+
+Two guards added to `ai/purchase_order_award.py` as a result (owner-approved,
+scoped hardening only, no new feature surface):
+1. `award_purchase_order` now refuses to award a quote with zero
+   `FinancialLineItem` rows at `cost_status='quoted'` (raises
+   `PurchaseOrderAwardError` before creating anything) — prevents a PO +
+   `ContractObligation` recording real dollars with nothing backing them in
+   the ledger.
+2. The commit-to-`committed` UPDATE is now scoped to `cost_status='quoted'`
+   rows only (was: every row linked via `subcontractor_quote_id`,
+   unconditionally). Defense-in-depth — no path today produces a
+   quote-linked row in any other state, but a future one can no longer be
+   silently overwritten by an award.
+2 new tests (`test_zero_quoted_lines_refused`,
+`test_only_quoted_status_lines_are_committed`) + the existing DB-uniqueness
+test reworked to bypass both guards deliberately (proving the DB constraint
+is still a real backstop, not just a duplicate of the application guard).
+Full suite 1616. Real-DB verification re-run after the change — identical
+clean result to the original Phase 5 verification, confirming the guards
+don't affect the correct happy path.
+Not fixed (still recorded, not urgent): the idempotent-delete scope in
+`subcontractor_quote_ingest.py` (Phase 4 known gap); `ContractObligation` has
+no FK to `PurchaseOrder` (link lives in `source_meta_json` only); PO
+numbering (`_next_po_number`) is a read-then-increment, not
+concurrency-safe.
+
 **Phase 6 — BudgetSnapshot + green-sheet report + variance view**
 BudgetSnapshot model; green sheet report fn in `ai/`; variable-cost tolerance flags
 wired into ledger-health. Tests. Commit. Demo: owner sees real-vs-quoted on pilot.

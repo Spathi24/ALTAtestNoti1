@@ -280,19 +280,58 @@ class TestGuards:
             award_purchase_order(s, quote)
 
     def test_duplicate_po_for_same_quote_rejected_at_db_level(self):
-        """Even bypassing the status guard, the unique constraint on
-        subcontractor_quote_id prevents a second PO for the same quote."""
+        """Even bypassing BOTH application guards (status + zero-quoted-lines),
+        the unique constraint on subcontractor_quote_id is a real backstop for
+        a second PO against the same quote."""
         engine = _make_engine()
         s = _make_session(engine)
         project, pkg, vendor = _project_pkg_vendor(s)
-        quote, _ = _selected_quote_with_lines(s, project, pkg, vendor)
+        quote, items = _selected_quote_with_lines(s, project, pkg, vendor)
         award_purchase_order(s, quote)
         s.commit()
-        quote.status = "selected"  # force back so the ValueError guard doesn't fire first
+        quote.status = "selected"  # bypass guard #1 (status)
+        items[0].cost_status = "quoted"  # bypass guard #2 (zero quoted lines)
         s.flush()
         with pytest.raises(IntegrityError):
             award_purchase_order(s, quote)
             s.commit()
+
+    def test_zero_quoted_lines_refused(self):
+        """A quote with no cost_status='quoted' rows (e.g. ingestion silently
+        produced none) must not become a PO/obligation backed by nothing."""
+        engine = _make_engine()
+        s = _make_session(engine)
+        project, pkg, vendor = _project_pkg_vendor(s)
+        quote = SubcontractorQuote(
+            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
+            package_id=pkg.canonical_id, vendor_id=vendor.canonical_id,
+            division_code="22", status="selected", amount=6800, currency="CAD",
+            source="grid",
+        )
+        s.add(quote)
+        s.flush()
+        with pytest.raises(PurchaseOrderAwardError, match="no FinancialLineItem rows"):
+            award_purchase_order(s, quote)
+        assert s.query(PurchaseOrder).count() == 0
+        assert s.query(ContractObligation).count() == 0
+
+    def test_only_quoted_status_lines_are_committed(self):
+        """If a quote-linked row is somehow already in a non-'quoted' state, the
+        award must not silently flip it -- it commits only cost_status='quoted'
+        rows and reports the narrower count."""
+        engine = _make_engine()
+        s = _make_session(engine)
+        project, pkg, vendor = _project_pkg_vendor(s)
+        quote, items = _selected_quote_with_lines(s, project, pkg, vendor)
+        items[0].cost_status = "actual"  # simulate a row already past commitment
+        s.flush()
+
+        res = award_purchase_order(s, quote)
+        s.commit()
+
+        assert res.lines_committed == 5  # not 6 -- the 'actual' row was left alone
+        refreshed = s.query(FinancialLineItem).filter_by(canonical_id=items[0].canonical_id).one()
+        assert refreshed.cost_status == "actual"  # untouched, not overwritten
 
 
 # ---------------------------------------------------------------------------
