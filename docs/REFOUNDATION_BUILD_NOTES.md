@@ -478,6 +478,60 @@ not something that happens to occur when the data happens to surprise you.
 
 Suite after this pass: 1648.
 
+**Second review pass 2026-07-02: the circularity gap reframed, and a UI census.**
+
+**Reframe: "no independent second real data point" and "Phase 5 design item #3
+(filename/vendor/package auto-resolution)" are the SAME gap, not two.** Raw/
+legacy data is genuinely abundant and was never the problem — Home Depot has
+190 real transactions across 6 projects, `llm-v1` `FinancialLineItem` rows
+exist on 6+ real projects, Drive sync and evidence spans are real and
+queryable (all confirmed directly earlier in this doc). What's actually
+missing is narrower and was already named: the SOW→Package→Quote→PO chain
+has **no automated path from a Drive document to a structured row** — every
+call into `subcontractor_quote_ingest.py` requires the caller to already
+know `project_id`/`package_id`/`vendor_id` (Phase 5 design item #3, recorded
+at the time, not connected to the circularity problem until now). The parser
+itself is real and deterministic; the missing piece is the step that looks
+at a new file and figures out which project/package/vendor it belongs to, so
+the ingester can be called at all — nobody has run this pipeline against a
+second real project's real documents, only the mock file, on Rockland.
+**Closing item #3 and fixing the circularity gap are the same task**: once
+auto-resolution exists, running it against any second project's real Drive
+documents gives an independent, non-mock data point for free — no separate
+"go find real data" effort needed. This is now the named next real-data
+milestone, on the board alongside (not necessarily after) Phase 7 UI — not
+yet started, no code written for it in this pass.
+
+**UI census (requested before any UI code, not a fix):** the app is
+**FastAPI** (correcting a factual slip in the review that called it Flask —
+does not change the underlying recommendation). Checked `features.py` and
+route-level gating in `web/routes/projects.py` rather than reading every
+template blind — the project already did this triage in an earlier session
+via feature flags (`DEFAULT_FEATURES`), so the answer was mostly already
+encoded, not something to rediscover from scratch:
+
+| Page | Gated by | Status |
+|---|---|---|
+| `/`, `/projects`, `/projects/{id}` | `core` | Demo spine |
+| `/projects/{id}/margins` | `finance_margins` (route itself unguarded) | Demo spine — the same `report_division_margins` fixed in the checkpoint pass above |
+| `/projects/{id}/ledger-health` | `ledger_health` (unguarded) | Demo spine |
+| `/projects/{id}/labour` | `_require_feature("labour_intake")` | Demo spine |
+| `/proposals*`, `/ask`, `/search`, `/db*`, `/doctor` | various, all default `True` | Demo spine |
+| `/projects/{id}/financials` | `_require_feature("finance_legacy")` — **404 when disabled (default)** | Quarantined |
+| `/projects/{id}/gantt` | `_require_feature("monday_gantt")` — **404 when disabled (default)** | Quarantined |
+
+Conclusion: the shell (FastAPI app factory, Jinja2 templates, the
+`features.py` gate pattern) is not what rotted — specific pages
+(`finance_legacy`, `monday_gantt`) were deliberately quarantined by an
+earlier session, not accidentally broken. `margins` and `ledger-health` are
+unguarded, pure-read, deterministic routes with passing test coverage
+(`test_web_margins.py`, 10 tests) — the exact same shape
+`report_green_sheet` already has. **A new green-sheet route can safely live
+in the same app**, behind its own new flag, following that proven shape,
+fully decoupled from the two quarantined pages — narrow scope without
+duplicate infrastructure. Not yet built in this pass; still waiting on an
+explicit go-ahead for both the auto-resolution work and the UI route.
+
 ---
 
 ## Phase 4 wiring map — existing mechanisms (READ BEFORE BUILDING)
