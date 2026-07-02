@@ -335,9 +335,59 @@ Confirmed by literally reverting the fix and re-running against the real DB:
 provably inert today and only changes behavior once a project actually mixes
 lifecycle stages. Full suite 1624.
 
-**Phase 6 — BudgetSnapshot + green-sheet report + variance view**
-BudgetSnapshot model; green sheet report fn in `ai/`; variable-cost tolerance flags
-wired into ledger-health. Tests. Commit. Demo: owner sees real-vs-quoted on pilot.
+**Phase 6 — BudgetSnapshot + green-sheet aggregator** ✓ COMPLETE 2026-07-02
+`BudgetSnapshot`(header) + `BudgetSnapshotLine`(per-division) in
+`db/models/finance.py`. IMMUTABLE by convention (no update code path; a
+re-baseline is a new snapshot with a new `label`, never an edit). New
+`ai/green_sheet.py::report_green_sheet(session, project_ref, snapshot_id=None)`
+— PURE READ, no LLM, no ledger mutation, no UI (owner-set scope boundary).
+Per division: `budget_amount`, `quoted_cost`, `committed_cost`, `actual_cost`,
+`unclassified_cost` — kept as **separate columns, never summed** — plus
+`variance = budget - (committed + actual)` (quoted deliberately excluded from
+variance: an unselected/unawarded quote is pipeline, not exposure). Reads the
+most-recent `BudgetSnapshot` by default; `snapshot_id` overrides.
+**Real-data-shape finding that changed the design before any code was
+committed:** the old "aggregate only `amount_type IN (material, labour)`"
+rule (written pre-Phase-4/5) does NOT apply here — checked the real DB first
+and found 78 of the 79 legacy `llm-v1` cost rows are `amount_type='total'`
+with no material/labour split; applying that filter would have silently
+zeroed real spend for every pre-Phase-4/5 project. The actual invariant it
+protects (never sum a division-total row against its own line items) is
+already satisfied structurally — `subcontractor_quote_ingest.py` only ever
+persists `kind="line_item"` cost rows, never `division_total`. So the
+aggregator sums all cost `amount_type`s per `cost_status` bucket, matching
+`report_division_margins`'s existing (now allow-list-correct) behavior —
+cross-checked directly: both reports agree exactly on a real project's
+`actual_cost` total (test + real-DB verification).
+19 tests: schema (fresh + migrated + duplicate-division-per-snapshot
+rejected), lifecycle stages never summed, NULL/`amount_type='total'`
+counted as actual, `estimated`/`unknown` flagged not dropped, variance
+excludes quoted, most-recent-snapshot default + explicit override,
+package/quote/selected-quote counts, no-mutation check, a cross-check against
+`report_division_margins` on identical synthetic data, and 2 tests against
+the real DB (actual-cost parity with margins on "1455 Rue St. Mathieu";
+Rockland's no-snapshot-yet case renders `None` everywhere, never fabricates).
+Full suite 1643.
+**Manually verified end-to-end on the REAL Rockland DB**, chaining Phases
+4→5→6 in one run: seeded a real `BudgetSnapshot` from the already-approved
+mock `BUDGET_v1.xlsx` (12 divisions, not fabricated), re-ran Phase 4's real
+parse + ingest of the mock Plumbing quote, awarded its PO (Phase 5), then ran
+the aggregator. Result: Plumbing (div 22) — `budget=$6800`,
+`committed=$6800`, `variance=$0`, exactly right; all 11 other divisions show
+full budget with `variance = budget` (no quoted/committed/actual anywhere
+else, correctly). `selected_quote_count=0` for Plumbing post-award (the quote
+correctly reads as `awarded`, not `selected`, once flipped by Phase 5) — the
+counts reflect live state, not stale. Rolled back, real DB unchanged.
+**New pre-existing gap found by this verification** (not caused by Phase 6,
+recorded not fixed): division `"1012"` (Fixtures, the SOW/template
+convention — see `NAMING_CONVENTIONS.md`, "`10-12` becomes `1012`") renders
+as "Unclassified" because `ai/financial_divisions.py`'s canonical vocab uses
+`"10-12"` (with a hyphen) for the same trade. A code-format mismatch between
+two parts of the codebase, not missing data — affects any report calling
+`division_by_code("1012")`, not just this one.
+Deliberately NOT built: variable-cost tolerance flags (Home Depot/hourly —
+still not unified into `FinancialLineItem`, see checkpoint above); any UI —
+that is its own explicit later gate per the owner's Phase 6 scope.
 
 ---
 

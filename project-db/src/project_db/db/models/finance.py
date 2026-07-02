@@ -466,6 +466,65 @@ class PurchaseOrder(Base, CanonicalMixin):
     )
 
 
+class BudgetSnapshot(Base, CanonicalMixin):
+    """One frozen budget baseline for a project (Phase 6).
+
+    IMMUTABLE by convention once created: no code path updates a snapshot's
+    lines after creation. A revised budget is a NEW `BudgetSnapshot` (new
+    `label`, e.g. "v2"), never an edit to an old one -- so "what did we think
+    this would cost in June" stays answerable after August's re-baseline. The
+    aggregator (`ai/green_sheet.py`) reads the MOST RECENT snapshot for a
+    project unless a specific one is requested.
+
+    Header/line split (mirrors `SowPackage`/`SowItem`): this row is the
+    snapshot event; `BudgetSnapshotLine` carries the per-division dollar
+    targets.
+    """
+
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=False,
+    )
+    label = Column(String, nullable=True)  # e.g. "v1", "baseline", "revised-2026-08"
+    snapshot_date = Column(Date, nullable=True)  # as-of date; None = created_at
+    source_meta_json = Column(Text, nullable=True)
+
+
+class BudgetSnapshotLine(Base, CanonicalMixin):
+    """One division's frozen budget target within a `BudgetSnapshot`.
+
+    `budget_amount` is the INTERNAL cost target (Alta's own expected cost --
+    "Alta costs" in the owner's words), never a client-facing number.
+    `line_markup_factor` is metadata only, applied at report/render time to
+    compute a client price -- never stored as an inflated amount here, same
+    rule as `FinancialLineItem.line_markup_factor`.
+    """
+
+    snapshot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_snapshot.canonical_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.canonical_id"),
+        nullable=False,
+    )
+
+    division_code = Column(String, nullable=False, default="99")
+    division_name = Column(String, nullable=True)
+    budget_amount = Column(Numeric(14, 2), nullable=True)
+    line_markup_factor = Column(Float, nullable=True)
+    source_meta_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "division_code", name="uq_budget_snapshot_line_division"
+        ),
+    )
+
+
 class DocumentFinancialStatus(Base):
     """A human's decision: does this document's money COUNT toward the
     confirmed total, or is it a quote they didn't go with?

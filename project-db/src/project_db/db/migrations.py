@@ -551,6 +551,49 @@ SQLITE_PURCHASE_ORDER_INDEXES = (
     "ON purchase_order (package_id)",
 )
 
+# Phase 6: BudgetSnapshot (header) before BudgetSnapshotLine (FK order).
+SQLITE_BUDGET_SNAPSHOT_DDL = """
+CREATE TABLE budget_snapshot (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT NOT NULL,
+    label VARCHAR,
+    snapshot_date DATE,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id)
+)
+"""
+
+SQLITE_BUDGET_SNAPSHOT_LINE_DDL = """
+CREATE TABLE budget_snapshot_line (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    snapshot_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    division_code VARCHAR NOT NULL DEFAULT '99',
+    division_name VARCHAR,
+    budget_amount NUMERIC(14, 2),
+    line_markup_factor FLOAT,
+    source_meta_json TEXT,
+    FOREIGN KEY (snapshot_id) REFERENCES budget_snapshot(canonical_id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    CONSTRAINT uq_budget_snapshot_line_division UNIQUE (snapshot_id, division_code)
+)
+"""
+
+SQLITE_BUDGET_SNAPSHOT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_project_id "
+    "ON budget_snapshot (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_line_snapshot_id "
+    "ON budget_snapshot_line (snapshot_id)",
+    "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_line_project_id "
+    "ON budget_snapshot_line (project_id)",
+)
+
 # Columns added to worker after initial DDL (role/tags/verified for PM categorization).
 SQLITE_WORKER_COLUMNS: dict[str, str] = {
     "role": "VARCHAR",
@@ -1118,4 +1161,11 @@ def ensure_sqlite_schema(engine) -> None:
         # Phase 5: purchase orders (after subcontractor_quote + vendor + project).
         _create_table_if_missing(conn, tables, "purchase_order", SQLITE_PURCHASE_ORDER_DDL)
         for _idx_ddl in SQLITE_PURCHASE_ORDER_INDEXES:
+            conn.execute(text(_idx_ddl))
+        # Phase 6: budget snapshots -- header before lines (FK order).
+        _create_table_if_missing(conn, tables, "budget_snapshot", SQLITE_BUDGET_SNAPSHOT_DDL)
+        _create_table_if_missing(
+            conn, tables, "budget_snapshot_line", SQLITE_BUDGET_SNAPSHOT_LINE_DDL
+        )
+        for _idx_ddl in SQLITE_BUDGET_SNAPSHOT_INDEXES:
             conn.execute(text(_idx_ddl))
