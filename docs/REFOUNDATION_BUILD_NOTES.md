@@ -389,6 +389,95 @@ Deliberately NOT built: variable-cost tolerance flags (Home Depot/hourly —
 still not unified into `FinancialLineItem`, see checkpoint above); any UI —
 that is its own explicit later gate per the owner's Phase 6 scope.
 
+**Owner review 2026-07-02 (post-Phase-6): a real bug found, a real test
+flakiness found, a real second live-report instance of the `1012` gap found,
+and the circularity of the first verification correctly called out.**
+
+**1. `quoted_cost` was summing every competing bid, not the selected one —
+fixed.** Confirmed: `subcontractor_quote_ingest.py` writes
+`cost_status="quoted"` unconditionally for EVERY ingested quote document,
+regardless of that quote's own `status` (pending/recommended/selected/
+rejected). `report_green_sheet`'s original pivot summed all
+`cost_status="quoted"` rows per division with no regard for which quote they
+belonged to — so three competing bids for one package would have summed to
+"the sum of everyone's asking price," not "what we expect to pay." Fixed by
+joining cost rows to their `SubcontractorQuote.status`:
+- `quoted_cost` = the SELECTED quote's rows only.
+- new `pending_bids_cost` = competing (pending/recommended) bids, kept fully
+  separate, never summed with `quoted_cost`.
+- new `rejected_bid_count` = a count only, no dollar figure (a rejected
+  bid's price is dead information; showing it as a $ amount risks being read
+  as live exposure).
+- A `cost_status="quoted"` row with no resolvable quote link, or linked to a
+  quote already `"awarded"` (an inconsistency — that row should have flipped
+  to `"committed"`), is flagged into `unclassified_cost` rather than guessed.
+`variance` is unaffected (still `budget - (committed + actual)`; quoted and
+pending bids were already correctly excluded from it). 5 new tests
+(`TestCompetingBids`): 3 bids one selected, rejected-shows-count-only,
+no-selection-yet, unlinked-row-flagged, awarded-quote-inconsistency-flagged.
+
+**2. A real, reproducible test flakiness found and fixed in the same pass.**
+`report_green_sheet`'s "most recent snapshot" query had no tiebreaker beyond
+`created_at DESC`. Reproduced directly: two `BudgetSnapshot` inserts on a
+fast machine can land on the exact same microsecond
+(`datetime.utcnow()` resolution), making "most recent" nondeterministic on a
+tie — `test_most_recent_snapshot_used_by_default` failed ~40-60% of runs.
+Fixed with a secondary `canonical_id DESC` tiebreak (deterministic, though
+not meaningfully "more recent" in a genuine tie — the two are
+indistinguishable in time anyway) and fixed the test to pass explicit,
+guaranteed-distinct `created_at` values instead of relying on real wall-clock
+timing between two flushes. Confirmed clean across 5 consecutive full runs
+after the fix.
+
+**3. Division-code blast-radius census (a survey, not a fix, per request).**
+Every call site resolving a division code against the CSI vocab:
+- `division_by_code()` — STRICT lookup, no fallback. Callers:
+  `ai/green_sheet.py` (found last turn) and **`ai/views.py::
+  report_division_margins` — a SECOND, previously-unidentified live instance
+  of the exact same bug.** `report_division_margins` is wired to
+  `/projects/{id}/margins`, a CLI command, and the askbot's
+  `REPORT_REGISTRY` — it has been silently rendering "Unclassified" for any
+  Fixtures-division (`"1012"`) cost row this whole time, for any project, and
+  nobody would have known without this census.
+- `classify_division()` — has a keyword-matching FALLBACK when the exact
+  hint code fails, so lower risk. Callers: `ai/extras_grid.py`,
+  `ai/financial_grid.py`.
+- `ai/financial_llm_extractor.py` uses `division_by_code()` first but
+  explicitly falls back to `classify_division()` when the strict lookup
+  returns `99` — also lower risk.
+Not fixed. The blast radius is now mapped (2 confirmed no-fallback sites);
+reconciling `"1012"` vs `"10-12"` — either fix the SOW/template convention or
+extend `financial_divisions.py`'s lookup to accept both — is real work for
+whoever picks this up, not squeezed into this pass.
+
+**4. The Rockland end-to-end verification is circular — acknowledged, not
+disputed.** Budget seeded from `BUDGET_v1.xlsx`, quote also derived from the
+same mock generation script — a match to the penny is closer to expected by
+construction than proof the numbers are trustworthy on a real job. It proves
+the PIPE doesn't leak (Phase 4→5→6 hand off state correctly), not that real
+budget and real quote data reconcile sensibly. Checked for an independent
+second real data point: **none exists anywhere in this repo yet** — queried
+directly, only Rockland has any Phase 3+ structured data (`sow_package`/
+`sow_item`), and no project has real `subcontractor_quote`/`purchase_order`/
+`budget_snapshot` rows. As a partial substitute, ran a supplementary
+verification with a DELIBERATELY MISMATCHED budget ($9500, not derived from
+`BUDGET_v1.xlsx`) against the same $6800 quote: `variance = 9500 - 6800 =
+2700` rendered correctly. This proves the arithmetic handles the ordinary
+non-matching case, but it is still synthetic, not an independently-sourced
+real data point — that genuinely doesn't exist yet and can't be manufactured
+as if it did. A second verification pass belongs here once real owner-
+provided budget and quote data exist for any project.
+
+**5. Standing practice, named explicitly (not a one-off):** check the real
+data shape BEFORE writing aggregation logic, every time, for every future
+report/aggregator. This is now 2-for-2 catching a real bug specifically
+because real row shapes were checked before trusting an earlier planning
+assumption (the 79-row NULL/`llm-v1` discovery in the checkpoint, then the
+`amount_type='total'` discovery in this phase). Treat it as a required step,
+not something that happens to occur when the data happens to surprise you.
+
+Suite after this pass: 1648.
+
 ---
 
 ## Phase 4 wiring map — existing mechanisms (READ BEFORE BUILDING)

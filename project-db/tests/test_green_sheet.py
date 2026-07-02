@@ -63,19 +63,32 @@ def _project(session, *, name="923-927 Rockland", code="2026001"):
     return project
 
 
-def _cost_row(session, project, *, division_code, amount, cost_status, amount_type="material", document_id=None):
+def _cost_row(session, project, *, division_code, amount, cost_status, amount_type="material",
+               document_id=None, subcontractor_quote_id=None):
     row = FinancialLineItem(
         canonical_id=uuid.uuid4(), project_id=project.canonical_id, document_id=document_id,
         division_code=division_code, side="cost", amount_type=amount_type,
         status="unknown", cost_status=cost_status, amount=Decimal(str(amount)), currency="CAD",
-        source="grid",
+        source="grid", subcontractor_quote_id=subcontractor_quote_id,
     )
     session.add(row)
     return row
 
 
-def _budget_snapshot(session, project, *, label="v1", lines):
+def _quote(session, project, *, division_code, status, amount=0):
+    q = SubcontractorQuote(
+        canonical_id=uuid.uuid4(), project_id=project.canonical_id,
+        division_code=division_code, status=status, amount=Decimal(str(amount)), currency="CAD",
+    )
+    session.add(q)
+    session.flush()
+    return q
+
+
+def _budget_snapshot(session, project, *, label="v1", lines, created_at=None):
     snap = BudgetSnapshot(canonical_id=uuid.uuid4(), project_id=project.canonical_id, label=label)
+    if created_at is not None:
+        snap.created_at = created_at
     session.add(snap)
     session.flush()
     for div_code, amount in lines.items():
@@ -160,7 +173,9 @@ class TestAggregation:
         engine = _make_engine()
         s = _make_session(engine)
         project = _project(s)
-        _cost_row(s, project, division_code="22", amount=800, cost_status="quoted")
+        selected = _quote(s, project, division_code="22", status="selected")
+        _cost_row(s, project, division_code="22", amount=800, cost_status="quoted",
+                   subcontractor_quote_id=selected.canonical_id)
         _cost_row(s, project, division_code="22", amount=500, cost_status="committed")
         _cost_row(s, project, division_code="22", amount=300, cost_status="actual")
         s.flush()
@@ -221,13 +236,16 @@ class TestAggregation:
         s = _make_session(engine)
         project = _project(s)
         _budget_snapshot(s, project, lines={"22": 10000})
-        _cost_row(s, project, division_code="22", amount=8000, cost_status="quoted")
+        selected = _quote(s, project, division_code="22", status="selected")
+        _cost_row(s, project, division_code="22", amount=8000, cost_status="quoted",
+                   subcontractor_quote_id=selected.canonical_id)
         _cost_row(s, project, division_code="22", amount=1000, cost_status="committed")
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
         row = result["divisions"][0]
         assert row["budget_amount"] == pytest.approx(10000.0)
+        assert row["quoted_cost"] == pytest.approx(8000.0)  # confirms it landed in the right bucket
         assert row["variance"] == pytest.approx(9000.0)  # 10000 - 1000, quoted excluded
 
     def test_no_budget_snapshot_leaves_budget_none(self):
@@ -243,12 +261,23 @@ class TestAggregation:
         assert row["variance"] is None  # can't compute variance without a budget
 
     def test_most_recent_snapshot_used_by_default(self):
+        """Explicit, guaranteed-distinct created_at -- NOT relying on real
+        wall-clock timing between two flushes, which can tie on the exact
+        same microsecond on a fast machine (reproduced directly; this test
+        was flaky for that reason before the fix)."""
+        from datetime import datetime
+
         engine = _make_engine()
         s = _make_session(engine)
         project = _project(s)
-        _budget_snapshot(s, project, label="v1", lines={"22": 5000})
-        s.flush()
-        snap2 = _budget_snapshot(s, project, label="v2", lines={"22": 7500})
+        _budget_snapshot(
+            s, project, label="v1", lines={"22": 5000},
+            created_at=datetime(2026, 1, 1),
+        )
+        snap2 = _budget_snapshot(
+            s, project, label="v2", lines={"22": 7500},
+            created_at=datetime(2026, 6, 1),
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -328,6 +357,114 @@ class TestAggregation:
 
         after = s.query(FinancialLineItem).count()
         assert after == before
+
+
+# ---------------------------------------------------------------------------
+# Competing bids: the exact bug the owner flagged. Ingestion writes
+# cost_status="quoted" unconditionally for EVERY ingested quote document,
+# regardless of that quote's own status -- so a naive sum over cost_status
+# alone would silently add up every competing bid as if it were expected
+# spend. quoted_cost must reflect the SELECTED quote only.
+# ---------------------------------------------------------------------------
+
+class TestCompetingBids:
+    def test_three_bids_one_selected_quoted_cost_is_selected_only(self):
+        """The exact scenario: 3 subs quote the same package. Only the
+        selected one's amount may appear in quoted_cost."""
+        engine = _make_engine()
+        s = _make_session(engine)
+        project = _project(s)
+        q_a = _quote(s, project, division_code="22", status="pending", amount=9000)
+        q_b = _quote(s, project, division_code="22", status="selected", amount=6800)
+        q_c = _quote(s, project, division_code="22", status="recommended", amount=7500)
+        _cost_row(s, project, division_code="22", amount=9000, cost_status="quoted",
+                   subcontractor_quote_id=q_a.canonical_id)
+        _cost_row(s, project, division_code="22", amount=6800, cost_status="quoted",
+                   subcontractor_quote_id=q_b.canonical_id)
+        _cost_row(s, project, division_code="22", amount=7500, cost_status="quoted",
+                   subcontractor_quote_id=q_c.canonical_id)
+        s.flush()
+
+        result = report_green_sheet(s, "923-927 Rockland")
+        row = result["divisions"][0]
+        assert row["quoted_cost"] == pytest.approx(6800.0)  # NOT 9000+6800+7500=23300
+        assert row["pending_bids_cost"] == pytest.approx(9000.0 + 7500.0)
+        assert row["quote_count"] == 3
+        assert row["selected_quote_count"] == 1
+        assert any("excluded from quoted_cost" in w for w in row["warnings"])
+
+    def test_rejected_bid_shown_as_count_only_no_dollar_figure(self):
+        engine = _make_engine()
+        s = _make_session(engine)
+        project = _project(s)
+        q_rejected = _quote(s, project, division_code="22", status="rejected", amount=15000)
+        _cost_row(s, project, division_code="22", amount=15000, cost_status="quoted",
+                   subcontractor_quote_id=q_rejected.canonical_id)
+        s.flush()
+
+        result = report_green_sheet(s, "923-927 Rockland")
+        row = result["divisions"][0]
+        assert row["quoted_cost"] is None
+        assert row["pending_bids_cost"] is None
+        assert row["unclassified_cost"] is None
+        assert row["rejected_bid_count"] == 1
+        # The 15000 must not surface as a dollar figure anywhere.
+        assert 15000.0 not in (row["quoted_cost"], row["pending_bids_cost"], row["actual_cost"])
+
+    def test_no_selected_quote_yet_quoted_cost_is_none_pending_holds_everything(self):
+        """Before anyone has selected a quote, quoted_cost must be None (not
+        0, not the sum of bids) -- there's no expected-spend figure yet."""
+        engine = _make_engine()
+        s = _make_session(engine)
+        project = _project(s)
+        q_a = _quote(s, project, division_code="22", status="pending", amount=9000)
+        q_b = _quote(s, project, division_code="22", status="recommended", amount=8500)
+        _cost_row(s, project, division_code="22", amount=9000, cost_status="quoted",
+                   subcontractor_quote_id=q_a.canonical_id)
+        _cost_row(s, project, division_code="22", amount=8500, cost_status="quoted",
+                   subcontractor_quote_id=q_b.canonical_id)
+        s.flush()
+
+        result = report_green_sheet(s, "923-927 Rockland")
+        row = result["divisions"][0]
+        assert row["quoted_cost"] is None
+        assert row["pending_bids_cost"] == pytest.approx(17500.0)
+
+    def test_quoted_row_with_no_linked_quote_flagged_unclassified(self):
+        """Defensive case: a cost_status='quoted' row with no resolvable
+        subcontractor_quote_id must be flagged, not guessed into a bucket."""
+        engine = _make_engine()
+        s = _make_session(engine)
+        project = _project(s)
+        _cost_row(s, project, division_code="22", amount=400, cost_status="quoted",
+                   subcontractor_quote_id=None)
+        s.flush()
+
+        result = report_green_sheet(s, "923-927 Rockland")
+        row = result["divisions"][0]
+        assert row["quoted_cost"] is None
+        assert row["unclassified_cost"] == pytest.approx(400.0)
+        assert any("unclassified" in w for w in row["warnings"])
+
+    def test_quoted_row_linked_to_already_awarded_quote_flagged_not_guessed(self):
+        """Defensive case: a row still cost_status='quoted' whose linked quote
+        is already 'awarded' is an inconsistency (PO award should have
+        flipped it to 'committed') -- flag it, don't silently count it as
+        quoted OR committed."""
+        engine = _make_engine()
+        s = _make_session(engine)
+        project = _project(s)
+        q_awarded = _quote(s, project, division_code="22", status="awarded", amount=6800)
+        _cost_row(s, project, division_code="22", amount=6800, cost_status="quoted",
+                   subcontractor_quote_id=q_awarded.canonical_id)
+        s.flush()
+
+        result = report_green_sheet(s, "923-927 Rockland")
+        row = result["divisions"][0]
+        assert row["quoted_cost"] is None
+        assert row["committed_cost"] is None
+        assert row["unclassified_cost"] == pytest.approx(6800.0)
+        assert any("unclassified" in w for w in row["warnings"])
 
 
 # ---------------------------------------------------------------------------
