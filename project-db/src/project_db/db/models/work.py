@@ -42,7 +42,14 @@ class TaskStatus(str, enum.Enum):
 
 class Project(Base, CanonicalMixin):
     name = Column(String, nullable=False)
+    # code = YYYYNNN operational project code (e.g. "2026001"). This IS the project_code.
+    # Unique when set; NULLs are not constrained (legacy projects without a code).
+    # Enforced by partial unique index in migrations: ix_project_code_unique.
     code = Column(String, nullable=True)
+    # Phase 2 identity columns (additive — existing canonical_id/name unchanged).
+    display_name = Column(String, nullable=True)       # e.g. "2026001 — Rockland"
+    legacy_job_number = Column(String, nullable=True)  # e.g. "923" (pre-SOP label)
+    aliases = Column(Text, nullable=True)              # JSON array of lookup strings
     status = Column(SAEnum(ProjectStatus), nullable=False, default=ProjectStatus.PROPOSED)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)

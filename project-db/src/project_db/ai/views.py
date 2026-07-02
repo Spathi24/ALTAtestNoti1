@@ -72,10 +72,14 @@ def _ser(value: Any) -> Any:
 
 
 def _resolve_project(session: Session, ref: str) -> Project | None:
-    """Resolve a project reference (UUID string OR a name substring) to a Project.
+    """Resolve a project reference to a Project.
 
-    Used by every per-project report so callers can be flexible about whether
-    they pass an exact canonical_id or a friendly name fragment.
+    Accepts (in priority order):
+      1. UUID canonical_id string
+      2. Exact project code match  (e.g. "2026001")
+      3. Legacy job number match   (e.g. "923")
+      4. Alias match               (JSON array contains the ref, case-insensitive)
+      5. Substring match on name
     """
     if not ref:
         return None
@@ -84,7 +88,29 @@ def _resolve_project(session: Session, ref: str) -> Project | None:
         return session.query(Project).filter_by(canonical_id=cid).one_or_none()
     except (ValueError, AttributeError):
         pass
-    # Substring match on name (case-insensitive)
+    # Exact code match (YYYYNNN)
+    hit = session.query(Project).filter(Project.code == ref).one_or_none()
+    if hit:
+        return hit
+    # Legacy job number (numeric string, e.g. "923")
+    if hasattr(Project, "legacy_job_number"):
+        hit = (
+            session.query(Project)
+            .filter(Project.legacy_job_number == ref)
+            .one_or_none()
+        )
+        if hit:
+            return hit
+    # Aliases (JSON array — SQLite json_each or LIKE scan)
+    if hasattr(Project, "aliases"):
+        hit = (
+            session.query(Project)
+            .filter(Project.aliases.ilike(f'%"{ref}"%'))
+            .first()
+        )
+        if hit:
+            return hit
+    # Substring match on name (case-insensitive) — broadest, last resort
     return session.query(Project).filter(Project.name.ilike(f"%{ref}%")).first()
 
 

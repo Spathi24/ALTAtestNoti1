@@ -8,9 +8,62 @@ code — nothing here is built yet, by design (the working practices / SOP conve
 come before heavy implementation).
 
 > Status 2026-06-26: evidence refactor Slices 1–8 COMPLETE, parser capped.
-> **§12 conventions SETTLED 2026-06-30.** Build phases below. Follow in order; do not
-> start the next phase until the current one is committed, lint-green, and (for Phase 1)
-> owner-approved. One slice per prompt. Build freeze holds through Phase 1.
+> **§12 conventions SETTLED 2026-06-30. Phase 1 mock Drive COMPLETE + owner-approved 2026-07-02.**
+> Build phases below. Follow in order. One slice per prompt.
+
+---
+
+## Permanent semantic rules (do not violate in any phase)
+
+These are not preferences — they are correctness invariants. Getting them wrong
+destroys trust in the financial output.
+
+**1. cost_status lifecycle (the most important rule):**
+```
+QUOTE file ingested                → FinancialLineItem.cost_status = "quoted"
+Quote marked selected (human)      → SubcontractorQuote.status = "selected"
+                                     FinancialLineItem.cost_status stays "quoted"
+PO issued / awarded                → FinancialLineItem.cost_status = "committed"
+                                     ContractObligation emitted
+Invoice / receipt posted           → FinancialLineItem.cost_status = "actual"
+```
+Selected quote = *intent*. PO = *legal/financial commitment*. Never skip this chain.
+
+**2. Division-total rows are control rows, not aggregatable cost rows:**
+`division_total` rows (amount_type="total") are stored in FinancialLineItem but routed
+to a separate "total" bucket in views.py — NEVER summed with material/labour amounts.
+This is already correct in code. Any new aggregation (BudgetSnapshot, green-sheet report,
+variance view) must apply the same filter: aggregate ONLY `amount_type IN ("material",
+"labour")` for actual money; use "total" rows only as cross-checks/reconciliation.
+Storing both section totals and line items is intentional; the filter is the guard.
+
+**3. Project.code IS the project_code — no separate column needed:**
+`Project.code` already exists (nullable String). Populate it with YYYYNNN values.
+Do NOT add a column named `project_code` — that would be a redundant rename.
+The model reviewer's "project_code" = the existing `code` field.
+
+**4. Phase 2 does NOT solve Drive attribution:**
+Attribution remains folder-ancestry-based (ExternalId `folder:{folder_id}`) until
+filename-first routing is explicitly implemented. After Phase 2, the statement
+"project attribution is reliable" is STILL FALSE for files with ambiguous folder paths.
+Only after filename/code extraction is wired into the Drive connector will it be true.
+
+**5. Markup is presentation-layer, never storage-layer:**
+`FinancialLineItem.amount` = internal cost only. `line_markup_factor` and the global
+1.15 are applied at report-render time for client-facing outputs. Never store
+already-inflated amounts as ledger values.
+
+**6. SOW_Item_Ref must be a structural column, not a Notes substring:**
+Quote_Lines needs a `SOW_Item_Ref` column (to be added in Phase 3 template regeneration).
+`Notes` containing "per SOW-025" is human-readable, not a machine join key. The
+`sow_item_id` FK on FinancialLineItem must be set from a proper column, not NLP parsing.
+
+**7. GreenSheet is a computed report, never a table:**
+No `GreenSheet` or `GreenSheetLine` model. The green-sheet is a view/report function
+that queries BudgetSnapshot, SubcontractorQuote, PurchaseOrder, ContractObligation, and
+FinancialLineItem with the correct `cost_status` and `amount_type` filters.
+
+---
 
 ---
 
@@ -30,10 +83,15 @@ plumbing QUOTE to `_selected` (was inconsistent with its `awarded` PO); fixed Gr
 plumbing status to `awarded` to match; documented Quote_Lines control rows (section-total
 + Pre-Tax Total) explicitly in each file's Parser_Contract Notes.
 
-**Phase 2 — Project code migration** (additive, no rename of existing id/hash)
-Extend `db/models/work.py` Project + `_add_missing_columns`:
-+project_code (YYYYNNN, unique) +display_name +legacy_job_number +aliases (JSON).
-Assign 2026001 to 923-927 Rockland. Tests. Commit.
+**Phase 2 — Project code migration** (additive, no rename of existing id/hash) ← **CURRENT**
+`Project.code` already exists (nullable String). Phase 2 POPULATES it with YYYYNNN format.
+Do NOT add a column named `project_code` — `code` IS the project code.
+New columns only: +display_name +legacy_job_number +aliases (JSON Text).
+Wire via `_add_missing_columns` for "project" table. Add partial unique index on code.
+Extend `_resolve_project` in views.py: match by code exact + aliases JSON-contains.
+Assign code='2026001', display_name='2026001 — Rockland', legacy_job_number='923',
+aliases='["Rockland","Tanya","923 Rockland","923-927 Rockland"]' to pilot project
+(query by name, never by hardcoded UUID). Tests. Manual DB verify. Commit.
 
 **Phase 3 — SowItem + SowPackage models**
 New `db/models/sow.py`. Migration in FK order (SowPackage before SowItem). Tests. Commit.

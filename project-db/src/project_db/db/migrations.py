@@ -409,6 +409,14 @@ SQLITE_WORKER_COLUMNS: dict[str, str] = {
     "verified": "BOOLEAN NOT NULL DEFAULT 0",
 }
 
+# Phase 2 identity columns on project (display_name, legacy_job_number, aliases).
+# `code` already exists as a nullable VARCHAR from the initial DDL (used by QuickBooks).
+SQLITE_PROJECT_COLUMNS: dict[str, str] = {
+    "display_name": "VARCHAR",
+    "legacy_job_number": "VARCHAR",
+    "aliases": "TEXT",
+}
+
 
 SQLITE_TASK_DEPENDENCY_DDL = """
 CREATE TABLE task_dependency (
@@ -935,4 +943,15 @@ def ensure_sqlite_schema(engine) -> None:
                 inspector,
                 "roadmap_task",
                 SQLITE_ROADMAP_TASK_COLUMNS,
+            )
+        # Phase 2: project identity columns + partial unique index on code.
+        if "project" in tables:
+            _add_missing_columns(
+                conn, inspector, "project", SQLITE_PROJECT_COLUMNS
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_project_code_unique "
+                    "ON project (code) WHERE code IS NOT NULL"
+                )
             )
