@@ -245,6 +245,23 @@ Full entity→repo map: docs/REFOUNDATION_BUILD_NOTES.md.
   - Next action: once `EvidenceSpan` exists and parsers populate it, reconciliation can
     consume evidence spans instead of flat bundles (later slice).
 
+- [ ] Cleanup (post-pilot, NOT now): every non-Rockland `Project.code` still
+  holds a stale `MONDAY-BOARD-<id>` string written before the 2026-07-02 fix
+  (`connectors/monday/connector.py` no longer writes `code`, but the fix is
+  not retroactive).
+  - Evidence: only Rockland (`923-927 Rockland`) was manually re-seeded with
+    `code='2026001'`; every other project synced from Monday still carries
+    its old board-id placeholder in `code`.
+  - Why not now: the partial unique index (`ix_project_code_unique`) doesn't
+    collide on these (each board id is distinct), and only Rockland matters
+    for the pilot gate. Not blocking.
+  - Next action (post-pilot only, verify no connector still reads these
+    strings as identity first — external board identity lives in
+    `ExternalId`, not `Project.code`):
+    ```sql
+    UPDATE project SET code = NULL WHERE code LIKE 'MONDAY-BOARD-%';
+    ```
+
 ## Architectural Decisions
 
 - Decision: Target architecture is `Document -> DocumentParse -> EvidenceSpan -> existing
@@ -282,6 +299,20 @@ Full entity→repo map: docs/REFOUNDATION_BUILD_NOTES.md.
     `gpt-4o` misses subtle cross-doc patterns; `gpt-4.1` got all of them right.
   - Consequence: drains more credits; acceptable given correctness is the priority. NOT
     applied in slice 1 (slice 1 touches no extraction logic).
+
+- Decision: `Project.code` IS the implementation of the refoundation plan's
+  `project_code` concept (YYYYNNN human job code). No second `project_code`
+  column will be added.
+  - Date: 2026-07-02
+  - Reason: `docs/MEETING_SYNTHESIS_financial_refoundation.md` names the field
+    `project_code`; the repo already had `Project.code` (nullable String,
+    pre-dating Phase 2, previously abused by the Monday connector as a
+    board-id placeholder). Adding a second column would be a redundant rename
+    and a naming-drift risk ("architecture rot" per owner review of Phase 2).
+  - Consequence: every phase from Phase 2 onward reads/writes `Project.code`
+    for "the operational project code" — resolver, QuickBooks matching,
+    Phase 5 PO numbering, reports, future UI routes. Full rule + rationale in
+    `docs/REFOUNDATION_BUILD_NOTES.md` rule #3 (LOCKED).
 
 ## Current Plan
 

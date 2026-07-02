@@ -37,10 +37,26 @@ variance view) must apply the same filter: aggregate ONLY `amount_type IN ("mate
 "labour")` for actual money; use "total" rows only as cross-checks/reconciliation.
 Storing both section totals and line items is intentional; the filter is the guard.
 
-**3. Project.code IS the project_code — no separate column needed:**
-`Project.code` already exists (nullable String). Populate it with YYYYNNN values.
-Do NOT add a column named `project_code` — that would be a redundant rename.
-The model reviewer's "project_code" = the existing `code` field.
+**3. Project.code IS the project_code — no separate column needed (LOCKED 2026-07-02):**
+`docs/MEETING_SYNTHESIS_financial_refoundation.md` names the settled concept
+`project_code` (format `YYYYNNN`). The implementation field for that concept is
+the existing `Project.code` column (nullable String, already present before
+Phase 2) — this is a deliberate, accepted naming deviation, not an oversight:
+
+```
+Spec name:      project_code
+Actual column:  project.code
+Meaning:        the same concept — the human-assigned YYYYNNN job code
+```
+
+This binds every phase from here on:
+- `Project.code` is read/written everywhere the plan says `project_code`
+  (resolver, QuickBooks matching, PO numbering in Phase 5, reports, UI).
+- **No second `project_code` column is ever added** unless there is an
+  explicit, intentional migration/rename decision recorded here first.
+- Any future code (including Phase 3+) that needs "the operational project
+  code" reads `Project.code` — do not reintroduce ambiguity by naming a new
+  field, parameter, or JSON key `project_code` that isn't literally `.code`.
 
 **4. Phase 2 does NOT solve Drive attribution:**
 Attribution remains folder-ancestry-based (ExternalId `folder:{folder_id}`) until
