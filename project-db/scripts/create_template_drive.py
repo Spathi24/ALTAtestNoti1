@@ -252,7 +252,7 @@ def build_quote(
     for idx, (desc, csi_hint, mat, lab, tot, cov, mat_incl, excl, notes, sow_item_ref) in enumerate(lines, 1):
         item_rows.append([desc, csi_hint, mat, lab, "", f"QI-{idx:03d}", cov, mat_incl, excl, notes, sow_item_ref])
 
-    all_rows = [section_row] + item_rows
+    all_rows = [section_row, *item_rows]
     _sheet(wb, "Quote_Lines", HEADERS, all_rows)
 
     # Pre-Tax Total row: Description EMPTY so parser routes to grand_total branch,
@@ -548,7 +548,7 @@ def main() -> None:
     except Exception:
         pass  # non-fatal if run outside the package
 
-    print(f"Building mock template Drive -> docs/templates/mock_drive/\n")
+    print("Building mock template Drive -> docs/templates/mock_drive/\n")
 
     build_sow(PROJECT_DIR / "SOW" / f"{PC}_SOW_v1.xlsx")
 
@@ -580,7 +580,7 @@ def main() -> None:
     build_budget(PROJECT_DIR / "budget" / f"{PC}_BUDGET_v1.xlsx")
     build_jobcost(PROJECT_DIR / "JOBCOST" / f"{PC}_JOBCOST.xlsx")
 
-    print(f"\nAll files written. Run verify step next.")
+    print("\nAll files written. Run verify step next.")
 
 
 if __name__ == "__main__":

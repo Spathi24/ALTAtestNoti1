@@ -47,10 +47,10 @@ def _amount_in_text(amount, text: str) -> bool:
     if val == 0:
         return True  # zero rows are structural placeholders, not hallucinations
     # Normalise the text: drop spaces used as thousands sep, unify decimal comma.
-    norm = text.replace(" ", " ")
-    norm_nospace = re.sub(r"(?<=\d)[  ](?=\d)", "", norm)  # "1 234" -> "1234"
+    norm = text.replace(" ", " ")  # noqa: RUF001 - intentional Quebec-French NBSP/narrow-NBSP handling
+    norm_nospace = re.sub(r"(?<=\d)[  ](?=\d)", "", norm)  # "1 234" -> "1234"  # noqa: RUF001 - intentional Quebec-French NBSP/narrow-NBSP handling
     candidates = set()
-    whole = int(round(val))
+    whole = round(val)  # val is float -> round() already returns int
     candidates.add(f"{val:.2f}")           # 1234.50
     candidates.add(f"{val:.2f}".rstrip("0").rstrip("."))  # 1234.5 / 1234
     candidates.add(f"{whole}")             # 1234
@@ -151,7 +151,7 @@ def _print_human(rep: dict) -> None:
         for r in d["rows"]:
             ok = "OK " if r["amount_found_in_source"] else "!! "
             print(
-                f"    {ok}{r['side']:7} {str(r['status']):9} div{r['div']:>5} "
+                f"    {ok}{r['side']:7} {r['status']!s:9} div{r['div']:>5} "
                 f"{r['amount_type']:9} {r['amount']:>12,.2f}  [{r['method']}]"
             )
             if not r["amount_found_in_source"]:

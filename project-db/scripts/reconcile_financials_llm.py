@@ -263,7 +263,7 @@ def _doc_block(doc: dict, snippet_chars: int) -> str:
     row_lines = []
     for r in rows[:40]:
         row_lines.append(
-            f"    {r.get('side'):7} {str(r.get('status')):9} div{str(r.get('division_code')):>5} "
+            f"    {r.get('side'):7} {r.get('status')!s:9} div{r.get('division_code')!s:>5} "
             f"{r.get('amount_type', ''):10} {float(r.get('amount') or 0):>12,.2f}  {(r.get('description') or '')[:70]}"
         )
     if len(rows) > 40:
@@ -326,7 +326,7 @@ class _LLM:
                 if getattr(msg, "refusal", None):
                     raise RuntimeError(f"model refused: {msg.refusal}")
                 return json.loads(msg.content)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 last_exc = exc
                 s = str(exc)
                 if "rate_limit" in s or "429" in s or "Rate limit" in s:
@@ -549,8 +549,6 @@ def main() -> int:
             continue
         reports.append(rep)
         nconf = sum(1 for f in rep["flags"] if f["verdict"] == "confirmed")
-        d_rev = rep["corrected_contracted_revenue"] - rep["naive_contracted_revenue"]
-        d_cost = rep["corrected_total_cost"] - rep["naive_total_cost"]
         print(
             f"  {rep['project'][:34]:34} rev {rep['naive_contracted_revenue']:>12,.2f} -> "
             f"{rep['corrected_contracted_revenue']:>12,.2f}  cost {rep['naive_total_cost']:>11,.2f} -> "

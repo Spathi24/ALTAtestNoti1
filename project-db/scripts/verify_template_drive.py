@@ -25,8 +25,8 @@ try:
 except Exception:
     pass
 
-from project_db.parsing.xlsx_parser import XlsxParser
 from project_db.ai.financial_grid import parse_financial_grid_rows
+from project_db.parsing.xlsx_parser import XlsxParser
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MOCK_DRIVE = REPO_ROOT / "docs" / "templates" / "mock_drive"

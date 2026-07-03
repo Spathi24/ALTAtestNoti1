@@ -515,7 +515,7 @@ def _process_update(
     if general_intake:
         event.ingestion_status = "received"
         event.ingestion_reason = "general_content"
-        pid, method, _conf = _attribute_project(session, user_id, text, worker=worker)
+        pid, _method, _conf = _attribute_project(session, user_id, text, worker=worker)
         if pid is not None:
             event.project_id_hint = pid
         session.commit()

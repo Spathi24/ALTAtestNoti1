@@ -19,7 +19,7 @@ Add new reports here.  The naming convention is ``report_<topic>(...)``.
 from __future__ import annotations
 
 import re as _re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID as _UUID
@@ -480,7 +480,7 @@ def report_weekly_changes(
     project_ref: str | None = None,
     *,
     since_days: int = 7,
-    now: "datetime | None" = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Deterministic "what changed in the last ``since_days`` days", per project.
 
@@ -940,9 +940,9 @@ def narrate_weekly_report(
     session: Session,
     project_ref: str | None = None,
     *,
-    provider: "Any",  # LLMProvider -- lazy import keeps the module light
+    provider: Any,  # LLMProvider -- lazy import keeps the module light
     since_days: int = 7,
-    now: "datetime | None" = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Produce a full project report by feeding the enriched delta to the LLM.
 

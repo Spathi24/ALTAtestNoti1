@@ -15,7 +15,6 @@ from project_db.ai.providers.mock import MockLLMProvider
 from project_db.ai.views import narrate_weekly_report, report_weekly_changes
 from project_db.db.models import Document, Project, Task, TaskStatus
 from project_db.db.models.docs import DocumentText
-from project_db.db.models.field_notes import FieldNote, NoteChannel, NoteClass
 from project_db.db.models.work import ProjectStatus
 
 NOW = datetime(2026, 6, 22, 12, 0, 0)
