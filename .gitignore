@@ -41,8 +41,15 @@ secrets/
 .DS_Store
 Thumbs.db
 
-# Claude worktree metadata
-.claude/
+# Claude local session state (worktrees, launch config, personal overrides) stays
+# ignored — but the SHARED project config (skills, hooks, checked-in settings) is
+# version-controlled so it propagates. Note: must glob `.claude/*` (not `.claude/`)
+# for the negations below to take effect — git can't re-include under an excluded dir.
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/hooks/
+.claude/hooks/__pycache__/
 
 # Node (presentation build only)
 node_modules/
