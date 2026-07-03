@@ -6,6 +6,27 @@ archive the other file.
 
 ---
 
+## Session preflight (do this before ANY edit)
+
+Run the `alta-preflight` skill, or manually:
+
+1. `pwd` + branch check: real repo path, on `main`, **never** a
+   `.claude/worktrees/...` path. `git status` clean of `.env`/`*.sqlite`/`*.pyc`.
+2. Read in order: this file → `PROJECT_STATE.md` (root) → active slice doc if
+   one is linked → `project-db/docs/HANDOFF.md` → top `CHANGELOG.md` entry.
+3. Suite + lint green: `pytest -q` (count matches the top CHANGELOG entry) and
+   `ruff check .`. Note: whole-repo `ruff format --check .` is NOT green yet —
+   formatter activation is a deliberate one-commit ratchet (pyproject +
+   CONTRIBUTING). Keep files you *edit* format-clean; do not piecemeal-reformat
+   untouched files.
+4. `python scripts/doctor.py` — read-only invariant sweep; report any FAIL to
+   the user before starting.
+5. **Anchor:** quote the active slice's Definition of Done + hard scope limits
+   verbatim into your plan. Re-read them mid-slice. One slice per session; at
+   any limitation, park it in HANDOFF and STOP.
+
+---
+
 ## The one metric: time saved
 
 ALTA exists to **save real people real hours.** That is the only success metric.
@@ -102,6 +123,8 @@ Rules:
 1. **Edit `main` directly. No worktrees.** Be on `main` in
    `C:\Users\nsaro\Documents\VScode\ALTAtest`. If you find yourself in
    `.claude/worktrees/...`, `cd` back. Never create a worktree unless asked.
+   (A PreToolUse hook in `.claude/hooks/guard_bash.py` enforces this and the
+   `git add -A` ban mechanically — do not remove it.)
 2. **Keep the test suite green.** `cd project-db && python -m pytest tests/ -q`.
    Current count lives at the top of CHANGELOG — do not hardcode it here. Add a
    test with every behavior change; update tests when an API surface changes.
@@ -110,7 +133,11 @@ Rules:
    origin main`. If behind, `git fetch origin && git pull --ff-only origin main`
    first. (During a planning/freeze discussion, don't commit until told to.)
 4. **Validate on the real system** — from the real repo path, against the real
-   workspace. Don't just `pytest` and declare victory.
+   workspace. Don't just `pytest` and declare victory. Use the `alta-validate`
+   skill: provenance (real data, not your own fixture), reconciliation (an
+   independent path agrees, to the penny for money), downstream (smoke the
+   nearest consumer). The CHANGELOG entry records the live evidence and the
+   honest gaps.
 5. **Windows console:** stdout is UTF-8-hardened via `cli.force_utf8_output()`,
    but prefer ASCII (`->`, `OK:`, `FAIL:`, `-`, `...`) for clean rendering.
    One-off scripts you write must call `force_utf8_output()` themselves.
@@ -121,6 +148,21 @@ Rules:
    if `git status` shows them, something is wrong.
 8. **Every commit credits Claude:** end the body (via HEREDOC) with
    `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+9. **Lint gate:** `ruff check .` GREEN before moving to the next slice, not only
+   at the end. Ruff is **pinned** in `project-db/pyproject.toml` (`ruff==0.15.18`)
+   — never "fix" code to satisfy an unpinned newer ruff; check the pin first, bump
+   it deliberately in its own commit. (Whole-repo `ruff format` is a separate,
+   not-yet-activated ratchet — keep edited files format-clean, don't reformat
+   untouched ones.)
+10. **Schema changes use the custom migration system, not Alembic.** Every new
+    table/column needs BOTH the SQLAlchemy model AND a DDL/ALTER block in
+    `db/migrations.py::ensure_sqlite_schema`, in FK-dependency order. Additive
+    only during transitions; back up the real DB before anything destructive.
+    Full checklist: `alta-migrations` skill.
+11. **Model tiering (owner decision 2026-06-26):** certainty-requiring LLM
+    calls (client-vs-vendor role, quote-vs-worksheet, side inversion, ambiguous
+    lifecycle) run on the strong tier — never gpt-4o-mini. Pin model snapshots.
+    Confirm credit balances with the owner before any live LLM run.
 
 ---
 
@@ -161,20 +203,27 @@ changes before conventions are settled with the owner.
 ```
 ALTAtest/
 ├── CLAUDE.md                     ← this file (rules + philosophy)
+├── .claude/
+│   ├── settings.json             ← hooks wiring (SessionStart + Bash guard)
+│   ├── hooks/                    ← guard_bash.py, session_start.py
+│   └── skills/                   ← alta-preflight, alta-validate, alta-migrations
 ├── docs/                         ← external API references (Monday, Drive) — keep
 └── project-db/                   ← the Python package
     ├── README.md                 ← what it is + setup/usage
     ├── CHANGELOG.md              ← dated history (never wipe)
+    ├── pyproject.toml            ← deps + ruff/mypy config (ruff pinned)
     ├── docs/
     │   ├── HANDOFF.md            ← current state (wiped each handoff)
     │   ├── adding-a-connector.md ← how-to
     │   └── archive/              ← history, NOT instructions
     ├── scripts/monday_demo.py    ← interactive Monday push/pull CLI
+    ├── scripts/doctor.py         ← read-only invariant sweep (preflight step 4)
     └── src/project_db/           ← cli.py, db/, identity/, connectors/, ai/, web/, features.py
 ```
 
 ```bash
 cd project-db && python -m pytest tests/ -q     # tests
+python scripts/doctor.py                         # invariant sweep (read-only)
 project_db serve --no-refresh                    # web UI, no background sync/spend
 python scripts/monday_demo.py pull               # full Monday sync
 # Feature flags: src/project_db/features.py — override with PROJECT_DB_FEATURE_<NAME>=true

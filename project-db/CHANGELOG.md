@@ -9,6 +9,53 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-07-03 — session-discipline tooling: skills, hooks, doctor, ruff pin
+
+Meta-slice (no product features — build freeze respected): the recurring
+session-start/validation failure modes are now mechanically enforced instead of
+prose-only. Originated from a Fable 5 audit of the repo's own docs; every piece
+was verified against the live codebase before landing, which caught four real
+mismatches in the proposed drop-in (see below).
+
+- **Three Claude Code skills** (`.claude/skills/`): `alta-preflight` (session-start
+  ritual: location/branch gate, read order, green base, doctor sweep, DoD anchor),
+  `alta-validate` (the three circularity-killing questions + per-subsystem live-DB
+  smoke recipes), `alta-migrations` (dual model+DDL registration, FK order,
+  additive-only).
+- **Hooks** (`.claude/hooks/` + `.claude/settings.json`): `guard_bash.py`
+  mechanically blocks `git worktree add`, `git add -A/./--all`, staging
+  `.env`/`.sqlite`/`.pyc`, and force-push (verified: exit 2 on all five patterns,
+  exit 0 on specific-file adds); `session_start.py` injects the preflight banner.
+  Hook paths use `$CLAUDE_PROJECT_DIR` (relative paths failed from `project-db/`).
+- **`scripts/doctor.py`** — read-only invariant sweep (FK orphans via PRAGMA
+  introspection, duplicate ExternalIds, cost-side NULL `cost_status`, undated DONE
+  tasks, folder-path containment smoke). Live run on the real `project_db.sqlite`:
+  0 fail / 1 warn (79 legacy llm-v1 NULL-cost_status rows — known, allow-list
+  filtered downstream) / 1 info (26 undated DONE tasks — honest-null).
+  Containment default recalibrated to the real corpus: the proposed "TEAM ALTA"
+  substring matched 0/999 docs (folder_path is team-root-relative; top segments are
+  `01. PROJECTS` etc.) — now matches the `^\d{2}\. ` numbered-folder convention
+  (`ALTA_TEAM_ROOT_REGEX`), with a >90%-outside guard that reports regex
+  misconfiguration instead of flagging the whole corpus.
+- **Ruff pinned** `ruff==0.15.18` and the drift backlog cleared: 22 errors -> 0
+  (`ruff check .` green). The `views.py` F821 `datetime` pair was a latent trap,
+  not a runtime bug — fixed by importing `datetime` and de-quoting. RUF001
+  ambiguous-space hits in `audit_financial_extraction.py` are intentional
+  Quebec-French NBSP handling, kept with `# noqa` + reason.
+- **`.gitignore`**: `.claude/` was wholesale-ignored, which would have kept all of
+  the above untracked — narrowed to `.claude/*` + negations (settings.json,
+  skills/, hooks/ tracked; worktrees, launch.json, settings.local.json, pycache
+  still ignored).
+- **CLAUDE.md**: new "Session preflight" section; hard rules 9 (lint gate + pin),
+  10 (custom migration system), 11 (model tiering) promoted from PROJECT_STATE;
+  rules 1/4 now reference the hook/skills. The settled 2026-06-30 usage gate and
+  the refoundation-plan section were PRESERVED (the proposed drop-in was based on
+  a stale copy and would have reverted both).
+
+Suite: **1674 passed** (unchanged — no behavior changes). `ruff check .` green.
+
+---
+
 ## 2026-06-30 — §12 refoundation conventions settled with owner
 
 All seven open questions from the meeting synthesis (plus job-number format) are now

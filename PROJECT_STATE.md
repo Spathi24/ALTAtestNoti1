@@ -224,18 +224,18 @@ Full entity→repo map: docs/REFOUNDATION_BUILD_NOTES.md.
   - Next action: openpyxl parser writing `EvidenceSpan` table/cell regions (later
     slice — NOT slice 1). Slice 1 only lays the table foundation.
 
-- [ ] Bug: CI ruff likely RED from version drift, NOT from any recent code change.
-  - Evidence: `python -m ruff check .` (local ruff 0.15.18) reports 9 errors in three files
-    untouched since the 2026-06-16 sweep: `src/project_db/ai/views.py` (UP037 + F821
-    `datetime` undefined-name in string annotations, lines ~457/917/919),
-    `src/project_db/ai/telegram_intake.py:518` (RUF059 unused unpacked `method`), and
-    `tests/test_weekly_narration.py:18` (F401 unused FieldNote/NoteChannel/NoteClass imports).
-  - Suspected cause: `pyproject` pins `ruff>=0.5` (unpinned floor); CI installs the latest
-    ruff, whose newer rule behavior flags code that was clean in June. The `datetime` F821
-    pair may be a latent real bug (string annotation referencing an unimported name).
-  - Next action: pin ruff to a known-good version OR clear the 9 (mostly trivial: drop unused
-    imports, de-quote annotations + import `datetime`, rename unused unpack to `_`). Out of
-    Slice-1 scope — flagged as a separate task. Slice-1 files are ruff-clean.
+- [x] Bug: CI ruff RED from version drift — FIXED 2026-07-03.
+  - Root cause confirmed: `ruff>=0.5` unpinned floor; local/CI ruff 0.15.18 flagged code
+    clean under the June ruff. Actual count was 22 errors, not the 9 first observed.
+  - Fix: pinned `ruff==0.15.18` in `project-db/pyproject.toml`; cleared all 22
+    (unused imports, RUF010/RUF100/F541/I001/UP037 autofixes, `_method` rename,
+    `d_rev`/`d_cost` dead vars, RUF046). The F821 `datetime` pair was NOT a runtime bug
+    (string annotations under `from __future__ import annotations`; runtime uses a lazy
+    `_dt` local import) but WOULD have broken if de-quoted — fixed by adding `datetime`
+    to the module-level import. The two RUF001 ambiguous-space hits are INTENTIONAL
+    Quebec-French NBSP normalization — kept via `# noqa: RUF001` with reasons.
+  - `ruff check .` is GREEN. Note: whole-repo `ruff format --check .` remains a deliberate
+    un-activated ratchet (34 pre-existing files) — not part of the lint gate.
 
 - [ ] Bug: Financial reconciliation reads `DocumentText` flat blobs, not the structured
     cost/trade ledger and not via the RAG retrieval layer (`DocumentChunk` embeddings).
