@@ -27,6 +27,9 @@ DEFAULT_FEATURES: dict[str, bool] = {
     "field_notes_typed": True,
     "finance_margins": True,
     "ledger_health": True,
+    # Green-sheet: per-division budget vs quoted vs committed vs actual
+    # (the refoundation financial gate view; reads report_green_sheet).
+    "green_sheet": True,
     "task_date_edit": True,
     # Explicitly quarantined by default.
     "field_notes_email": False,

@@ -15,12 +15,34 @@
 
 ## Current Focus
 
+**REFOUNDATION FRONT-OF-SPINE BUILT END-TO-END (2026-07-02 → 07-04).** Phases 1–6
+(mock template Drive → Project.code identity → SowPackage/SowItem →
+SubcontractorQuote + cost lifecycle → PurchaseOrder/award → BudgetSnapshot +
+green-sheet aggregator), the filename resolver (Phase 5 item #3), the
+`/projects/{id}/green-sheet` UI page, and an isolated demo harness
+(`scripts/demo_rockland.py` → `project_db.demo.sqlite`, real pipeline
+front-door seed, serve on :8123). Full detail + honest gaps:
+`project-db/docs/HANDOFF.md` (retyped 07-04) and
+[REFOUNDATION_BUILD_NOTES](docs/REFOUNDATION_BUILD_NOTES.md).
+**The remaining blocker is OPERATIONAL, not code:** zero real Drive files
+follow the naming convention and only Rockland has SOW structure — team
+checklist at the bottom of `docs/templates/NAMING_CONVENTIONS.md`.
+**Deliberately not built (deferral ledger):** `ingest-quotes` CLI for synced
+Drive docs (no real convention-named file exists to run it on — build the week
+the first one appears); actuals stage (nothing writes `cost_status='actual'`);
+HD/hourly unification into the green-sheet (page states "fixed-cost side only").
+Data fix 2026-07-04 (recorded, not silent): seeded `sow_package`/`sow_item`
+division codes canonicalized `1012` → `10-12` (4 rows, real DB) to match the
+committed `canonical_division_code` direction — without it the resolver could
+never match a Fixtures quote to its package.
+
+---
+
 **EVIDENCE REFACTOR COMPLETE + PARSER CAPPED (2026-06-26).** Slices 1-8 done,
-hardened, and applied portfolio-wide. The parser is closed off; the NEXT line of
-work is the refoundation plan (front-of-spine SOW/PO/budget) — see
+hardened, and applied portfolio-wide. The parser is closed off; the refoundation
+plan (front-of-spine SOW/PO/budget) has since been BUILT (see above) — see
 [REFOUNDATION_BUILD_NOTES](docs/REFOUNDATION_BUILD_NOTES.md) +
-[the plan](docs/MEETING_SYNTHESIS_financial_refoundation.md), build-later, on hold
-until the owner settles conventions (plan §12). Build freeze applies.
+[the plan](docs/MEETING_SYNTHESIS_financial_refoundation.md).
 
 CAP STATE (what's live now): 610 docs parsed (evidence stored), 0 parse failures;
 ledger populated across 10 projects = 241 FinancialLineItem rows (158 llm + 83

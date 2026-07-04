@@ -9,6 +9,54 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-07-04 — green-sheet UI + isolated demo harness (the spine becomes visible)
+
+The refoundation slice the whole 07-02 arc was building toward: the financial
+gate's VIEW now exists as a page a human can open, and there is a one-command
+demo trial that exercises the entire spine through the front door without ever
+touching the canonical database.
+
+- **`/projects/{id}/green-sheet`** (feature flag `green_sheet`, default on;
+  linked from project detail). Renders `report_green_sheet`: per-division
+  budget vs quoted (SELECTED quote only) vs pending bids (competing — shown,
+  flagged, never summed into expected cost) vs committed (POs) vs actual,
+  variance = budget − (committed + actual). The page states its own limits:
+  a "Fixed-cost side only" banner (Home Depot + hourly labour are NOT in
+  these numbers), the budget snapshot's label/provenance, and per-division
+  flags for anything unclassified. 6 web tests (`test_web_green_sheet.py`)
+  incl. competing-bid separation and the feature-flag 404.
+- **`scripts/demo_rockland.py`** — the live-demo/trial harness. Copies the
+  real DB to `project_db.demo.sqlite` (canonical DB untouched; reset = rerun),
+  then seeds the pilot THROUGH the real pipeline: parses the two mock QUOTE
+  workbooks with the real XlsxParser, resolves project/package/vendor from
+  the FILENAME alone (`resolve_quote_document` — first end-to-end use of the
+  Phase 5 resolver), ingests cost rows, awards PO `2026001-001`. `serve`
+  mode runs the UI on :8123 with no background refresh (a demo DB must never
+  delta-sync). Verified LIVE in a browser via the preview harness: budget
+  $90,700 / committed $6,800 / pending bids $21,500 / variance $83,900;
+  Plumbing row budget $6,800 = committed $6,800 → variance $0.00; the
+  Finishes competing bid renders with an explicit excluded-from-quoted flag.
+- **Data fix (recorded, not silent):** seeded `sow_package`/`sow_item`
+  division codes canonicalized `1012` → `10-12` (4 rows, real DB) to match
+  the committed `canonical_division_code` direction — without this the
+  resolver could never match a Fixtures quote to its real package.
+- **`.claude/launch.json`**: `alta-web` config fixed from `py -3.13` to
+  `python` (rule-12 interpreter trap); added `alta-demo`.
+- **Docs:** `NAMING_CONVENTIONS.md` gains the **external adoption checklist**
+  (the exact manual steps the team performs on the real Google Drive — the
+  mock drive on disk is the template SOURCE to copy up, and was never
+  expected to already be mirrored there); README gains the demo commands;
+  HANDOFF fully retyped (was 8 days stale, still said "do NOT build the
+  refoundation"); PROJECT_STATE Current Focus refreshed + deferral ledger
+  (ingest-quotes CLI, actuals stage, HD/labour unification — each with why).
+
+Honest scope: every dollar in the demo is mock template data; the page and
+the seed both say so. The remaining blocker for real numbers is operational
+adoption (naming convention + SOW on a second project), not code.
+
+Suite: **1682 passed** (+6 web). ruff check + format green. doctor 0 fail.
+
+
 ## 2026-07-04 — transcript audit round 2: division-code fix, db_probe, finance skill, format activation
 
 A 4-subagent deep-read of all 17 real session transcripts (~120MB) clustered

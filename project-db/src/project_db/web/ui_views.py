@@ -62,6 +62,21 @@ def project_division_margins(session: Session, project_id: str) -> dict[str, Any
     return rep
 
 
+def project_green_sheet(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Per-division budget vs quoted vs committed vs actual (the green sheet).
+
+    Thin pass-through to ``report_green_sheet`` so the CLI/askbot and the web
+    panel render the same numbers from the same canonical aggregator.  Returns
+    None when the project doesn't resolve (route renders a 404).
+    """
+    from project_db.ai.green_sheet import report_green_sheet
+
+    rep = report_green_sheet(session, project_id)
+    if isinstance(rep, dict) and rep.get("error"):
+        return None
+    return rep
+
+
 def project_labour(session: Session, project_id: str) -> dict[str, Any] | None:
     """Consolidated labour shifts (Gmail + Telegram) for one project.
 

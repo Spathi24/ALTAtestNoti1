@@ -217,3 +217,44 @@ it is a GC overhead item, not a subcontracted trade.
 - `awarded`: PO issued
 
 For SOW / BUDGET versioning: `v1`, `v2`, `snapshot` are allowed as the status token.
+
+---
+
+## External adoption checklist — what the TEAM does on the real Drive
+
+Written 2026-07-04, answering "what exactly do I do outside the code?". The
+`docs/templates/mock_drive/` folder on disk is a **working example + template
+source** — it was never expected to already be on Google Drive; nothing was
+missed. The system is code-complete for this part; what remains is operational
+adoption. **ALTA does not write to the real Drive** (parked capability, gated —
+these steps are manual, done once per project by a human):
+
+1. **In the real team Drive, inside the existing project folder** (e.g. the
+   current "923-927 Rockland" folder — do NOT delete or rename what's there;
+   legacy files are read-only history), create the subfolders from the
+   "Folder structure" section above: `SOW/`, `SOW/packages/`, `quotes/`,
+   `POs/`, `budget/`, `green-sheet/`, `JOBCOST/`, `actuals/`.
+2. **Copy the gold job-cost template** `docs/JOB_COST_TEMPLATE_structured.xlsx`
+   into `JOBCOST/` renamed `2026001_JOBCOST.xlsx` (production rule above).
+3. **Fill the SOW**: start from the mock `2026001_SOW_v1.xlsx` (copy it up from
+   `docs/templates/mock_drive/`), replace the 31 example rows with the real
+   scope, keep the column layout and `SOW-###` item codes EXACTLY.
+4. **Fill the budget**: copy up `2026001_BUDGET_v1.xlsx` and replace **every
+   dollar amount** — the mock numbers ($90,700 total) are generated examples,
+   not real targets. Keep `CSI_Div_Code` values as printed (canonical forms,
+   e.g. `10-12`).
+5. **Every subcontractor quote received from now on**: enter it into a copy of
+   the QUOTE template (exact `Quote_Lines` columns incl. `SOW_Item_Ref`), save
+   as `{code}_QUOTE_{DD}-{Trade}_{VendorSlug}_pending.xlsx` in `quotes/`.
+   Rename the file's status token when a decision is made
+   (`pending → selected/rejected`). The filename IS the machine-readable state.
+6. **No back-filling required.** Legacy documents stay as they are (read-only
+   history, per the plan); the DB already holds everything extracted from
+   them. This checklist is about documents produced FROM NOW ON.
+
+Once files exist in this shape, the pipeline is: Drive sync pulls them in →
+`resolve_quote_document` reads project/package/vendor from the filename →
+`ingest_subcontractor_quote` writes the cost ledger → human selects → PO award
+commits → the green-sheet page shows budget vs quoted vs committed vs actual.
+The first project to go through this loop with real numbers becomes the first
+genuinely non-mock validation of the whole spine.

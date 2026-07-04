@@ -4,108 +4,114 @@
 *right now*. History → `../CHANGELOG.md`. Rules & philosophy → `../../CLAUDE.md`
 (read it first; it overrides everything).
 
-Last retyped: 2026-06-26.
+Last retyped: 2026-07-04.
 
 ---
 
 ## Where things stand (the honest summary)
 
-The **evidence-backed parsing refactor is COMPLETE (Slices 1–8) and the parser is
-capped, hardened, and applied portfolio-wide.** This was the critical, delicate
-part of the stack; it is now closed off deliberately.
+The **financial refoundation front-of-spine is BUILT end-to-end** (2026-07-02 →
+07-04): Phases 1–6 + the filename resolver + the green-sheet UI + a demo
+harness. The full chain works through the front door on the pilot:
 
-The **next line of work is the refoundation plan** — a much larger front-of-spine
-(SOW → package → quote → PO → budget → variance) from an owner+PM review. It is
-**build-later, on hold** until the owner settles conventions (plan §12). Do NOT
-start building it; structure-only understanding for now. Read:
-- `../../docs/MEETING_SYNTHESIS_financial_refoundation.md` — the authoritative plan.
-- `../../docs/REFOUNDATION_BUILD_NOTES.md` — entity→repo build map (what/where).
-- `../../PROJECT_STATE.md` "REFOUNDATION PLAN" — distilled invariants/constraints.
+```
+filename → resolve_quote_document → ingest_subcontractor_quote →
+(human selects) → award_purchase_order → committed cost + ContractObligation →
+report_green_sheet → /projects/{id}/green-sheet
+```
 
-**Build freeze still applies.** The plan reframes (not relitigates) the schema:
-13-entity core + evidence spine are untouched; new entities sit on top.
+**What is NOT true yet (do not let a rendered page imply otherwise):**
+- Every dollar that has flowed through the new chain is **mock template data**
+  (Rockland pilot seed). No real budget, no real subcontractor quote has gone
+  through it. The circularity is documented, not hidden.
+- **Zero real Drive files follow the naming convention** and only Rockland has
+  SOW structure — operational adoption (a human task) is the blocker, not
+  code. The exact team checklist lives at the bottom of
+  `../../docs/templates/NAMING_CONVENTIONS.md`.
+- The **actual** lifecycle stage has no writer (nothing sets
+  `cost_status='actual'`); invoices/receipts are not yet matched to POs.
+- **Home Depot + hourly labour are invisible to the green-sheet** (no
+  `purchase_type` unification) — the page says "fixed-cost side only" out loud.
 
-## What the evidence spine does now (live)
+## The new spine (Phases 1–6, all shipped + tested)
 
-`Document → DocumentParse → EvidenceSpan → DocumentText (compat)`. Parsers: CSV /
-XLSX (openpyxl) / PDF (Docling primary, PyMuPDF fallback; Docling is a `[docling]`
-extra, NOT in CI). Every parsed table/page is a citeable `EvidenceSpan`.
-
-- **`ai/evidence_bundle.py`** — turns stored spans into LLM-ready labelled tables
-  (`render_for_llm`), with `is_low_confidence()` (escalation gate) and
-  `primary_span_id()/primary_locator()` (the link).
-- **Financial extractors read the spine + link rows.** The deterministic **grid
-  parser is primary** (reads `EvidenceSpan.rows_preview` via
-  `financial_grid.parse_financial_grid_rows`); the **LLM path is fallback** (reads
-  the bundle render; default model **gpt-4.1**, escalates low-confidence docs via
-  `OPENAI_EXTRACT_STRONG_MODEL`). Every written row carries `evidence_span_id`.
-- **Trust gates:** reconcile-to-stated-total + Slice-7 **evidence grounding** (the
-  stated total must appear in the cited evidence, else quarantine).
-- **Slice 8 `ReconciliationIssue`** (advisory) + `ai/reconciliation.py`
-  deterministic `detect_duplicate_total_issues` — flags cross-doc double-counts
-  (a SOW restating its accepted quote).
+- **Phase 1** mock template Drive (`docs/templates/mock_drive/`, owner-approved)
+  + `NAMING_CONVENTIONS.md` (now includes the team adoption checklist).
+- **Phase 2** `Project.code` IS the YYYYNNN project_code (LOCKED decision);
+  +display_name/legacy_job_number/aliases; `_resolve_project` matches
+  code/legacy#/alias/name; Monday connector no longer clobbers `code`.
+- **Phase 3** `SowPackage`/`SowItem` (scope only; `package_id` nullable for
+  div-01 GC overhead; `item_code` unique PER PROJECT — partial index).
+- **Phase 4** `SubcontractorQuote` + FinancialLineItem `purchase_type` /
+  `cost_status` / `sow_item_id` / `subcontractor_quote_id` /
+  `line_markup_factor`; `ai/subcontractor_quote_ingest.py` (cost-side path,
+  SEPARATE from the revenue `_collect_quote_rows`; division-total rows never
+  persisted as cost; SOW_Item_Ref resolved per-project or flagged).
+- **Phase 5** `PurchaseOrder` (one per quote, DB-enforced; po_number
+  `{code}-{PPP}`) + `ai/purchase_order_award.py` — the ONE writer of committed
+  cost (guards: only `selected` quotes; refuses zero quoted rows; commits only
+  `cost_status='quoted'` rows; obligation kind `po_commitment`).
+- **Phase 5 item #3** `ai/quote_document_resolver.py` — deterministic
+  filename → project/package/vendor (Home Depot linker discipline: unique
+  match or unresolved, never guess; `canonical_division_code` folds `1012` →
+  `10-12` at the parse boundary).
+- **Phase 6** `BudgetSnapshot`/`BudgetSnapshotLine` (immutable baselines) +
+  `ai/green_sheet.py::report_green_sheet` — per division: budget / quoted
+  (SELECTED quote only) / pending_bids (competing, never summed) /
+  committed / actual (allow-list: NULL-legacy or 'actual') / unclassified
+  (flagged) / variance = budget − (committed+actual).
+- **UI (2026-07-04)** `/projects/{id}/green-sheet` (flag `green_sheet`,
+  default on; template `project_green_sheet.html`; linked from project
+  detail). States its fixed-cost-only scope and budget provenance on-page.
+- **Demo harness (2026-07-04)** `scripts/demo_rockland.py` — copies the real
+  DB to `project_db.demo.sqlite` (canonical DB never touched), seeds the
+  pilot THROUGH the real pipeline, serves on :8123. `.claude/launch.json` has
+  `alta-web` (fixed to `python`; was wrongly `py -3.13`) + `alta-demo`.
 
 ## Numbers right now
 
-610 docs parsed, **0 parse failures**. Ledger across **10 projects = 241
-`FinancialLineItem` rows** (158 llm + 83 grid), **169 evidence-linked**. Portfolio
-LLM fill: 16 parsed / 10 quarantined / 33 correctly skipped. Reconciliation
-detector flagged **2 real cross-doc double-counts** (Rockland SOW+quote $66,539.65;
-a $4,973.56 pair). **Suite: 1556 green; ruff clean.**
+Suite **1682 green** (1676 + 6 green-sheet web tests); `ruff check` + `ruff
+format --check` green; `doctor.py` 0 fail / 1 known warn (79 legacy NULL
+cost_status rows, allow-listed downstream). Real DB: Rockland `code=2026001`,
+11 SowPackages / 31 SowItems (division codes canonicalized 2026-07-04:
+`1012` → `10-12`, 4 rows — recorded, not silent), 0 SubcontractorQuote /
+PurchaseOrder / BudgetSnapshot rows (all demo data lives ONLY in the demo DB).
 
-## Known limitations (documented, NOT bugs — don't "fix" silently)
-
-- **Scanned PDFs → empty bundles** (OCR is off by design; ~70 docs: surveys,
-  certificates, plans). Re-enabling OCR is a deferred decision.
-- **Multi-sheet workbooks aren't Material/Labour/Total grids** → the single-table
-  grid gating loses no *grid* data; such docs are LLM-path or correctly skipped.
-- **Layout-driven workbooks scramble (the XlsxParser limit).** Verified on the
-  real ST-Laurent `JOB COSTING.xlsx`: simple single-table sheets (Order Quantities,
-  EXTRAS, Order Qty) parse cleanly, but the rich `Material` sheet (3 horizontal
-  zones A:F / H:L / P:U + ~11 stacked sub-tables + separator cols G/O) gets
-  FLATTENED into one 21-col grid that interleaves unrelated tables per row (and
-  falsely reports header_confidence=1.0). Our `openpyxl` one-header-per-sheet reader
-  cannot infer spatial layout. ALSO: `rows_sample` shows FORMULAS not computed values
-  (`=I5+I6+I7+I9`) — the `data_only` cached-value path isn't feeding rows_sample
-  (a real, scoped fix worth doing). FORWARD PLAN (owner, plan §5): this is a legacy
-  hand-built sheet = the *fallback* case, not a reason to over-engineer the cell
-  reader. (1) Adopt its DATA MODEL (material-by-phase/supplier, labour-by-
-  subcontractor, extras-with-status, proportional spending) as the SOP job-costing
-  TEMPLATE but with ONE clean table per sheet / real headers / no side-by-side zones
-  → deterministic parser then reads it perfectly AND keeps the richness. (2) Spike
-  Docling-on-rendered-PDF (xlsx→PDF via LibreOffice headless) for legacy layout-
-  driven sheets — visual segmentation + displayed values. (3) Fix formula→value in
-  rows_sample regardless (helps every spreadsheet).
-- **~72 llm rows are flat-text fallback** (their doc has no successful parse) so
-  they're unlinked. Acceptable during migration.
-- **Aggregate roll-ups are still wrong** portfolio-wide (e.g. a bogus $361k
-  "contracted revenue") because quote-status is guessed and SOWs double-count —
-  this is exactly what the plan's **status SOP + job_number** fix. The Slice-8
-  detector *flags* these; it does not auto-sum them away. The per-document line
-  items are correct; the **line-item material/labour split is the product**, not
-  the aggregate total.
-
-## How to run
+## How to run the demo
 
 ```
-cd project-db && python -m pytest tests/ -q                 # 1556 tests
-project_db fill-ledger <project|--all>                       # grid (deterministic, free)
-PROJECT_DB_FEATURE_LLM_PDF_FINANCE=true \
-  project_db fill-ledger-llm <project>                       # LLM path (gpt-4.1, costs)
-project_db division-margins <project>                        # the ledger view
-scripts/revamp_corpus.py [--plan|--financial-only|--overwrite]  # re-parse corpus (Docling, slow)
+python scripts/demo_rockland.py           # seed the isolated demo DB
+python scripts/demo_rockland.py serve     # http://127.0.0.1:8123
+# the seed prints the exact green-sheet URL; --reseed for a fresh copy
 ```
-Both fill paths are idempotent. `fill-ledger-llm --all` sends EVERY text doc to the
-LLM (~746) — scope to financial docs instead (a scratch script did the ~59 needed).
+
+## Session-local artifacts (things a cold instance would miss)
+
+- `project_db.demo.sqlite` (gitignored) — disposable, rebuilt by the seed.
+- A preview server may be running on :8123 from the 07-04 session.
+- The gold job-cost template is `docs/JOB_COST_TEMPLATE_structured.xlsx`
+  (owner-built, canonical); the mock drive under `docs/templates/mock_drive/`
+  is the template SOURCE the team copies files up to Google Drive from.
 
 ## Parked / open questions (forward ideas — wiped, won't ossify)
 
-- Faceted/tree retrieval (project→unit→trade) to fix askbot cross-project
-  contamination — relational facet filter, post-ledger.
-- Per-LINE span attribution (rows currently cite the doc's primary span).
-- Enforce no-trusted-record-without-evidence once flat-text fallback is retired.
-- Wire `scripts/reconcile_financials_llm.py` to persist via
-  `reconciliation.record_llm_finding`.
-- A `force_full` Drive sync to backfill the 189 NULL `folder_path`s (safe now that
-  delta-sync containment is in place).
-- The refoundation plan itself (the big next thing) — see the three docs above.
+- **`project_db ingest-quotes` CLI** — the last glue for LIVE Drive flow:
+  loop synced Documents whose filename matches the convention → resolver →
+  ingester. Deliberately NOT built yet: zero real convention-named files
+  exist in Drive, so it would be untestable speculation. Build it the week
+  the team uploads the first real convention-named quote (checklist step 5).
+- Actuals stage: deterministic invoice→PO matcher writing
+  `cost_status='actual'` (llm-v1 rows stay NULL, never auto-promoted).
+- HD/hourly unification into the green-sheet (variable-cost tolerance flags).
+- SOW/PKG file ingestion (SowItem rows from a real `*_SOW_v1.xlsx`; today's
+  31 items were seeded from the approved mock constants, not parsed).
+- LLM-advisory slices (quote coverage-comparison vs SOW; owner explicitly
+  encourages LLM use where deterministic is impractical — Proposal-gated,
+  never a ledger writer).
+- FK-declaration gap: `financial_line_item.sow_item_id` /
+  `subcontractor_quote_id` are app-level-only on the real DB (bare ALTER);
+  `ContractObligation`↔PO link lives in source_meta_json; PO numbering is
+  read-then-increment (fine single-user).
+- Remote/live-trial deployment: the UI is 127.0.0.1-only by design (no auth).
+  A PM trial = run it on the owner's machine (or screen-share). Anything
+  network-exposed needs auth first — do not just tunnel it.

@@ -265,6 +265,14 @@ project_db gdrive-auth              # one-time OAuth browser flow (Desktop creds
 project_db serve                                 # http://127.0.0.1:8000
 project_db serve --port 9000                     # alternate port
 
+# --- Green-sheet DEMO (isolated demo DB -- never touches the real one) ---
+python scripts/demo_rockland.py                  # seed project_db.demo.sqlite
+python scripts/demo_rockland.py serve            # serve it on http://127.0.0.1:8123
+#   -> open /projects/<rockland-id>/green-sheet (the seed prints the exact URL)
+#   Seeds the pilot walkthrough through the real pipeline (parse -> filename
+#   resolver -> quote ingest -> PO award). All dollars are MOCK template data;
+#   re-running seed resets the demo DB from a fresh copy of the real one.
+
 # --- Read contract text ---
 project_db extract-content --limit 5            # smoke test
 project_db extract-content                      # default: every doc missing text

@@ -36,6 +36,9 @@
     {% if feature_enabled("finance_legacy") %}
       <li><a href="/projects/{{ d.project.canonical_id }}/financials">Legacy financial summary</a></li>
     {% endif %}
+    {% if feature_enabled("green_sheet") %}
+      <li><a href="/projects/{{ d.project.canonical_id }}/green-sheet">Green sheet</a></li>
+    {% endif %}
     {% if feature_enabled("finance_margins") %}
       <li><a href="/projects/{{ d.project.canonical_id }}/margins">Margins (by trade)</a></li>
     {% endif %}

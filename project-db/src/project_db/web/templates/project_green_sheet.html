@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project }} - Green Sheet{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>{{ d.project }} &mdash; Green Sheet</h2>
+  <p><small>
+    Per-division <strong>budget vs quoted vs committed vs actual</strong> from the
+    SOW &rarr; quote &rarr; PO spine. Quoted = the <em>selected</em> quote only;
+    competing bids are shown separately and never summed into expected cost.
+    Variance = budget &minus; (committed + actual) &mdash; a quote that isn't
+    awarded yet is pipeline, not exposure.
+    <a href="/projects/{{ d.project_id }}">&larr; back to project</a>
+  </small></p>
+</hgroup>
+
+<p><small><span class="pill pill-warn">scope</span>
+  <strong>Fixed-cost side only.</strong> Home Depot purchases and hourly labour
+  (the variable-cost buckets) are <em>not</em> in these numbers yet &mdash; see the
+  Labour tab and the Home Depot ledger for those. Do not read variance here as
+  "the whole project is under budget".
+</small></p>
+
+{% if d.budget_snapshot_id %}
+<p><small><span class="pill">budget baseline</span>
+  snapshot <code>{{ d.budget_snapshot_label or d.budget_snapshot_id[:8] }}</code>
+  &mdash; frozen targets; a revised budget is a new snapshot, never an edit.
+</small></p>
+{% else %}
+<p><small><span class="pill pill-warn">no budget baseline</span>
+  No <code>BudgetSnapshot</code> exists for this project, so the budget and
+  variance columns are empty (never fabricated). Seed one from an approved
+  <code>*_BUDGET_v1.xlsx</code> to light them up.
+</small></p>
+{% endif %}
+
+<!-- Summary KPIs -->
+<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  <div class="kpi">
+    <h3>Budget</h3>
+    <div class="kpi-number">
+      {% if d.total_budget is not none %}${{ "{:,.0f}".format(d.total_budget) }}{% else %}&mdash;{% endif %}
+    </div>
+  </div>
+  <div class="kpi">
+    <h3>Quoted (selected)</h3>
+    <div class="kpi-number">
+      {% if d.total_quoted is not none %}${{ "{:,.0f}".format(d.total_quoted) }}{% else %}&mdash;{% endif %}
+    </div>
+  </div>
+  {% if d.total_pending_bids is not none %}
+  <div class="kpi">
+    <h3>Pending bids</h3>
+    <div class="kpi-number" title="Competing, not-yet-selected bids — asking prices, not expected cost">
+      ${{ "{:,.0f}".format(d.total_pending_bids) }}
+    </div>
+  </div>
+  {% endif %}
+  <div class="kpi">
+    <h3>Committed (POs)</h3>
+    <div class="kpi-number">
+      {% if d.total_committed is not none %}${{ "{:,.0f}".format(d.total_committed) }}{% else %}&mdash;{% endif %}
+    </div>
+  </div>
+  <div class="kpi">
+    <h3>Actual spend</h3>
+    <div class="kpi-number">
+      {% if d.total_actual is not none %}${{ "{:,.0f}".format(d.total_actual) }}{% else %}&mdash;{% endif %}
+    </div>
+  </div>
+  <div class="kpi">
+    <h3>Variance</h3>
+    <div class="kpi-number {{ 'pos' if d.total_variance and d.total_variance >= 0 else 'neg' if d.total_variance is not none else '' }}">
+      {% if d.total_variance is not none %}${{ "{:,.0f}".format(d.total_variance) }}{% else %}&mdash;{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if d.divisions %}
+<table>
+  <thead>
+    <tr>
+      <th>Div</th>
+      <th>Division</th>
+      <th style="text-align:right">Budget</th>
+      <th style="text-align:right">Quoted (sel.)</th>
+      <th style="text-align:right">Pending bids</th>
+      <th style="text-align:right">Committed</th>
+      <th style="text-align:right">Actual</th>
+      <th style="text-align:right">Variance</th>
+      <th>Tendering</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in d.divisions %}
+    <tr>
+      <td><code>{{ row.division_code }}</code></td>
+      <td>{{ row.division_name }}</td>
+      <td style="text-align:right">
+        {% if row.budget_amount is not none %}${{ "{:,.2f}".format(row.budget_amount) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.quoted_cost is not none %}${{ "{:,.2f}".format(row.quoted_cost) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.pending_bids_cost is not none %}
+          <small>${{ "{:,.2f}".format(row.pending_bids_cost) }}</small>
+        {% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.committed_cost is not none %}${{ "{:,.2f}".format(row.committed_cost) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.actual_cost is not none %}${{ "{:,.2f}".format(row.actual_cost) }}{% else %}&mdash;{% endif %}
+      </td>
+      <td style="text-align:right">
+        {% if row.variance is not none %}
+          <span class="{{ 'pos' if row.variance >= 0 else 'neg' }}">${{ "{:,.2f}".format(row.variance) }}</span>
+        {% else %}&mdash;{% endif %}
+      </td>
+      <td><small>
+        {{ row.package_count }} pkg /
+        {{ row.quote_count }} quote{{ "s" if row.quote_count != 1 }}
+        {% if row.selected_quote_count %} / {{ row.selected_quote_count }} selected{% endif %}
+        {% if row.rejected_bid_count %} / {{ row.rejected_bid_count }} rejected{% endif %}
+      </small></td>
+    </tr>
+    {% if row.warnings %}
+    <tr>
+      <td></td>
+      <td colspan="8"><small><span class="pill pill-warn">flag</span>
+        {{ row.warnings | join(" &middot; ") }}</small></td>
+    </tr>
+    {% endif %}
+    {% if row.unclassified_cost is not none %}
+    <tr>
+      <td></td>
+      <td colspan="8"><small><span class="pill pill-warn">unclassified</span>
+        ${{ "{:,.2f}".format(row.unclassified_cost) }} of cost could not be placed
+        in quoted/committed/actual &mdash; flagged, not silently summed.</small></td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+
+{% else %}
+<article>
+  <p><strong>No green-sheet data for this project yet.</strong> This page lights
+     up once the SOW &rarr; quote &rarr; PO spine has rows: SOW packages
+     (scope), a <code>BudgetSnapshot</code> (frozen targets), ingested
+     subcontractor quotes, and awarded POs.</p>
+  <p><small>For the pilot walkthrough: <code>python scripts/demo_rockland.py</code>
+     seeds an isolated demo database and prints the URL to open.</small></p>
+</article>
+{% endif %}
+
+<details style="margin-top:1rem">
+  <summary>Raw JSON</summary>
+  <pre><code>{{ d | tojson(indent=2) }}</code></pre>
+</details>
+{% endblock %}
