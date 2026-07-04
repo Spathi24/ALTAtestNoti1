@@ -33,6 +33,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from project_db.ai.financial_divisions import canonical_division_code
+
 _FILENAME_RE = re.compile(
     r"^(?P<project_code>\d{7})(?:-(?P<po_seq>\d{3}))?"
     r"_(?P<doctype>SOW|PKG|QUOTE|GREENSHEET|PO|BUDGET|JOBCOST|CHANGE)"
@@ -58,7 +60,13 @@ class ParsedFilename:
 def parse_quote_filename(filename: str) -> ParsedFilename:
     """Deterministic filename parse -- no DB access, pure regex. Returns
     ``matched=False`` (all fields None) on anything that doesn't fit the
-    settled convention; never raises."""
+    settled convention; never raises.
+
+    ``division_code`` is normalized to the canonical DB form: filenames spell
+    range divisions WITHOUT the dash ("1012" -> "10-12"), because a dash would
+    collide with the convention's field separators. Without this fold, the
+    SowPackage exact-match below can never hit a canonically-stored range
+    division (the 1012-vs-10-12 trap)."""
     m = _FILENAME_RE.match(filename or "")
     if not m:
         return ParsedFilename(matched=False)
@@ -67,7 +75,7 @@ def parse_quote_filename(filename: str) -> ParsedFilename:
         project_code=g["project_code"],
         po_seq=g["po_seq"],
         doctype=g["doctype"],
-        division_code=g["div_code"],
+        division_code=canonical_division_code(g["div_code"]),
         trade_name=g["trade_name"],
         vendor_slug=g["vendor_slug"],
         status=g["status"],
@@ -95,8 +103,10 @@ class ResolutionResult:
 
     @property
     def fully_resolved(self) -> bool:
-        return self.project_id is not None and self.package_id is not None and (
-            self.vendor_id is not None or self.parsed.vendor_slug is None
+        return (
+            self.project_id is not None
+            and self.package_id is not None
+            and (self.vendor_id is not None or self.parsed.vendor_slug is None)
         )
 
 
@@ -172,8 +182,10 @@ def resolve_quote_document(session, filename: str) -> ResolutionResult:
             result.vendor_method = "vendor_slug_exact"
         elif len(exact) == 0:
             substr = [
-                v for v in vendors
-                if slug_norm and (slug_norm in _normalize(v.name) or _normalize(v.name) in slug_norm)
+                v
+                for v in vendors
+                if slug_norm
+                and (slug_norm in _normalize(v.name) or _normalize(v.name) in slug_norm)
             ]
             if len(substr) == 1:
                 result.vendor_id = substr[0].canonical_id

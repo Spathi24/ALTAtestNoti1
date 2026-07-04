@@ -324,6 +324,37 @@ _CODE_LOOKUP[UNCLASSIFIED.code] = UNCLASSIFIED
 # All divisions including the catch-all, for validation/lookup.
 ALL_DIVISION_CODES: frozenset[str] = frozenset([d.code for d in DIVISIONS] + [UNCLASSIFIED.code])
 
+
+def canonical_division_code(raw: str | None) -> str | None:
+    """Normalize any external division-code spelling to the canonical DB form.
+
+    The canonical form is the dash range ("10-12", "31-32") or plain two-digit
+    code -- what ``Division.code`` / ``FinancialLineItem.division_code`` store.
+    External spellings that must fold into it:
+
+    - Filenames spell range divisions WITHOUT the dash ("1012"), because a dash
+      would collide with the ``_``/``-`` field separators of the settled
+      quote-filename convention (``2026001_QUOTE_1012-Fixtures_...``).
+    - A single range member ("10", "11", "12") means its range ("10-12").
+
+    Conservative: unknown input passes through unchanged so callers can flag
+    it rather than silently lose or reclassify it.
+    """
+    if raw is None:
+        return None
+    code = raw.strip()
+    if not code or code in ALL_DIVISION_CODES:
+        return code
+    hit = _CODE_LOOKUP.get(code)
+    if hit is not None:
+        return hit.code
+    if len(code) == 4 and code.isdigit():
+        dashed = f"{code[:2]}-{code[2:]}"
+        if dashed in ALL_DIVISION_CODES:
+            return dashed
+    return code
+
+
 # Precompiled whole-word alias matchers, in DIVISIONS order.  A trailing "s" is
 # optional so a singular alias also matches its plural ('tuile' -> 'tuiles',
 # 'door' -> 'doors') -- the alias list was inconsistent about listing plurals,

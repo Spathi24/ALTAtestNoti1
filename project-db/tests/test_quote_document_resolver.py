@@ -26,6 +26,7 @@ from project_db.db.models.work import ProjectStatus
 # Filename parsing -- pure, no DB
 # ---------------------------------------------------------------------------
 
+
 class TestParseFilename:
     @pytest.mark.parametrize(
         "filename,expected",
@@ -33,65 +34,126 @@ class TestParseFilename:
             (
                 "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "QUOTE",
-                    "division_code": "22", "trade_name": "Plumbing",
-                    "vendor_slug": "PlombertInc", "status": "selected",
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "QUOTE",
+                    "division_code": "22",
+                    "trade_name": "Plumbing",
+                    "vendor_slug": "PlombertInc",
+                    "status": "selected",
                 },
             ),
             (
                 "2026001_QUOTE_09-Finishes_ABCTile_pending.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "QUOTE",
-                    "division_code": "09", "trade_name": "Finishes",
-                    "vendor_slug": "ABCTile", "status": "pending",
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "QUOTE",
+                    "division_code": "09",
+                    "trade_name": "Finishes",
+                    "vendor_slug": "ABCTile",
+                    "status": "pending",
                 },
             ),
             (
                 "2026001-001_PO_22-Plumbing_PlombertInc_awarded.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": "001", "doctype": "PO",
-                    "division_code": "22", "trade_name": "Plumbing",
-                    "vendor_slug": "PlombertInc", "status": "awarded",
+                    "project_code": "2026001",
+                    "po_seq": "001",
+                    "doctype": "PO",
+                    "division_code": "22",
+                    "trade_name": "Plumbing",
+                    "vendor_slug": "PlombertInc",
+                    "status": "awarded",
                 },
             ),
             (
                 "2026001_SOW_v1.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "SOW",
-                    "division_code": None, "trade_name": None,
-                    "vendor_slug": None, "status": "v1",
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "SOW",
+                    "division_code": None,
+                    "trade_name": None,
+                    "vendor_slug": None,
+                    "status": "v1",
                 },
             ),
             (
                 "2026001_PKG_22-Plumbing.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "PKG",
-                    "division_code": "22", "trade_name": "Plumbing",
-                    "vendor_slug": None, "status": None,
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "PKG",
+                    "division_code": "22",
+                    "trade_name": "Plumbing",
+                    "vendor_slug": None,
+                    "status": None,
+                },
+            ),
+            (
+                # Range division: filenames spell it dashless ("1012" -- a dash
+                # would collide with the field separators); the parse must fold
+                # it to the canonical DB form "10-12" or the SowPackage
+                # exact-match can never hit (the 1012-vs-10-12 trap).
+                "2026001_QUOTE_1012-Fixtures_IkeaKitchens_pending.xlsx",
+                {
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "QUOTE",
+                    "division_code": "10-12",
+                    "trade_name": "Fixtures",
+                    "vendor_slug": "IkeaKitchens",
+                    "status": "pending",
+                },
+            ),
+            (
+                # Single range member also folds to its canonical range.
+                "2026001_PKG_10-Fixtures.xlsx",
+                {
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "PKG",
+                    "division_code": "10-12",
+                    "trade_name": "Fixtures",
+                    "vendor_slug": None,
+                    "status": None,
                 },
             ),
             (
                 "2026001_GREENSHEET.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "GREENSHEET",
-                    "division_code": None, "trade_name": None,
-                    "vendor_slug": None, "status": None,
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "GREENSHEET",
+                    "division_code": None,
+                    "trade_name": None,
+                    "vendor_slug": None,
+                    "status": None,
                 },
             ),
             (
                 "2026001_BUDGET_v1.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "BUDGET",
-                    "division_code": None, "trade_name": None,
-                    "vendor_slug": None, "status": "v1",
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "BUDGET",
+                    "division_code": None,
+                    "trade_name": None,
+                    "vendor_slug": None,
+                    "status": "v1",
                 },
             ),
             (
                 "2026001_JOBCOST.xlsx",
                 {
-                    "project_code": "2026001", "po_seq": None, "doctype": "JOBCOST",
-                    "division_code": None, "trade_name": None,
-                    "vendor_slug": None, "status": None,
+                    "project_code": "2026001",
+                    "po_seq": None,
+                    "doctype": "JOBCOST",
+                    "division_code": None,
+                    "trade_name": None,
+                    "vendor_slug": None,
+                    "status": None,
                 },
             ),
         ],
@@ -124,6 +186,7 @@ class TestParseFilename:
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -145,8 +208,11 @@ def _project(session, *, name="923-927 Rockland", code="2026001"):
     session.add_all([org, client])
     session.flush()
     p = Project(
-        canonical_id=uuid.uuid4(), name=name, code=code,
-        client_id=client.canonical_id, status=ProjectStatus.ACTIVE,
+        canonical_id=uuid.uuid4(),
+        name=name,
+        code=code,
+        client_id=client.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(p)
     session.flush()
@@ -155,8 +221,11 @@ def _project(session, *, name="923-927 Rockland", code="2026001"):
 
 def _package(session, project, *, division_code, title=None):
     pkg = SowPackage(
-        canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-        division_code=division_code, title=title or f"{division_code}-pkg", status="draft",
+        canonical_id=uuid.uuid4(),
+        project_id=project.canonical_id,
+        division_code=division_code,
+        title=title or f"{division_code}-pkg",
+        status="draft",
     )
     session.add(pkg)
     session.flush()
@@ -174,6 +243,7 @@ def _vendor(session, org, *, name):
 # Full resolution
 # ---------------------------------------------------------------------------
 
+
 class TestResolveQuoteDocument:
     def test_fully_resolves_when_everything_exists_and_is_unique(self):
         engine = _make_engine()
@@ -183,9 +253,7 @@ class TestResolveQuoteDocument:
         _vendor(s, org, name="Plombert Inc.")
         s.flush()
 
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.project_id == project.canonical_id
         assert res.project_method == "filename_project_code"
         assert res.package_id is not None
@@ -206,9 +274,7 @@ class TestResolveQuoteDocument:
     def test_unknown_project_code_stays_unresolved(self):
         engine = _make_engine()
         s = _make_session(engine)
-        res = resolve_quote_document(
-            s, "9999999_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "9999999_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.project_id is None
         assert res.package_id is None
         assert res.vendor_id is None
@@ -221,9 +287,7 @@ class TestPackageResolution:
         s = _make_session(engine)
         _org, project = _project(s)
         s.flush()
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.project_id == project.canonical_id  # project still resolves
         assert res.package_id is None
         assert any("no SowPackage" in w for w in res.warnings)
@@ -238,9 +302,7 @@ class TestPackageResolution:
         _package(s, project, division_code="22", title="22-Plumbing-B")
         s.flush()
 
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.package_id is None
         assert any("ambiguous" in w for w in res.warnings)
 
@@ -253,9 +315,7 @@ class TestPackageResolution:
         _package(s, project_b, division_code="22")  # only project_b has div 22
         s.flush()
 
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.project_id == project_a.canonical_id
         assert res.package_id is None  # project_a has no div-22 package
 
@@ -267,9 +327,7 @@ class TestVendorResolution:
         org, _proj = _project(s)
         _vendor(s, org, name="Plombert Inc.")
         s.flush()
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.vendor_id is not None
         assert res.vendor_method == "vendor_slug_exact"
 
@@ -280,9 +338,7 @@ class TestVendorResolution:
         # Vendor name has extra words the slug doesn't carry.
         _vendor(s, org, name="ABC Tile and Stone Ltd")
         s.flush()
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_09-Finishes_ABCTile_pending.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_09-Finishes_ABCTile_pending.xlsx")
         assert res.vendor_id is not None
         assert res.vendor_method == "vendor_slug_substring"
 
@@ -291,9 +347,7 @@ class TestVendorResolution:
         s = _make_session(engine)
         _org, _proj = _project(s)
         s.flush()
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.vendor_id is None
         assert any("matched no Vendor" in w for w in res.warnings)
 
@@ -306,9 +360,7 @@ class TestVendorResolution:
         _vendor(s, org, name="Plombert Inc.")
         _vendor(s, org, name="PLOMBERT INC")  # same fold: "plombertinc"
         s.flush()
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.vendor_id is None
         assert any("ambiguously" in w for w in res.warnings)
 
@@ -335,9 +387,7 @@ class TestPartialResolution:
         _vendor(s, org, name="Plombert Inc.")
         s.flush()  # no SowPackage created
 
-        res = resolve_quote_document(
-            s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx"
-        )
+        res = resolve_quote_document(s, "2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx")
         assert res.project_id is not None
         assert res.vendor_id is not None
         assert res.package_id is None
@@ -353,6 +403,7 @@ class TestPartialResolution:
 # REFOUNDATION_BUILD_NOTES.md). That gap is real and unaddressed by this
 # resolver being correct.
 # ---------------------------------------------------------------------------
+
 
 class TestRealDbSmoke:
     @pytest.fixture
