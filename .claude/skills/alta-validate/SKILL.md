@@ -23,6 +23,21 @@ the real workspace.** This skill is that rule made concrete.
 3. **Downstream** — enumerate consumers of what you changed (reports, search,
    RAG, extractors, web routes) and smoke at least the nearest one.
 
+Plus two standards learned the hard way:
+
+4. **Coverage, not just correctness** — state what fraction of the portfolio
+   the change actually covers ("works on N of 22 projects; skips X because
+   Y"). "Correct on Rockland" twice masqueraded as "done" while every other
+   project's money sat unparsed. Pilot examples are EXAMPLES, not the target
+   distribution — validate on the hardest real doc, not the easiest fixture.
+5. **Counters at every gate** — any pipeline/generate command must print
+   counts per stage (found / parsed / deduped / quarantined / written), so
+   "0 results" is self-explaining. A silent dedup suppressed all proposals
+   for weeks because nobody could tell "suppressed" from "broken".
+6. **Visible delta** — a slice is not done until there is one command or URL
+   the user can run to SEE the change (green tests are invisible to the
+   owner; that gap caused the worst trust collapse on record).
+
 ## Per-subsystem smoke recipes
 
 Run from `project-db/` against the real `project_db.sqlite`. All read-only.
