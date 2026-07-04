@@ -163,9 +163,9 @@ def relink_transactions(session: Session) -> dict[str, int]:
         else:
             stats["unresolved"] += 1
         if changed:
-            session.query(HomeDepotLineItem).filter_by(
-                transaction_id=header.canonical_id
-            ).update({"project_id": pid})
+            session.query(HomeDepotLineItem).filter_by(transaction_id=header.canonical_id).update(
+                {"project_id": pid}
+            )
         else:
             stats["unchanged"] += 1
     return stats
@@ -292,9 +292,7 @@ def import_transactions(
         is_refund = (total is not None and total < 0) or (subtotal is not None and subtotal < 0)
 
         header = (
-            session.query(HomeDepotTransaction)
-            .filter_by(transaction_number=txn_no)
-            .one_or_none()
+            session.query(HomeDepotTransaction).filter_by(transaction_number=txn_no).one_or_none()
         )
         if header is None:
             header = HomeDepotTransaction(transaction_number=txn_no, detail_status="pending")
@@ -335,9 +333,7 @@ def import_transactions(
         # A header subtotal change can flip an already-backfilled reconcile.
         if header.line_item_count:
             items = (
-                session.query(HomeDepotLineItem)
-                .filter_by(transaction_id=header.canonical_id)
-                .all()
+                session.query(HomeDepotLineItem).filter_by(transaction_id=header.canonical_id).all()
             )
             _reconcile(header, items)
 
@@ -374,9 +370,7 @@ def import_details(
 
     for txn_no, rows in grouped.items():
         header = (
-            session.query(HomeDepotTransaction)
-            .filter_by(transaction_number=txn_no)
-            .one_or_none()
+            session.query(HomeDepotTransaction).filter_by(transaction_number=txn_no).one_or_none()
         )
         if header is None:
             # Detail arrived before the header export -- stub it so nothing is lost.

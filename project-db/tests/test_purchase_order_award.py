@@ -42,6 +42,7 @@ from project_db.db.models.work import ProjectStatus
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -63,33 +64,50 @@ def _project_pkg_vendor(session, *, code="2026001"):
     session.add_all([org, client])
     session.flush()
     project = Project(
-        canonical_id=uuid.uuid4(), name="923-927 Rockland", code=code,
-        client_id=client.canonical_id, status=ProjectStatus.ACTIVE,
+        canonical_id=uuid.uuid4(),
+        name="923-927 Rockland",
+        code=code,
+        client_id=client.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
     pkg = SowPackage(
-        canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-        division_code="22", trade_name="Plumbing", title="22-Plumbing", status="draft",
+        canonical_id=uuid.uuid4(),
+        project_id=project.canonical_id,
+        division_code="22",
+        trade_name="Plumbing",
+        title="22-Plumbing",
+        status="draft",
     )
     session.add(pkg)
     session.flush()
-    vendor = Vendor(canonical_id=uuid.uuid4(), name="Plombert Inc.", organization_id=org.canonical_id)
+    vendor = Vendor(
+        canonical_id=uuid.uuid4(), name="Plombert Inc.", organization_id=org.canonical_id
+    )
     session.add(vendor)
     session.flush()
     return project, pkg, vendor
 
 
-def _selected_quote_with_lines(session, project, pkg, vendor, *, status="selected", amount=6800, code_prefix="SOW"):
+def _selected_quote_with_lines(
+    session, project, pkg, vendor, *, status="selected", amount=6800, code_prefix="SOW"
+):
     """A quote + 3 SowItems + 6 cost-side FinancialLineItem rows, mirroring
     Phase 4's real ingest output, without re-running the whole grid parser.
     ``code_prefix`` keeps item_code unique across multiple quotes in the same
     project (item_code uniqueness is project-scoped, per Phase 3)."""
     quote = SubcontractorQuote(
-        canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-        package_id=pkg.canonical_id, vendor_id=vendor.canonical_id,
-        division_code="22", status=status, amount=amount, currency="CAD",
-        evidence_span_id=None, source="grid",
+        canonical_id=uuid.uuid4(),
+        project_id=project.canonical_id,
+        package_id=pkg.canonical_id,
+        vendor_id=vendor.canonical_id,
+        division_code="22",
+        status=status,
+        amount=amount,
+        currency="CAD",
+        evidence_span_id=None,
+        source="grid",
     )
     session.add(quote)
     session.flush()
@@ -97,17 +115,27 @@ def _selected_quote_with_lines(session, project, pkg, vendor, *, status="selecte
     items = []
     for suffix, mat, lab in (("025", 800, 2400), ("026", 1600, 1200), ("027", 500, 300)):
         si = SowItem(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-            package_id=pkg.canonical_id, item_code=f"{code_prefix}-{suffix}", division_code="22",
+            canonical_id=uuid.uuid4(),
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
+            item_code=f"{code_prefix}-{suffix}",
+            division_code="22",
         )
         session.add(si)
         session.flush()
         for amount_type, amt in (("material", mat), ("labour", lab)):
             fli = FinancialLineItem(
-                project_id=project.canonical_id, division_code="22", side="cost",
-                amount_type=amount_type, status="unknown", cost_status="quoted",
-                purchase_type="vendor", sow_item_id=si.canonical_id,
-                subcontractor_quote_id=quote.canonical_id, amount=amt, currency="CAD",
+                project_id=project.canonical_id,
+                division_code="22",
+                side="cost",
+                amount_type=amount_type,
+                status="unknown",
+                cost_status="quoted",
+                purchase_type="vendor",
+                sow_item_id=si.canonical_id,
+                subcontractor_quote_id=quote.canonical_id,
+                amount=amt,
+                currency="CAD",
             )
             session.add(fli)
             items.append(fli)
@@ -119,6 +147,7 @@ def _selected_quote_with_lines(session, project, pkg, vendor, *, status="selecte
 # Schema
 # ---------------------------------------------------------------------------
 
+
 class TestSchema:
     def test_fresh_db_has_purchase_order_table(self):
         engine = _make_engine()
@@ -129,13 +158,17 @@ class TestSchema:
 
     def test_existing_db_migration_adds_table_and_column(self):
         engine = create_engine(
-            "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
         )
         tables = [t for n, t in Base.metadata.tables.items() if n != "purchase_order"]
         Base.metadata.create_all(engine, tables=tables)
         with engine.begin() as conn:
             try:
-                conn.execute(text("ALTER TABLE financial_line_item DROP COLUMN subcontractor_quote_id"))
+                conn.execute(
+                    text("ALTER TABLE financial_line_item DROP COLUMN subcontractor_quote_id")
+                )
             except Exception:
                 pass
         assert "purchase_order" not in set(inspect(engine).get_table_names())
@@ -151,6 +184,7 @@ class TestSchema:
 # ---------------------------------------------------------------------------
 # Award sequence
 # ---------------------------------------------------------------------------
+
 
 class TestAward:
     @pytest.fixture
@@ -212,6 +246,7 @@ class TestAward:
 # Sequential PO numbering
 # ---------------------------------------------------------------------------
 
+
 class TestPoNumbering:
     def test_second_po_in_project_gets_next_sequence(self):
         engine = _make_engine()
@@ -222,8 +257,12 @@ class TestPoNumbering:
         s.commit()
 
         pkg2 = SowPackage(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-            division_code="09", trade_name="Finishes", title="09-Finishes", status="draft",
+            canonical_id=uuid.uuid4(),
+            project_id=project.canonical_id,
+            division_code="09",
+            trade_name="Finishes",
+            title="09-Finishes",
+            status="draft",
         )
         s.add(pkg2)
         s.flush()
@@ -250,6 +289,7 @@ class TestPoNumbering:
 # ---------------------------------------------------------------------------
 # Precondition guards
 # ---------------------------------------------------------------------------
+
 
 class TestGuards:
     def test_pending_quote_cannot_be_awarded(self):
@@ -303,9 +343,14 @@ class TestGuards:
         s = _make_session(engine)
         project, pkg, vendor = _project_pkg_vendor(s)
         quote = SubcontractorQuote(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-            package_id=pkg.canonical_id, vendor_id=vendor.canonical_id,
-            division_code="22", status="selected", amount=6800, currency="CAD",
+            canonical_id=uuid.uuid4(),
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
+            vendor_id=vendor.canonical_id,
+            division_code="22",
+            status="selected",
+            amount=6800,
+            currency="CAD",
             source="grid",
         )
         s.add(quote)
@@ -338,25 +383,36 @@ class TestGuards:
 # Isolation: awarding one quote must not touch another quote's rows
 # ---------------------------------------------------------------------------
 
+
 class TestIsolation:
     def test_awarding_one_quote_does_not_commit_another_quotes_rows(self):
         engine = _make_engine()
         s = _make_session(engine)
         project, pkg, vendor = _project_pkg_vendor(s)
         pkg2 = SowPackage(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-            division_code="09", trade_name="Finishes", title="09-Finishes", status="draft",
+            canonical_id=uuid.uuid4(),
+            project_id=project.canonical_id,
+            division_code="09",
+            trade_name="Finishes",
+            title="09-Finishes",
+            status="draft",
         )
         s.add(pkg2)
         s.flush()
         quote1, _items1 = _selected_quote_with_lines(s, project, pkg, vendor)
-        quote2, _items2 = _selected_quote_with_lines(s, project, pkg2, vendor, amount=5000, code_prefix="FIN")
+        quote2, _items2 = _selected_quote_with_lines(
+            s, project, pkg2, vendor, amount=5000, code_prefix="FIN"
+        )
 
         award_purchase_order(s, quote1)
         s.commit()
 
-        rows1 = s.query(FinancialLineItem).filter_by(subcontractor_quote_id=quote1.canonical_id).all()
-        rows2 = s.query(FinancialLineItem).filter_by(subcontractor_quote_id=quote2.canonical_id).all()
+        rows1 = (
+            s.query(FinancialLineItem).filter_by(subcontractor_quote_id=quote1.canonical_id).all()
+        )
+        rows2 = (
+            s.query(FinancialLineItem).filter_by(subcontractor_quote_id=quote2.canonical_id).all()
+        )
         assert all(r.cost_status == "committed" for r in rows1)
         assert all(r.cost_status == "quoted" for r in rows2)  # untouched
 

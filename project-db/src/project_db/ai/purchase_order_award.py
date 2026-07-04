@@ -179,7 +179,10 @@ def award_purchase_order(
         evidence_span_id=quote.evidence_span_id,
         evidence_locator_json=quote.evidence_locator_json,
         source_meta_json=json.dumps(
-            {"purchase_order_id": str(po.canonical_id), "subcontractor_quote_id": str(quote.canonical_id)}
+            {
+                "purchase_order_id": str(po.canonical_id),
+                "subcontractor_quote_id": str(quote.canonical_id),
+            }
         ),
     )
     session.add(obligation)

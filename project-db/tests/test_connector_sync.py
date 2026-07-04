@@ -351,7 +351,9 @@ class TestTaskCompletionTimestamp:
         item = {"id": "t1", "name": "Pour slab", "group": {"title": "Site"}, "column_values": []}
 
         # IN_PROGRESS -> no completion date yet
-        tid = conn._upsert_task(board, item, self._fields(TaskStatus.IN_PROGRESS), proj.canonical_id)
+        tid = conn._upsert_task(
+            board, item, self._fields(TaskStatus.IN_PROGRESS), proj.canonical_id
+        )
         session.commit()
         task = session.query(Task).filter_by(canonical_id=tid).one()
         assert task.completed_at is None

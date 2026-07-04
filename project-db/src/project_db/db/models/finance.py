@@ -460,9 +460,7 @@ class PurchaseOrder(Base, CanonicalMixin):
 
     __table_args__ = (
         UniqueConstraint("po_number", name="uq_purchase_order_po_number"),
-        UniqueConstraint(
-            "subcontractor_quote_id", name="uq_purchase_order_subcontractor_quote_id"
-        ),
+        UniqueConstraint("subcontractor_quote_id", name="uq_purchase_order_subcontractor_quote_id"),
     )
 
 
@@ -519,9 +517,7 @@ class BudgetSnapshotLine(Base, CanonicalMixin):
     source_meta_json = Column(Text, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint(
-            "snapshot_id", "division_code", name="uq_budget_snapshot_line_division"
-        ),
+        UniqueConstraint("snapshot_id", "division_code", name="uq_budget_snapshot_line_division"),
     )
 
 

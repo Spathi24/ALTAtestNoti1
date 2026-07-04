@@ -34,6 +34,7 @@ from project_db.db.models.work import ProjectStatus
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -55,21 +56,41 @@ def _project(session, *, name="923-927 Rockland", code="2026001"):
     session.add_all([org, client])
     session.flush()
     project = Project(
-        canonical_id=uuid.uuid4(), name=name, code=code,
-        client_id=client.canonical_id, status=ProjectStatus.ACTIVE,
+        canonical_id=uuid.uuid4(),
+        name=name,
+        code=code,
+        client_id=client.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
     return project
 
 
-def _cost_row(session, project, *, division_code, amount, cost_status, amount_type="material",
-               document_id=None, subcontractor_quote_id=None):
+def _cost_row(
+    session,
+    project,
+    *,
+    division_code,
+    amount,
+    cost_status,
+    amount_type="material",
+    document_id=None,
+    subcontractor_quote_id=None,
+):
     row = FinancialLineItem(
-        canonical_id=uuid.uuid4(), project_id=project.canonical_id, document_id=document_id,
-        division_code=division_code, side="cost", amount_type=amount_type,
-        status="unknown", cost_status=cost_status, amount=Decimal(str(amount)), currency="CAD",
-        source="grid", subcontractor_quote_id=subcontractor_quote_id,
+        canonical_id=uuid.uuid4(),
+        project_id=project.canonical_id,
+        document_id=document_id,
+        division_code=division_code,
+        side="cost",
+        amount_type=amount_type,
+        status="unknown",
+        cost_status=cost_status,
+        amount=Decimal(str(amount)),
+        currency="CAD",
+        source="grid",
+        subcontractor_quote_id=subcontractor_quote_id,
     )
     session.add(row)
     return row
@@ -77,8 +98,12 @@ def _cost_row(session, project, *, division_code, amount, cost_status, amount_ty
 
 def _quote(session, project, *, division_code, status, amount=0):
     q = SubcontractorQuote(
-        canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-        division_code=division_code, status=status, amount=Decimal(str(amount)), currency="CAD",
+        canonical_id=uuid.uuid4(),
+        project_id=project.canonical_id,
+        division_code=division_code,
+        status=status,
+        amount=Decimal(str(amount)),
+        currency="CAD",
     )
     session.add(q)
     session.flush()
@@ -92,10 +117,15 @@ def _budget_snapshot(session, project, *, label="v1", lines, created_at=None):
     session.add(snap)
     session.flush()
     for div_code, amount in lines.items():
-        session.add(BudgetSnapshotLine(
-            canonical_id=uuid.uuid4(), snapshot_id=snap.canonical_id, project_id=project.canonical_id,
-            division_code=div_code, budget_amount=Decimal(str(amount)),
-        ))
+        session.add(
+            BudgetSnapshotLine(
+                canonical_id=uuid.uuid4(),
+                snapshot_id=snap.canonical_id,
+                project_id=project.canonical_id,
+                division_code=div_code,
+                budget_amount=Decimal(str(amount)),
+            )
+        )
     session.flush()
     return snap
 
@@ -103,6 +133,7 @@ def _budget_snapshot(session, project, *, label="v1", lines, created_at=None):
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
+
 
 class TestSchema:
     def test_fresh_db_has_tables(self):
@@ -113,10 +144,13 @@ class TestSchema:
 
     def test_existing_db_migration_adds_tables(self):
         engine = create_engine(
-            "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
         )
         tables = [
-            t for n, t in Base.metadata.tables.items()
+            t
+            for n, t in Base.metadata.tables.items()
             if n not in ("budget_snapshot", "budget_snapshot_line")
         ]
         Base.metadata.create_all(engine, tables=tables)
@@ -132,18 +166,30 @@ class TestSchema:
         engine = _make_engine()
         s = _make_session(engine)
         project = _project(s)
-        snap = BudgetSnapshot(canonical_id=uuid.uuid4(), project_id=project.canonical_id, label="v1")
+        snap = BudgetSnapshot(
+            canonical_id=uuid.uuid4(), project_id=project.canonical_id, label="v1"
+        )
         s.add(snap)
         s.flush()
-        s.add(BudgetSnapshotLine(
-            canonical_id=uuid.uuid4(), snapshot_id=snap.canonical_id, project_id=project.canonical_id,
-            division_code="22", budget_amount=Decimal("1000"),
-        ))
+        s.add(
+            BudgetSnapshotLine(
+                canonical_id=uuid.uuid4(),
+                snapshot_id=snap.canonical_id,
+                project_id=project.canonical_id,
+                division_code="22",
+                budget_amount=Decimal("1000"),
+            )
+        )
         s.flush()
-        s.add(BudgetSnapshotLine(
-            canonical_id=uuid.uuid4(), snapshot_id=snap.canonical_id, project_id=project.canonical_id,
-            division_code="22", budget_amount=Decimal("2000"),
-        ))
+        s.add(
+            BudgetSnapshotLine(
+                canonical_id=uuid.uuid4(),
+                snapshot_id=snap.canonical_id,
+                project_id=project.canonical_id,
+                division_code="22",
+                budget_amount=Decimal("2000"),
+            )
+        )
         with pytest.raises(Exception):  # IntegrityError
             s.flush()
 
@@ -151,6 +197,7 @@ class TestSchema:
 # ---------------------------------------------------------------------------
 # Core aggregation behavior
 # ---------------------------------------------------------------------------
+
 
 class TestAggregation:
     def test_no_data_returns_empty_divisions(self):
@@ -174,8 +221,14 @@ class TestAggregation:
         s = _make_session(engine)
         project = _project(s)
         selected = _quote(s, project, division_code="22", status="selected")
-        _cost_row(s, project, division_code="22", amount=800, cost_status="quoted",
-                   subcontractor_quote_id=selected.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=800,
+            cost_status="quoted",
+            subcontractor_quote_id=selected.canonical_id,
+        )
         _cost_row(s, project, division_code="22", amount=500, cost_status="committed")
         _cost_row(s, project, division_code="22", amount=300, cost_status="actual")
         s.flush()
@@ -206,7 +259,9 @@ class TestAggregation:
         engine = _make_engine()
         s = _make_session(engine)
         project = _project(s)
-        _cost_row(s, project, division_code="22", amount=5000, cost_status=None, amount_type="total")
+        _cost_row(
+            s, project, division_code="22", amount=5000, cost_status=None, amount_type="total"
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -237,8 +292,14 @@ class TestAggregation:
         project = _project(s)
         _budget_snapshot(s, project, lines={"22": 10000})
         selected = _quote(s, project, division_code="22", status="selected")
-        _cost_row(s, project, division_code="22", amount=8000, cost_status="quoted",
-                   subcontractor_quote_id=selected.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=8000,
+            cost_status="quoted",
+            subcontractor_quote_id=selected.canonical_id,
+        )
         _cost_row(s, project, division_code="22", amount=1000, cost_status="committed")
         s.flush()
 
@@ -271,11 +332,17 @@ class TestAggregation:
         s = _make_session(engine)
         project = _project(s)
         _budget_snapshot(
-            s, project, label="v1", lines={"22": 5000},
+            s,
+            project,
+            label="v1",
+            lines={"22": 5000},
             created_at=datetime(2026, 1, 1),
         )
         snap2 = _budget_snapshot(
-            s, project, label="v2", lines={"22": 7500},
+            s,
+            project,
+            label="v2",
+            lines={"22": 7500},
             created_at=datetime(2026, 6, 1),
         )
         s.flush()
@@ -308,19 +375,37 @@ class TestAggregation:
         s.add(org_vendor)
         s.flush()
         pkg = SowPackage(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-            division_code="22", trade_name="Plumbing", title="22-Plumbing", status="draft",
+            canonical_id=uuid.uuid4(),
+            project_id=project.canonical_id,
+            division_code="22",
+            trade_name="Plumbing",
+            title="22-Plumbing",
+            status="draft",
         )
         s.add(pkg)
         s.flush()
-        s.add(SubcontractorQuote(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id, package_id=pkg.canonical_id,
-            vendor_id=org_vendor.canonical_id, division_code="22", status="pending", amount=1000,
-        ))
-        s.add(SubcontractorQuote(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id, package_id=pkg.canonical_id,
-            vendor_id=org_vendor.canonical_id, division_code="22", status="selected", amount=1200,
-        ))
+        s.add(
+            SubcontractorQuote(
+                canonical_id=uuid.uuid4(),
+                project_id=project.canonical_id,
+                package_id=pkg.canonical_id,
+                vendor_id=org_vendor.canonical_id,
+                division_code="22",
+                status="pending",
+                amount=1000,
+            )
+        )
+        s.add(
+            SubcontractorQuote(
+                canonical_id=uuid.uuid4(),
+                project_id=project.canonical_id,
+                package_id=pkg.canonical_id,
+                vendor_id=org_vendor.canonical_id,
+                division_code="22",
+                status="selected",
+                amount=1200,
+            )
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -367,6 +452,7 @@ class TestAggregation:
 # spend. quoted_cost must reflect the SELECTED quote only.
 # ---------------------------------------------------------------------------
 
+
 class TestCompetingBids:
     def test_three_bids_one_selected_quoted_cost_is_selected_only(self):
         """The exact scenario: 3 subs quote the same package. Only the
@@ -377,12 +463,30 @@ class TestCompetingBids:
         q_a = _quote(s, project, division_code="22", status="pending", amount=9000)
         q_b = _quote(s, project, division_code="22", status="selected", amount=6800)
         q_c = _quote(s, project, division_code="22", status="recommended", amount=7500)
-        _cost_row(s, project, division_code="22", amount=9000, cost_status="quoted",
-                   subcontractor_quote_id=q_a.canonical_id)
-        _cost_row(s, project, division_code="22", amount=6800, cost_status="quoted",
-                   subcontractor_quote_id=q_b.canonical_id)
-        _cost_row(s, project, division_code="22", amount=7500, cost_status="quoted",
-                   subcontractor_quote_id=q_c.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=9000,
+            cost_status="quoted",
+            subcontractor_quote_id=q_a.canonical_id,
+        )
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=6800,
+            cost_status="quoted",
+            subcontractor_quote_id=q_b.canonical_id,
+        )
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=7500,
+            cost_status="quoted",
+            subcontractor_quote_id=q_c.canonical_id,
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -398,8 +502,14 @@ class TestCompetingBids:
         s = _make_session(engine)
         project = _project(s)
         q_rejected = _quote(s, project, division_code="22", status="rejected", amount=15000)
-        _cost_row(s, project, division_code="22", amount=15000, cost_status="quoted",
-                   subcontractor_quote_id=q_rejected.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=15000,
+            cost_status="quoted",
+            subcontractor_quote_id=q_rejected.canonical_id,
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -419,10 +529,22 @@ class TestCompetingBids:
         project = _project(s)
         q_a = _quote(s, project, division_code="22", status="pending", amount=9000)
         q_b = _quote(s, project, division_code="22", status="recommended", amount=8500)
-        _cost_row(s, project, division_code="22", amount=9000, cost_status="quoted",
-                   subcontractor_quote_id=q_a.canonical_id)
-        _cost_row(s, project, division_code="22", amount=8500, cost_status="quoted",
-                   subcontractor_quote_id=q_b.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=9000,
+            cost_status="quoted",
+            subcontractor_quote_id=q_a.canonical_id,
+        )
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=8500,
+            cost_status="quoted",
+            subcontractor_quote_id=q_b.canonical_id,
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -436,8 +558,14 @@ class TestCompetingBids:
         engine = _make_engine()
         s = _make_session(engine)
         project = _project(s)
-        _cost_row(s, project, division_code="22", amount=400, cost_status="quoted",
-                   subcontractor_quote_id=None)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=400,
+            cost_status="quoted",
+            subcontractor_quote_id=None,
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -455,8 +583,14 @@ class TestCompetingBids:
         s = _make_session(engine)
         project = _project(s)
         q_awarded = _quote(s, project, division_code="22", status="awarded", amount=6800)
-        _cost_row(s, project, division_code="22", amount=6800, cost_status="quoted",
-                   subcontractor_quote_id=q_awarded.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=6800,
+            cost_status="quoted",
+            subcontractor_quote_id=q_awarded.canonical_id,
+        )
         s.flush()
 
         result = report_green_sheet(s, "923-927 Rockland")
@@ -471,6 +605,7 @@ class TestCompetingBids:
 # Cross-check against report_division_margins on the SAME synthetic data
 # ---------------------------------------------------------------------------
 
+
 class TestCrossCheckAgainstMargins:
     def test_actual_cost_matches_division_margins_actual_total_cost(self):
         """Both reports read the same allow-list rule. For a division with
@@ -481,12 +616,22 @@ class TestCrossCheckAgainstMargins:
         s = _make_session(engine)
         project = _project(s)
         doc = Document(
-            canonical_id=uuid.uuid4(), name="invoice.pdf", url="https://x",
+            canonical_id=uuid.uuid4(),
+            name="invoice.pdf",
+            url="https://x",
             project_id=project.canonical_id,
         )
         s.add(doc)
         s.flush()
-        _cost_row(s, project, division_code="22", amount=800, cost_status=None, amount_type="total", document_id=doc.canonical_id)
+        _cost_row(
+            s,
+            project,
+            division_code="22",
+            amount=800,
+            cost_status=None,
+            amount_type="total",
+            document_id=doc.canonical_id,
+        )
         s.flush()
 
         gs = report_green_sheet(s, "923-927 Rockland")
@@ -501,6 +646,7 @@ class TestCrossCheckAgainstMargins:
 # ---------------------------------------------------------------------------
 # Real-DB smoke check (skips cleanly if the real DB isn't present)
 # ---------------------------------------------------------------------------
+
 
 class TestRealDbSmoke:
     @pytest.fixture
@@ -533,7 +679,8 @@ class TestRealDbSmoke:
             d["actual_cost"] for d in gs["divisions"] if d["actual_cost"] is not None
         )
         margins_total_actual = sum(
-            d["actual_total_cost"] for d in margins["divisions"]
+            d["actual_total_cost"]
+            for d in margins["divisions"]
             if d["actual_total_cost"] is not None
         )
         assert gs_total_actual == pytest.approx(margins_total_actual)

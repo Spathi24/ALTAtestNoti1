@@ -97,7 +97,9 @@ def spend_by_project(session: Session) -> list[dict[str, Any]]:
     return sorted(buckets.values(), key=lambda b: b["net_spend"], reverse=True)
 
 
-def top_items(session: Session, *, limit: int = 25, project_id: Any | None = None) -> list[dict[str, Any]]:
+def top_items(
+    session: Session, *, limit: int = 25, project_id: Any | None = None
+) -> list[dict[str, Any]]:
     """Aggregate line items by SKU -- total quantity and spend, ranked by spend."""
     q = session.query(HomeDepotLineItem)
     if project_id is not None:
@@ -107,7 +109,13 @@ def top_items(session: Session, *, limit: int = 25, project_id: Any | None = Non
         key = li.sku or (li.product_name or "?")
         a = agg.setdefault(
             key,
-            {"sku": li.sku, "product_name": li.product_name, "quantity": _ZERO, "spend": _ZERO, "lines": 0},
+            {
+                "sku": li.sku,
+                "product_name": li.product_name,
+                "quantity": _ZERO,
+                "spend": _ZERO,
+                "lines": 0,
+            },
         )
         a["quantity"] += _d(li.quantity)
         a["spend"] += _d(li.subtotal)

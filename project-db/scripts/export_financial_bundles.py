@@ -149,8 +149,10 @@ def main() -> int:
     (out_dir / "_index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
     print(f"Wrote {len(index)} project bundle(s) to {out_dir}/")
     for e in index:
-        print(f"  {e['project'][:40]:40} docs={e['n_docs']:>2} "
-              f"rev=${e['naive_contracted_revenue']:>12,.2f} cost=${e['naive_total_cost']:>11,.2f}")
+        print(
+            f"  {e['project'][:40]:40} docs={e['n_docs']:>2} "
+            f"rev=${e['naive_contracted_revenue']:>12,.2f} cost=${e['naive_total_cost']:>11,.2f}"
+        )
     return 0
 
 

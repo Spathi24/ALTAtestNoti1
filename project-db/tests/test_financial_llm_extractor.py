@@ -493,9 +493,7 @@ class TestPopulateLLMDocument:
         """ledger_side='skip' (budget / schedule / non-financial) -> no rows."""
         project = _seed_project(db_session)
         doc, dt = _make_doc(db_session, project, "Schedule.pdf", _QUOTE_TEXT)
-        ex = MockFinancialLineExtractor(
-            {doc.name: _quote_response(doc_type="other", side="skip")}
-        )
+        ex = MockFinancialLineExtractor({doc.name: _quote_response(doc_type="other", side="skip")})
         res = populate_ledger_llm_for_document(db_session, doc, dt, ex, company_name="Alta")
         assert res.ingestion_status == "skipped"
         assert res.ingestion_reason == "not_financial"

@@ -106,8 +106,12 @@ def _extract_coverage_fields(table) -> dict[str, str | None]:
     }
     try:
         rows = (table.rows if table is not None else None) or []
-        excl = [str(r.get("Exclusions")).strip() for r in rows if str(r.get("Exclusions") or "").strip()]
-        mats = [str(r.get("Mat_Incl")).strip() for r in rows if str(r.get("Mat_Incl") or "").strip()]
+        excl = [
+            str(r.get("Exclusions")).strip() for r in rows if str(r.get("Exclusions") or "").strip()
+        ]
+        mats = [
+            str(r.get("Mat_Incl")).strip() for r in rows if str(r.get("Mat_Incl") or "").strip()
+        ]
         if excl:
             out["exclusions"] = "; ".join(excl)
         if mats:

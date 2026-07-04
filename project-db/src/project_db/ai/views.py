@@ -94,20 +94,12 @@ def _resolve_project(session: Session, ref: str) -> Project | None:
         return hit
     # Legacy job number (numeric string, e.g. "923")
     if hasattr(Project, "legacy_job_number"):
-        hit = (
-            session.query(Project)
-            .filter(Project.legacy_job_number == ref)
-            .one_or_none()
-        )
+        hit = session.query(Project).filter(Project.legacy_job_number == ref).one_or_none()
         if hit:
             return hit
     # Aliases (JSON array — SQLite json_each or LIKE scan)
     if hasattr(Project, "aliases"):
-        hit = (
-            session.query(Project)
-            .filter(Project.aliases.ilike(f'%"{ref}"%'))
-            .first()
-        )
+        hit = session.query(Project).filter(Project.aliases.ilike(f'%"{ref}"%')).first()
         if hit:
             return hit
     # Substring match on name (case-insensitive) — broadest, last resort
@@ -604,10 +596,12 @@ def report_weekly_changes(
             "content_available": content is not None,
         }
         b["documents"].append(doc_entry)
-        b["_events_raw"].append((
-            d.modified_at_source,
-            {"timestamp": _ser(d.modified_at_source), "type": "document_updated", **doc_entry},
-        ))
+        b["_events_raw"].append(
+            (
+                d.modified_at_source,
+                {"timestamp": _ser(d.modified_at_source), "type": "document_updated", **doc_entry},
+            )
+        )
 
     # --- Field notes received within the window (full raw text) ---
     note_q = session.query(FieldNote).filter(
@@ -628,10 +622,12 @@ def report_weekly_changes(
             "text": text,
         }
         b["field_notes"].append(note_entry)
-        b["_events_raw"].append((
-            n.received_at,
-            {"timestamp": _ser(n.received_at), "type": "field_note", **note_entry},
-        ))
+        b["_events_raw"].append(
+            (
+                n.received_at,
+                {"timestamp": _ser(n.received_at), "type": "field_note", **note_entry},
+            )
+        )
 
     # --- Proposals opened / decided within the window ---
     opened = (
@@ -673,6 +669,7 @@ def report_weekly_changes(
 
     def _parse_proposed_value(raw: str) -> Any:
         import json as _j
+
         try:
             return _j.loads(raw)
         except Exception:
@@ -694,10 +691,12 @@ def report_weekly_changes(
             "created_at": _ser(p.created_at),
         }
         b["proposals_opened"].append(entry)
-        b["_events_raw"].append((
-            p.created_at,
-            {"timestamp": _ser(p.created_at), "type": "proposal_opened", **entry},
-        ))
+        b["_events_raw"].append(
+            (
+                p.created_at,
+                {"timestamp": _ser(p.created_at), "type": "proposal_opened", **entry},
+            )
+        )
 
     for p in decided:
         pid = _proposal_pid(p)
@@ -714,10 +713,12 @@ def report_weekly_changes(
             "decided_at": _ser(p.decided_at),
         }
         b["proposals_decided"].append(entry)
-        b["_events_raw"].append((
-            p.decided_at,
-            {"timestamp": _ser(p.decided_at), "type": "proposal_decided", **entry},
-        ))
+        b["_events_raw"].append(
+            (
+                p.decided_at,
+                {"timestamp": _ser(p.decided_at), "type": "proposal_decided", **entry},
+            )
+        )
 
     # --- Tasks completed within the window (completed_at is a Date) ---
     task_q = session.query(Task).filter(
@@ -744,10 +745,12 @@ def report_weekly_changes(
             "subcontractor": t.subcontractor,
         }
         b["tasks_completed"].append(entry)
-        b["_events_raw"].append((
-            sort_dt,
-            {"timestamp": _ser(t.completed_at), "type": "task_completed", **entry},
-        ))
+        b["_events_raw"].append(
+            (
+                sort_dt,
+                {"timestamp": _ser(t.completed_at), "type": "task_completed", **entry},
+            )
+        )
 
     # --- Telegram communications within the window (LabourSourceEvent) ---
     # Anyone can text the bot; every message is captured as a LabourSourceEvent
@@ -796,9 +799,7 @@ def report_weekly_changes(
                 .all()
             }
             worker_name_by_sender = {
-                sk: name_by_wid[wid]
-                for sk, wid in wid_by_sender.items()
-                if name_by_wid.get(wid)
+                sk: name_by_wid[wid] for sk, wid in wid_by_sender.items() if name_by_wid.get(wid)
             }
 
     def _sender_label(ev) -> str:
@@ -848,9 +849,7 @@ def report_weekly_changes(
             )
         elif target_id is None:
             # Project-less message -- only surfaced in the all-projects rollup.
-            site_communications.append(
-                {"timestamp": _ser(eff), "type": "communication", **entry}
-            )
+            site_communications.append({"timestamp": _ser(eff), "type": "communication", **entry})
 
     # --- Prior-window counts (no content -- just trajectory signal) ---
     def _prior_counts(pids_list: list[Any]) -> dict[Any, dict[str, int]]:
@@ -861,35 +860,51 @@ def report_weekly_changes(
         }
         if not pids_list:
             return counts
-        for d in session.query(Document).filter(
-            Document.project_id.in_(pids_list),
-            Document.is_trashed.is_(False),
-            Document.modified_at_source >= prior_start,
-            Document.modified_at_source < window_start,
-        ).all():
+        for d in (
+            session.query(Document)
+            .filter(
+                Document.project_id.in_(pids_list),
+                Document.is_trashed.is_(False),
+                Document.modified_at_source >= prior_start,
+                Document.modified_at_source < window_start,
+            )
+            .all()
+        ):
             if d.project_id in counts:
                 counts[d.project_id]["docs"] += 1
-        for n in session.query(FieldNote).filter(
-            FieldNote.project_id.in_(pids_list),
-            FieldNote.received_at >= prior_start,
-            FieldNote.received_at < window_start,
-        ).all():
+        for n in (
+            session.query(FieldNote)
+            .filter(
+                FieldNote.project_id.in_(pids_list),
+                FieldNote.received_at >= prior_start,
+                FieldNote.received_at < window_start,
+            )
+            .all()
+        ):
             if n.project_id in counts:
                 counts[n.project_id]["notes"] += 1
         # Prior proposals are harder (polymorphic), so we include a simple opened count.
-        for p in session.query(Proposal).filter(
-            Proposal.created_at >= prior_start,
-            Proposal.created_at < window_start,
-        ).all():
+        for p in (
+            session.query(Proposal)
+            .filter(
+                Proposal.created_at >= prior_start,
+                Proposal.created_at < window_start,
+            )
+            .all()
+        ):
             ppid = _proposal_pid(p)
             if ppid in counts:
                 counts[ppid]["proposals_opened"] += 1
-        for t in session.query(Task).filter(
-            Task.project_id.in_(pids_list),
-            Task.completed_at.isnot(None),
-            Task.completed_at >= prior_start_date,
-            Task.completed_at < start_date,
-        ).all():
+        for t in (
+            session.query(Task)
+            .filter(
+                Task.project_id.in_(pids_list),
+                Task.completed_at.isnot(None),
+                Task.completed_at >= prior_start_date,
+                Task.completed_at < start_date,
+            )
+            .all()
+        ):
             if t.project_id in counts:
                 counts[t.project_id]["tasks_completed"] += 1
         return counts

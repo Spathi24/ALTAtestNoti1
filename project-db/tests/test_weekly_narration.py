@@ -67,6 +67,7 @@ def seeded(session, client_factory):
 
 # --- narrate_weekly_report tests ---
 
+
 def test_narrate_adds_narrative_key(session, seeded):
     provider = MockLLMProvider(responses=[_MOCK_NARRATIVE])
     data = narrate_weekly_report(session, "Alpha", provider=provider, now=NOW, since_days=7)
@@ -150,6 +151,7 @@ def test_narrate_result_is_json_serializable(session, seeded):
 
 
 # --- report_weekly_changes enrichment tests (content, events, prior_window) ---
+
 
 def test_delta_document_includes_extracted_content(session, seeded):
     data = report_weekly_changes(session, "Alpha", now=NOW, since_days=7)

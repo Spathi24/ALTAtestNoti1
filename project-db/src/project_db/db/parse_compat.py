@@ -65,11 +65,7 @@ def write_document_text_from_parse(
     text = parse.rendered_text
     tokens = parse.token_count if parse.token_count is not None else _approx_token_count(text)
 
-    existing = (
-        session.query(DocumentText)
-        .filter_by(document_id=parse.document_id)
-        .one_or_none()
-    )
+    existing = session.query(DocumentText).filter_by(document_id=parse.document_id).one_or_none()
     if existing is None:
         row = DocumentText(
             document_id=parse.document_id,

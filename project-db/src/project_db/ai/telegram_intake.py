@@ -424,9 +424,7 @@ def _process_update(
     # ----- Commands -----
     if text.startswith("/start"):
         _handle_start(session, client, text, msg, batch)
-        _record_event(
-            session, update_id, msg, text, "ignored", "command_start", raw_payload=upd
-        )
+        _record_event(session, update_id, msg, text, "ignored", "command_start", raw_payload=upd)
         session.commit()
         return
     if text.startswith(("/help", "/cancel")):
@@ -437,9 +435,7 @@ def _process_update(
         return
     if text.startswith("/status"):
         client.send_message(chat_id, _status_text(session, user_id))
-        _record_event(
-            session, update_id, msg, text, "ignored", "command_status", raw_payload=upd
-        )
+        _record_event(session, update_id, msg, text, "ignored", "command_status", raw_payload=upd)
         session.commit()
         batch.ignored += 1
         return
@@ -493,9 +489,7 @@ def _process_update(
                     default_project_id=worker.default_project_id,
                 )
         except Exception:
-            logger.exception(
-                "[TELEGRAM] labour extraction failed; routing as general content"
-            )
+            logger.exception("[TELEGRAM] labour extraction failed; routing as general content")
             claims = []
 
     if claims:

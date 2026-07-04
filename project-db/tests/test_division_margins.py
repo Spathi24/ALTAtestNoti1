@@ -64,7 +64,19 @@ def _setup(session):
     return project, doc
 
 
-def _add_row(session, project, doc, *, unit, div_code, side, amount_type, amount, status="accepted", cost_status=None):
+def _add_row(
+    session,
+    project,
+    doc,
+    *,
+    unit,
+    div_code,
+    side,
+    amount_type,
+    amount,
+    status="accepted",
+    cost_status=None,
+):
     row = FinancialLineItem(
         canonical_id=uuid.uuid4(),
         project_id=project.canonical_id,
@@ -387,12 +399,26 @@ class TestRevenueStatusGating:
     def test_proposed_excluded_from_contracted_revenue(self, db_session):
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="02",
-            side="revenue", amount_type="total", amount=1000, status="accepted",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=1000,
+            status="accepted",
         )
         _add_row(
-            db_session, project, doc, unit="927", div_code="02",
-            side="revenue", amount_type="total", amount=5000, status="proposed",
+            db_session,
+            project,
+            doc,
+            unit="927",
+            div_code="02",
+            side="revenue",
+            amount_type="total",
+            amount=5000,
+            status="proposed",
         )
         db_session.flush()
 
@@ -405,8 +431,15 @@ class TestRevenueStatusGating:
     def test_proposed_only_division_flagged_and_kept_out_of_margin(self, db_session):
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="927", div_code="09",
-            side="revenue", amount_type="total", amount=4200, status="proposed",
+            db_session,
+            project,
+            doc,
+            unit="927",
+            div_code="09",
+            side="revenue",
+            amount_type="total",
+            amount=4200,
+            status="proposed",
         )
         db_session.flush()
 
@@ -420,8 +453,15 @@ class TestRevenueStatusGating:
     def test_superseded_excluded_entirely(self, db_session):
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22",
-            side="revenue", amount_type="total", amount=900, status="superseded",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="revenue",
+            amount_type="total",
+            amount=900,
+            status="superseded",
         )
         db_session.flush()
 
@@ -435,8 +475,15 @@ class TestRevenueStatusGating:
         """LLM-extracted rows carry status='unknown' -- treat as contracted."""
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22",
-            side="revenue", amount_type="total", amount=750, status="unknown",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="revenue",
+            amount_type="total",
+            amount=750,
+            status="unknown",
         )
         db_session.flush()
 
@@ -554,8 +601,15 @@ class TestCostStatusAllowList:
         margins page goes blank."""
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="material", amount=800, cost_status=None,
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="material",
+            amount=800,
+            cost_status=None,
         )
         db_session.flush()
 
@@ -567,8 +621,15 @@ class TestCostStatusAllowList:
     def test_actual_cost_status_counts(self, db_session):
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="labour", amount=300, cost_status="actual",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="labour",
+            amount=300,
+            cost_status="actual",
         )
         db_session.flush()
 
@@ -581,8 +642,15 @@ class TestCostStatusAllowList:
         NOT show up as actual spend."""
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="material", amount=800, cost_status="quoted",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="material",
+            amount=800,
+            cost_status="quoted",
         )
         db_session.flush()
 
@@ -596,8 +664,15 @@ class TestCostStatusAllowList:
     def test_committed_cost_status_excluded_from_actual(self, db_session):
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="labour", amount=300, cost_status="committed",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="labour",
+            amount=300,
+            cost_status="committed",
         )
         db_session.flush()
 
@@ -613,12 +688,26 @@ class TestCostStatusAllowList:
         together."""
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="material", amount=500, cost_status=None,
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="material",
+            amount=500,
+            cost_status=None,
         )
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="material", amount=800, cost_status="quoted",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="material",
+            amount=800,
+            cost_status="quoted",
         )
         db_session.flush()
 
@@ -631,8 +720,15 @@ class TestCostStatusAllowList:
     def test_unknown_cost_status_excluded(self, db_session):
         project, doc = _setup(db_session)
         _add_row(
-            db_session, project, doc, unit="923", div_code="22", side="cost",
-            amount_type="other", amount=150, cost_status="unknown",
+            db_session,
+            project,
+            doc,
+            unit="923",
+            div_code="22",
+            side="cost",
+            amount_type="other",
+            amount=150,
+            cost_status="unknown",
         )
         db_session.flush()
 
@@ -677,11 +773,7 @@ class TestCostStatusRegressionRealProjects:
         """Precondition the regression relies on: if this ever fails, a real
         project now has non-NULL cost_status rows and the two tests below stop
         proving what they claim to prove."""
-        rows = (
-            real_session.query(FinancialLineItem)
-            .filter(FinancialLineItem.side == "cost")
-            .all()
-        )
+        rows = real_session.query(FinancialLineItem).filter(FinancialLineItem.side == "cost").all()
         assert rows, "expected real side=cost rows in this checkout's DB"
         non_null = [r for r in rows if r.cost_status is not None]
         assert non_null == [], (
@@ -699,7 +791,8 @@ class TestCostStatusRegressionRealProjects:
             result = report_division_margins(real_session, name)
             assert "error" not in result, f"{name}: {result.get('error')}"
             total_cost = sum(
-                d["actual_total_cost"] for d in result["divisions"]
+                d["actual_total_cost"]
+                for d in result["divisions"]
                 if d["actual_total_cost"] is not None
             )
             # No pin on the exact dollar value (real data, could legitimately
@@ -707,8 +800,7 @@ class TestCostStatusRegressionRealProjects:
             # narrower and load-bearing: with every row still NULL cost_status,
             # NOTHING is excluded as pipeline_cost today.
             pipeline_total = sum(
-                d["pipeline_cost"] for d in result["divisions"]
-                if d["pipeline_cost"] is not None
+                d["pipeline_cost"] for d in result["divisions"] if d["pipeline_cost"] is not None
             )
             assert pipeline_total == 0, (
                 f"{name}: {pipeline_total} of cost unexpectedly excluded as "

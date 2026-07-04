@@ -48,16 +48,16 @@ def _amount_in_text(amount, text: str) -> bool:
         return True  # zero rows are structural placeholders, not hallucinations
     # Normalise the text: drop spaces used as thousands sep, unify decimal comma.
     norm = text.replace(" ", " ")  # noqa: RUF001 - intentional Quebec-French NBSP/narrow-NBSP handling
-    norm_nospace = re.sub(r"(?<=\d)[  ](?=\d)", "", norm)  # "1 234" -> "1234"  # noqa: RUF001 - intentional Quebec-French NBSP/narrow-NBSP handling
+    norm_nospace = re.sub(r"(?<=\d)[  ](?=\d)", "", norm)  # noqa: RUF001 - "1 234" -> "1234"
     candidates = set()
     whole = round(val)  # val is float -> round() already returns int
-    candidates.add(f"{val:.2f}")           # 1234.50
+    candidates.add(f"{val:.2f}")  # 1234.50
     candidates.add(f"{val:.2f}".rstrip("0").rstrip("."))  # 1234.5 / 1234
-    candidates.add(f"{whole}")             # 1234
-    candidates.add(f"{whole:,}")           # 1,234
-    candidates.add(f"{val:,.2f}")          # 1,234.50
+    candidates.add(f"{whole}")  # 1234
+    candidates.add(f"{whole:,}")  # 1,234
+    candidates.add(f"{val:,.2f}")  # 1,234.50
     # French decimal comma forms
-    candidates.add(f"{val:.2f}".replace(".", ","))         # 1234,50
+    candidates.add(f"{val:.2f}".replace(".", ","))  # 1234,50
     candidates.add(f"{val:,.2f}".replace(",", " ").replace(".", ","))  # 1 234,50
     hay = norm + "\n" + norm_nospace
     return any(c in hay for c in candidates if c)
@@ -140,14 +140,16 @@ def audit_project(session, project) -> dict:
 
 
 def _print_human(rep: dict) -> None:
-    print(f"\n{'='*88}\nPROJECT: {rep['project']}")
+    print(f"\n{'=' * 88}\nPROJECT: {rep['project']}")
     print(
         f"  docs={rep['n_docs_with_rows']} rows={rep['n_rows']} "
         f"amount-found-in-source={rep['n_amount_found_in_source']}/{rep['n_rows']} "
         f"(model-verified-flag={rep['n_amount_verified_flag']})"
     )
     for d in rep["docs"]:
-        print(f"\n  --- {d['document']}  (type={d['source_doc_type']} text_len={d['text_len']}) ---")
+        print(
+            f"\n  --- {d['document']}  (type={d['source_doc_type']} text_len={d['text_len']}) ---"
+        )
         for r in d["rows"]:
             ok = "OK " if r["amount_found_in_source"] else "!! "
             print(
@@ -172,9 +174,7 @@ def main() -> int:
             if not args.project:
                 print("FAIL: give a project name or --all", file=sys.stderr)
                 return 2
-            projects = (
-                s.query(Project).filter(Project.name.ilike(f"%{args.project}%")).all()
-            )
+            projects = s.query(Project).filter(Project.name.ilike(f"%{args.project}%")).all()
             if not projects:
                 print(f"FAIL: no project matched {args.project!r}", file=sys.stderr)
                 return 2
@@ -193,11 +193,11 @@ def main() -> int:
             grand_found = sum(r["n_amount_found_in_source"] for r in reports)
             for rep in reports:
                 _print_human(rep)
-            print(f"\n{'='*88}")
+            print(f"\n{'=' * 88}")
             print(
                 f"TOTAL: {len(reports)} projects, {grand_rows} rows, "
                 f"{grand_found} amounts found verbatim in source "
-                f"({100*grand_found/grand_rows if grand_rows else 0:.1f}%)"
+                f"({100 * grand_found / grand_rows if grand_rows else 0:.1f}%)"
             )
     return 0
 

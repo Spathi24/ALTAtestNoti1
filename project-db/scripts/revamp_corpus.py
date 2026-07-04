@@ -151,8 +151,7 @@ def main() -> int:
             docs = [
                 d
                 for d in docs
-                if d.mime_type in _FAST_MIMES
-                or _fin_signal(d.name, d.folder_path, d.category)
+                if d.mime_type in _FAST_MIMES or _fin_signal(d.name, d.folder_path, d.category)
             ]
 
         docs.sort(
@@ -210,7 +209,9 @@ def main() -> int:
                 raw, parser_mime = _fetch_bytes(client, doc)
             except Exception as exc:
                 failed += 1
-                print(f"  [{i}/{len(docs)}] FETCH-FAIL {(doc.name or '')[:46]!r}: {exc}", flush=True)
+                print(
+                    f"  [{i}/{len(docs)}] FETCH-FAIL {(doc.name or '')[:46]!r}: {exc}", flush=True
+                )
                 continue
 
             t0 = time.monotonic()
@@ -235,15 +236,12 @@ def main() -> int:
 
             tag = "PDF" if is_pdf else "fast"
             line = (
-                f"  [{i}/{len(docs)}] {tag} {dt:6.1f}s  {parse.status:>7}  "
-                f"{(doc.name or '')[:48]}"
+                f"  [{i}/{len(docs)}] {tag} {dt:6.1f}s  {parse.status:>7}  {(doc.name or '')[:48]}"
             )
             if is_pdf:
                 pdf_times.append(dt)
                 avg = sum(pdf_times) / len(pdf_times)
-                pdf_left = sum(
-                    1 for d in docs[i:] if d.mime_type == "application/pdf"
-                )
+                pdf_left = sum(1 for d in docs[i:] if d.mime_type == "application/pdf")
                 line += f"  | pdf avg {avg:4.0f}s, ~{_fmt_eta(avg * pdf_left)} left"
             print(line, flush=True)
 
@@ -253,7 +251,9 @@ def main() -> int:
             f"DONE in {_fmt_eta(elapsed)} -- parsed {done}, skipped {skipped}, failed {failed}",
             flush=True,
         )
-        print("Evidence spine populated. Slice 6 will read these spans into the ledger.", flush=True)
+        print(
+            "Evidence spine populated. Slice 6 will read these spans into the ledger.", flush=True
+        )
         print("=" * 70, flush=True)
     return 0
 

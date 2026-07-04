@@ -198,9 +198,7 @@ class TestInviteAndBinding:
         assert batch.bound == 0
         # Andres's pending identity stays unverified.
         andres_identity = (
-            db_session.query(TelegramIdentity)
-            .filter_by(worker_id=andres.canonical_id)
-            .one()
+            db_session.query(TelegramIdentity).filter_by(worker_id=andres.canonical_id).one()
         )
         assert andres_identity.verified is False
         assert andres_identity.telegram_user_id is None
@@ -496,9 +494,7 @@ class TestProjectAttribution:
         from project_db.ai.telegram_intake import _attribute_project
 
         p = _project(db_session)
-        pid, method, _ = _attribute_project(
-            db_session, "999", "all done at 923-927 Rockland today"
-        )
+        pid, method, _ = _attribute_project(db_session, "999", "all done at 923-927 Rockland today")
         assert pid == p.canonical_id
         assert method == "text_match"
 

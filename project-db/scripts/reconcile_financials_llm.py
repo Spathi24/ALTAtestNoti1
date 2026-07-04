@@ -135,7 +135,9 @@ Apply the RULES generally; do not hard-code project-specific facts. If a project
 return an empty flags array."""
 
 
-def recon_user_prompt(project: str, naive_rev: float, naive_cost: float, doc_blocks: str, doc_index: str) -> str:
+def recon_user_prompt(
+    project: str, naive_rev: float, naive_cost: float, doc_blocks: str, doc_index: str
+) -> str:
     return (
         f"PROJECT: {project}\n"
         f"NAIVE_CONTRACTED_REVENUE (current system): {naive_rev:.2f}\n"
@@ -146,7 +148,9 @@ def recon_user_prompt(project: str, naive_rev: float, naive_cost: float, doc_blo
     )
 
 
-def consolidate_user_prompt(project: str, naive_rev: float, naive_cost: float, doc_index: str, candidates: str) -> str:
+def consolidate_user_prompt(
+    project: str, naive_rev: float, naive_cost: float, doc_index: str, candidates: str
+) -> str:
     return (
         f"PROJECT: {project}\n"
         f"NAIVE_CONTRACTED_REVENUE: {naive_rev:.2f}\nNAIVE_TOTAL_COST: {naive_cost:.2f}\n\n"
@@ -181,11 +185,21 @@ _FLAG_PROPS = {
     "flag_id": {"type": "string", "description": "short unique id within the project, e.g. f1"},
     "flag_type": {
         "type": "string",
-        "enum": ["duplicate", "rollup_restatement", "superseding_version", "side_misclassification", "tax_contamination", "other"],
+        "enum": [
+            "duplicate",
+            "rollup_restatement",
+            "superseding_version",
+            "side_misclassification",
+            "tax_contamination",
+            "other",
+        ],
     },
     "severity": {"type": "string", "enum": ["high", "medium", "low"]},
     "documents": {"type": "array", "items": {"type": "string"}},
-    "revenue_delta": {"type": "number", "description": "signed CAD change to contracted revenue if applied"},
+    "revenue_delta": {
+        "type": "number",
+        "description": "signed CAD change to contracted revenue if applied",
+    },
     "cost_delta": {"type": "number", "description": "signed CAD change to total cost if applied"},
     "current_treatment": {"type": "string"},
     "recommended_treatment": {"type": "string"},
@@ -233,7 +247,10 @@ VERDICT_SCHEMA = {
                     "required": ["flag_id", "verdict", "revenue_delta", "cost_delta", "reasoning"],
                     "properties": {
                         "flag_id": {"type": "string"},
-                        "verdict": {"type": "string", "enum": ["confirmed", "refuted", "uncertain"]},
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["confirmed", "refuted", "uncertain"],
+                        },
                         "revenue_delta": {"type": "number"},
                         "cost_delta": {"type": "number"},
                         "reasoning": {"type": "string"},
@@ -248,6 +265,7 @@ VERDICT_SCHEMA = {
 # ---------------------------------------------------------------------------
 # Rendering bundle docs into compact text for the model
 # ---------------------------------------------------------------------------
+
 
 def _doc_index_line(doc: dict) -> str:
     statuses = ",".join(doc.get("revenue_statuses") or []) or "-"
@@ -300,6 +318,7 @@ def _chunk_docs(docs: list[dict], snippet_chars: int, budget_chars: int) -> list
 # OpenAI plumbing
 # ---------------------------------------------------------------------------
 
+
 class _LLM:
     def __init__(self, model: str, timeout: float = 120.0) -> None:
         key = os.environ.get("OPENAI_API_KEY")
@@ -319,7 +338,10 @@ class _LLM:
                 resp = self._client.chat.completions.create(
                     model=self.model,
                     temperature=0,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
                     response_format={"type": "json_schema", "json_schema": schema},
                 )
                 msg = resp.choices[0].message
@@ -331,7 +353,7 @@ class _LLM:
                 s = str(exc)
                 if "rate_limit" in s or "429" in s or "Rate limit" in s:
                     m = re.search(r"try again in ([\d.]+)s", s)
-                    wait = float(m.group(1)) + 0.5 if m else min(2 ** attempt, 30)
+                    wait = float(m.group(1)) + 0.5 if m else min(2**attempt, 30)
                     time.sleep(wait)
                     continue
                 raise
@@ -342,7 +364,10 @@ class _LLM:
 # Per-project reconciliation
 # ---------------------------------------------------------------------------
 
-def reconcile_project(llm: _LLM, bundle: dict, *, snippet_chars: int, budget_chars: int, verify: bool) -> dict:
+
+def reconcile_project(
+    llm: _LLM, bundle: dict, *, snippet_chars: int, budget_chars: int, verify: bool
+) -> dict:
     project = bundle["project"]
     naive_rev = float(bundle.get("naive_contracted_revenue") or 0)
     naive_cost = float(bundle.get("naive_total_cost") or 0)
@@ -353,7 +378,9 @@ def reconcile_project(llm: _LLM, bundle: dict, *, snippet_chars: int, budget_cha
     if len(chunks) <= 1:
         blocks = "\n".join(_doc_block(d, snippet_chars) for d in docs)
         recon = llm.structured(
-            SYSTEM_PROMPT, recon_user_prompt(project, naive_rev, naive_cost, blocks, doc_index), RECON_SCHEMA
+            SYSTEM_PROMPT,
+            recon_user_prompt(project, naive_rev, naive_cost, blocks, doc_index),
+            RECON_SCHEMA,
         )
         flags = recon.get("flags") or []
         confidence = recon.get("confidence", "medium")
@@ -364,7 +391,9 @@ def reconcile_project(llm: _LLM, bundle: dict, *, snippet_chars: int, budget_cha
         for i, chunk in enumerate(chunks):
             blocks = "\n".join(_doc_block(d, snippet_chars) for d in chunk)
             part = llm.structured(
-                SYSTEM_PROMPT, recon_user_prompt(project, naive_rev, naive_cost, blocks, doc_index), RECON_SCHEMA
+                SYSTEM_PROMPT,
+                recon_user_prompt(project, naive_rev, naive_cost, blocks, doc_index),
+                RECON_SCHEMA,
             )
             for f in part.get("flags") or []:
                 f["flag_id"] = f"b{i}_{f.get('flag_id', 'f')}"
@@ -372,7 +401,9 @@ def reconcile_project(llm: _LLM, bundle: dict, *, snippet_chars: int, budget_cha
         # Consolidate candidates with full cross-doc index.
         merged = llm.structured(
             SYSTEM_PROMPT,
-            consolidate_user_prompt(project, naive_rev, naive_cost, doc_index, json.dumps(candidate_flags, indent=2)),
+            consolidate_user_prompt(
+                project, naive_rev, naive_cost, doc_index, json.dumps(candidate_flags, indent=2)
+            ),
             RECON_SCHEMA,
         )
         flags = merged.get("flags") or []
@@ -399,8 +430,14 @@ def reconcile_project(llm: _LLM, bundle: dict, *, snippet_chars: int, budget_cha
     for f in flags:
         v = verdict_map.get(f["flag_id"])
         verdict = (v or {}).get("verdict", "unverified" if verify else "not_verified")
-        r_delta = float((v or {}).get("revenue_delta", f.get("revenue_delta", 0)) if v else f.get("revenue_delta", 0))
-        c_delta = float((v or {}).get("cost_delta", f.get("cost_delta", 0)) if v else f.get("cost_delta", 0))
+        r_delta = float(
+            (v or {}).get("revenue_delta", f.get("revenue_delta", 0))
+            if v
+            else f.get("revenue_delta", 0)
+        )
+        c_delta = float(
+            (v or {}).get("cost_delta", f.get("cost_delta", 0)) if v else f.get("cost_delta", 0)
+        )
         applied = verdict != "refuted"
         if applied:
             rev_adj += r_delta
@@ -433,6 +470,7 @@ def reconcile_project(llm: _LLM, bundle: dict, *, snippet_chars: int, budget_cha
 # Report rendering
 # ---------------------------------------------------------------------------
 
+
 def render_markdown(reports: list[dict]) -> str:
     lines = ["# Cross-Document Financial Reconciliation (advisory)\n"]
     lines.append(
@@ -450,7 +488,9 @@ def render_markdown(reports: list[dict]) -> str:
         f"**{tot_corr_cost:,.2f}** (Δ {tot_corr_cost - tot_naive_cost:,.2f}); "
         f"{n_app} proposed correction(s) across {len(reports)} projects. Each needs your approval.\n"
     )
-    lines.append("| Project | Naive rev | Corrected rev | Naive cost | Corrected cost | Applied flags |")
+    lines.append(
+        "| Project | Naive rev | Corrected rev | Naive cost | Corrected cost | Applied flags |"
+    )
     lines.append("|---|--:|--:|--:|--:|--:|")
     for r in sorted(reports, key=lambda x: x["naive_contracted_revenue"], reverse=True):
         nc = sum(1 for f in r["flags"] if f.get("applied"))
@@ -475,7 +515,9 @@ def render_markdown(reports: list[dict]) -> str:
         for f in flags:
             if f["verdict"] == "refuted":
                 continue
-            mark = {"confirmed": "OK", "uncertain": "??", "unverified": "--"}.get(f["verdict"], "--")
+            mark = {"confirmed": "OK", "uncertain": "??", "unverified": "--"}.get(
+                f["verdict"], "--"
+            )
             lines.append(
                 f"\n- **[{mark} {f['verdict']}] {f['flag_type']} / {f['severity']}** "
                 f"(rev Δ {f['verified_revenue_delta']:,.2f}, cost Δ {f['verified_cost_delta']:,.2f})"
@@ -495,14 +537,16 @@ def render_markdown(reports: list[dict]) -> str:
                 lines.append(
                     f"  - ~~{f['flag_type']}~~ {', '.join(repr(d) for d in f.get('documents', []))}: "
                     f"proposed rev Δ {f.get('revenue_delta', 0):,.2f}, cost Δ {f.get('cost_delta', 0):,.2f} "
-                    f"-- {f.get('recommended_treatment', '')[:160]} (verifier: {f.get('verifier_reasoning','')[:160]})"
+                    f"-- {f.get('recommended_treatment', '')[:160]} (verifier: {f.get('verifier_reasoning', '')[:160]})"
                 )
     # Needs-your-eyes queue
     uncertain = [(r, f) for r in reports for f in r["flags"] if f["verdict"] == "uncertain"]
     if uncertain:
         lines.append("\n## Needs your eyes (uncertain)")
         for r, f in uncertain:
-            lines.append(f"- **{r['project']}**: {f.get('recommended_treatment', '')} ({f.get('reasoning','')[:200]})")
+            lines.append(
+                f"- **{r['project']}**: {f.get('recommended_treatment', '')} ({f.get('reasoning', '')[:200]})"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -510,16 +554,35 @@ def render_markdown(reports: list[dict]) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--bundles-dir", default=".reconcile_bundles", help="dir of *.json bundles from export_financial_bundles.py")
-    ap.add_argument("--out", default=None, help="output basename (default <bundles-dir>/_reconciliation)")
+    ap.add_argument(
+        "--bundles-dir",
+        default=".reconcile_bundles",
+        help="dir of *.json bundles from export_financial_bundles.py",
+    )
+    ap.add_argument(
+        "--out", default=None, help="output basename (default <bundles-dir>/_reconciliation)"
+    )
     # gpt-4.1 is the right tier here: gpt-4o-mini invents false errors and gpt-4o misses
     # the subtler cross-doc patterns (vendor-worksheet-as-revenue). Override with --model.
     ap.add_argument("--model", default=os.environ.get("OPENAI_RECONCILE_MODEL", "gpt-4.1"))
-    ap.add_argument("--snippet-chars", type=int, default=2800, help="source-text chars per doc sent to the model")
-    ap.add_argument("--budget-chars", type=int, default=45_000, help="max rendered detail per call before splitting")
-    ap.add_argument("--project", default=None, help="only this project (substring match on file/name)")
+    ap.add_argument(
+        "--snippet-chars",
+        type=int,
+        default=2800,
+        help="source-text chars per doc sent to the model",
+    )
+    ap.add_argument(
+        "--budget-chars",
+        type=int,
+        default=45_000,
+        help="max rendered detail per call before splitting",
+    )
+    ap.add_argument(
+        "--project", default=None, help="only this project (substring match on file/name)"
+    )
     ap.add_argument("--no-verify", action="store_true", help="skip the adversarial verify pass")
     args = ap.parse_args()
 
@@ -537,12 +600,18 @@ def main() -> int:
 
     llm = _LLM(args.model)
     reports = []
-    print(f"Reconciling {len(files)} project(s) with {args.model} (verify={'off' if args.no_verify else 'on'})...\n")
+    print(
+        f"Reconciling {len(files)} project(s) with {args.model} (verify={'off' if args.no_verify else 'on'})...\n"
+    )
     for p in files:
         bundle = json.loads(p.read_text(encoding="utf-8"))
         try:
             rep = reconcile_project(
-                llm, bundle, snippet_chars=args.snippet_chars, budget_chars=args.budget_chars, verify=not args.no_verify
+                llm,
+                bundle,
+                snippet_chars=args.snippet_chars,
+                budget_chars=args.budget_chars,
+                verify=not args.no_verify,
             )
         except Exception as exc:  # keep going; one bad project should not sink the run
             print(f"  FAIL {bundle.get('project', p.name)}: {exc}", file=sys.stderr)
@@ -557,10 +626,14 @@ def main() -> int:
 
     out_base = Path(args.out) if args.out else bdir / "_reconciliation"
     out_base.parent.mkdir(parents=True, exist_ok=True)
-    (out_base.with_suffix(".json")).write_text(json.dumps(reports, indent=2, default=str), encoding="utf-8")
+    (out_base.with_suffix(".json")).write_text(
+        json.dumps(reports, indent=2, default=str), encoding="utf-8"
+    )
     (out_base.with_suffix(".md")).write_text(render_markdown(reports), encoding="utf-8")
 
-    tot_d_rev = sum(r["corrected_contracted_revenue"] - r["naive_contracted_revenue"] for r in reports)
+    tot_d_rev = sum(
+        r["corrected_contracted_revenue"] - r["naive_contracted_revenue"] for r in reports
+    )
     tot_d_cost = sum(r["corrected_total_cost"] - r["naive_total_cost"] for r in reports)
     print(
         f"\nDone in {llm.calls} OpenAI call(s). Portfolio revenue change {tot_d_rev:,.2f}, "

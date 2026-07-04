@@ -31,6 +31,7 @@ from project_db.db.models.work import ProjectStatus
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -81,7 +82,17 @@ def _package(session, project, *, division_code="22", trade_name="Plumbing", tit
     return pkg
 
 
-def _item(session, project, package, *, item_code, description="test item", division_code="22", included=True, material_spec=None):
+def _item(
+    session,
+    project,
+    package,
+    *,
+    item_code,
+    description="test item",
+    division_code="22",
+    included=True,
+    material_spec=None,
+):
     item = SowItem(
         canonical_id=uuid.uuid4(),
         project_id=project.canonical_id,
@@ -101,6 +112,7 @@ def _item(session, project, package, *, item_code, description="test item", divi
 # Schema tests
 # ---------------------------------------------------------------------------
 
+
 class TestSchema:
     def test_tables_present_on_fresh_db(self):
         engine = _make_engine()
@@ -118,8 +130,7 @@ class TestSchema:
         )
         # Build the metadata graph without the sow tables to simulate a pre-Phase-3 DB.
         tables_to_create = [
-            t for name, t in Base.metadata.tables.items()
-            if name not in ("sow_package", "sow_item")
+            t for name, t in Base.metadata.tables.items() if name not in ("sow_package", "sow_item")
         ]
         Base.metadata.create_all(engine, tables=tables_to_create)
 
@@ -136,13 +147,21 @@ class TestSchema:
     def test_sow_item_has_no_cost_fields(self):
         """SowItem is scope, not ledger -- it must not carry money columns."""
         insp_cols = {c.name for c in SowItem.__table__.columns}
-        for forbidden in ("amount", "material_amount", "labour_amount", "total_amount", "cost", "price"):
+        for forbidden in (
+            "amount",
+            "material_amount",
+            "labour_amount",
+            "total_amount",
+            "cost",
+            "price",
+        ):
             assert forbidden not in insp_cols, f"SowItem must not have a {forbidden!r} column"
 
 
 # ---------------------------------------------------------------------------
 # Relationship / behavior tests
 # ---------------------------------------------------------------------------
+
 
 class TestPackageItemLinkage:
     @pytest.fixture
@@ -162,8 +181,12 @@ class TestPackageItemLinkage:
     def test_rockland_can_have_packages_and_items(self, session):
         _org, client = _org_client(session)
         project = _project(session, client, name="923-927 Rockland", code="2026001")
-        pkg = _package(session, project, division_code="09", trade_name="Finishes", title="09-Finishes")
-        item = _item(session, project, pkg, item_code="SOW-025", description="Interior paint, 2 coats")
+        pkg = _package(
+            session, project, division_code="09", trade_name="Finishes", title="09-Finishes"
+        )
+        item = _item(
+            session, project, pkg, item_code="SOW-025", description="Interior paint, 2 coats"
+        )
         session.commit()
 
         fetched_pkg = session.query(SowPackage).filter_by(project_id=project.canonical_id).one()
@@ -190,8 +213,11 @@ class TestPackageItemLinkage:
         _org, client = _org_client(session)
         project = _project(session, client)
         item = _item(
-            session, project, None,
-            item_code="SOW-001", description="Site supervision and coordination",
+            session,
+            project,
+            None,
+            item_code="SOW-001",
+            description="Site supervision and coordination",
             division_code="01",
         )
         session.commit()

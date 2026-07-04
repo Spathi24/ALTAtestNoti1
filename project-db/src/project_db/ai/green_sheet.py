@@ -228,9 +228,7 @@ def report_green_sheet(
                 # cost_status="committed" by the PO award. Flag rather than
                 # guess which bucket it belongs in.
                 bucket["unclassified"] += amount
-                bucket["unclassified_statuses_seen"].add(
-                    f"quoted-row/quote_status={q_status!r}"
-                )
+                bucket["unclassified_statuses_seen"].add(f"quoted-row/quote_status={q_status!r}")
         elif r.cost_status == _COMMITTED_STATUS:
             bucket["committed"] += amount
         else:

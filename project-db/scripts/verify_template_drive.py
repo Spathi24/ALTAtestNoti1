@@ -12,6 +12,7 @@ Checks per QUOTE file:
 
 Exit 0 = all checks pass. Exit 1 = at least one failure.
 """
+
 from __future__ import annotations
 
 import sys
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
     from project_db.cli import force_utf8_output
+
     force_utf8_output()
 except Exception:
     pass
@@ -58,7 +60,8 @@ for p in sorted(QUOTE_DIR.glob("*.xlsx")):
     )
 
     quote_spans = [
-        s for s in doc.evidence_spans
+        s
+        for s in doc.evidence_spans
         if isinstance(s.locator, dict) and s.locator.get("sheet") == "Quote_Lines"
     ]
 

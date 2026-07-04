@@ -227,11 +227,7 @@ def _build_cluster(
     work_date = next((m.work_date for m in members if m.work_date), None)
     channels = sorted({m.source_channel for m in members})
     review_flags = sorted({flag for m in members for flag in _claim_review_flags(m)})
-    hard_flags = {
-        flag
-        for flag in review_flags
-        if flag not in _SOFT_REVIEW_FLAGS
-    }
+    hard_flags = {flag for flag in review_flags if flag not in _SOFT_REVIEW_FLAGS}
 
     reported = [
         Decimal(str(m.total_hours_reported)) for m in members if m.total_hours_reported is not None

@@ -67,9 +67,36 @@ def _detail_file(tmp_path, rows, name="Pro_Transactions_Details.xlsx"):
 # Real STL-GIFT-K detail rows (sum == 111.58 == the header subtotal).
 STL_GIFT_K = "7149-00007-62120-20260622"
 STL_GIFT_K_ITEMS = [
-    ("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "1000839582", "Gold Series 6-Piece Paint Kit", "1", "$23.27", "$23.27"),
-    ("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "1000402569", "Interior Eggshell Enamel Paint", "1", "$44.97", "$44.97"),
-    ("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "1000107097", "Broan-NuTone Bathroom Fan", "1", "$43.34", "$43.34"),
+    (
+        "22/06/2026",
+        STL_GIFT_K,
+        "BEAUBIEN OUEST",
+        "1000839582",
+        "Gold Series 6-Piece Paint Kit",
+        "1",
+        "$23.27",
+        "$23.27",
+    ),
+    (
+        "22/06/2026",
+        STL_GIFT_K,
+        "BEAUBIEN OUEST",
+        "1000402569",
+        "Interior Eggshell Enamel Paint",
+        "1",
+        "$44.97",
+        "$44.97",
+    ),
+    (
+        "22/06/2026",
+        STL_GIFT_K,
+        "BEAUBIEN OUEST",
+        "1000107097",
+        "Broan-NuTone Bathroom Fan",
+        "1",
+        "$43.34",
+        "$43.34",
+    ),
 ]
 
 
@@ -101,7 +128,18 @@ def test_parse_money(raw, expected):
 def test_detect_and_parse_transactions(tmp_path):
     f = _txn_file(
         tmp_path,
-        [("22/06/2026", "7149-1", "BEAUBIEN OUEST", "STL_GIFT", "Paid", "Lorenzo", "$26.41", "$30.36")],
+        [
+            (
+                "22/06/2026",
+                "7149-1",
+                "BEAUBIEN OUEST",
+                "STL_GIFT",
+                "Paid",
+                "Lorenzo",
+                "$26.41",
+                "$30.36",
+            )
+        ],
     )
     parsed = parse_export(f)
     assert parsed.kind == "transactions"
@@ -134,8 +172,26 @@ def test_import_transactions_derives_tax_and_refund(session, tmp_path):
     f = _txn_file(
         tmp_path,
         [
-            ("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$111.58", "$128.29"),
-            ("19/06/2026", "7149-ref", "BEAUBIEN OUEST", "ROCKLAND", "Refunded", "Lorenzo", "-$29.01", "-$33.35"),
+            (
+                "22/06/2026",
+                STL_GIFT_K,
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$111.58",
+                "$128.29",
+            ),
+            (
+                "19/06/2026",
+                "7149-ref",
+                "BEAUBIEN OUEST",
+                "ROCKLAND",
+                "Refunded",
+                "Lorenzo",
+                "-$29.01",
+                "-$33.35",
+            ),
         ],
     )
     stats = import_transactions(session, parse_export(f))
@@ -154,7 +210,18 @@ def test_import_transactions_derives_tax_and_refund(session, tmp_path):
 def test_import_transactions_is_idempotent(session, tmp_path):
     f = _txn_file(
         tmp_path,
-        [("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$111.58", "$128.29")],
+        [
+            (
+                "22/06/2026",
+                STL_GIFT_K,
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$111.58",
+                "$128.29",
+            )
+        ],
     )
     import_transactions(session, parse_export(f))
     session.commit()
@@ -171,7 +238,18 @@ def test_import_transactions_is_idempotent(session, tmp_path):
 def test_import_details_reconciles_balanced(session, tmp_path):
     tf = _txn_file(
         tmp_path,
-        [("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$111.58", "$128.29")],
+        [
+            (
+                "22/06/2026",
+                STL_GIFT_K,
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$111.58",
+                "$128.29",
+            )
+        ],
     )
     import_transactions(session, parse_export(tf))
     session.commit()
@@ -196,7 +274,18 @@ def test_import_details_flags_unbalanced(session, tmp_path):
     tf = _txn_file(
         tmp_path,
         # Header subtotal deliberately wrong (should be 111.58).
-        [("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$999.99", "$1149.99")],
+        [
+            (
+                "22/06/2026",
+                STL_GIFT_K,
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$999.99",
+                "$1149.99",
+            )
+        ],
     )
     import_transactions(session, parse_export(tf))
     session.commit()
@@ -213,7 +302,18 @@ def test_import_details_flags_unbalanced(session, tmp_path):
 def test_import_details_replaces_prior_snapshot(session, tmp_path):
     tf = _txn_file(
         tmp_path,
-        [("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$111.58", "$128.29")],
+        [
+            (
+                "22/06/2026",
+                STL_GIFT_K,
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$111.58",
+                "$128.29",
+            )
+        ],
     )
     import_transactions(session, parse_export(tf))
     df = _detail_file(tmp_path, STL_GIFT_K_ITEMS)
@@ -250,7 +350,16 @@ def test_link_job_to_project_substring(session, project_factory):
 
 @pytest.mark.parametrize(
     "job",
-    ["STL", "STLAU", "STLAURENT", "STL-GIFT-K", "STL_KEVCAR", "STL-OVERHE", "SAINT LAUR", "Saint-Laurent"],
+    [
+        "STL",
+        "STLAU",
+        "STLAURENT",
+        "STL-GIFT-K",
+        "STL_KEVCAR",
+        "STL-OVERHE",
+        "SAINT LAUR",
+        "Saint-Laurent",
+    ],
 )
 def test_register_codes_resolve_to_st_laurent(session, project_factory, job):
     """Till abbreviations for the one St-Laurent project all resolve to it."""
@@ -305,7 +414,18 @@ def test_relink_after_adding_project(session, tmp_path, project_factory):
     # Import an STL transaction with NO matching project yet -> unresolved.
     tf = _txn_file(
         tmp_path,
-        [("22/06/2026", "7149-stl", "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$50.00", "$57.49")],
+        [
+            (
+                "22/06/2026",
+                "7149-stl",
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$50.00",
+                "$57.49",
+            )
+        ],
     )
     import_transactions(session, parse_export(tf))
     session.commit()
@@ -327,12 +447,34 @@ def test_import_links_and_propagates_project_to_line_items(session, tmp_path, pr
     proj = project_factory(name="923 Rockland", code="ROCK")
     tf = _txn_file(
         tmp_path,
-        [("20/06/2026", "7149-rk", "BEAUBIEN OUEST", "ROCKLAND", "Paid", "Lorenzo", "$23.27", "$26.76")],
+        [
+            (
+                "20/06/2026",
+                "7149-rk",
+                "BEAUBIEN OUEST",
+                "ROCKLAND",
+                "Paid",
+                "Lorenzo",
+                "$23.27",
+                "$26.76",
+            )
+        ],
     )
     import_transactions(session, parse_export(tf))
     df = _detail_file(
         tmp_path,
-        [("20/06/2026", "7149-rk", "BEAUBIEN OUEST", "1000839582", "Gold Series Paint Kit", "1", "$23.27", "$23.27")],
+        [
+            (
+                "20/06/2026",
+                "7149-rk",
+                "BEAUBIEN OUEST",
+                "1000839582",
+                "Gold Series Paint Kit",
+                "1",
+                "$23.27",
+                "$23.27",
+            )
+        ],
     )
     import_details(session, parse_export(df))
     session.commit()
@@ -354,7 +496,16 @@ def test_dedupe_flags_online_twin_and_excludes_from_totals(session, tmp_path, pr
     f = _txn_file(
         tmp_path,
         [
-            ("13/03/2026", "7149-00035-92581-20260313", "X", "ST LAURENT", "Paid", "L", "$2965.00", "$3408.78"),
+            (
+                "13/03/2026",
+                "7149-00035-92581-20260313",
+                "X",
+                "ST LAURENT",
+                "Paid",
+                "L",
+                "$2965.00",
+                "$3408.78",
+            ),
             ("13/03/2026", "0616058032", "X", "Saint-Laurent", "Paid", "L", "$2965.00", "$3408.78"),
         ],
     )
@@ -392,8 +543,26 @@ def test_dedupe_does_not_pair_purchase_with_refund(session, tmp_path, project_fa
     f = _txn_file(
         tmp_path,
         [
-            ("13/03/2026", "7149-00030-39914-20260313", "X", "ST LAURENT", "Paid", "L", "$628.00", "$722.43"),
-            ("13/03/2026", "0641960928", "X", "ST LAURENT", "Refunded", "L", "-$628.00", "-$722.43"),
+            (
+                "13/03/2026",
+                "7149-00030-39914-20260313",
+                "X",
+                "ST LAURENT",
+                "Paid",
+                "L",
+                "$628.00",
+                "$722.43",
+            ),
+            (
+                "13/03/2026",
+                "0641960928",
+                "X",
+                "ST LAURENT",
+                "Refunded",
+                "L",
+                "-$628.00",
+                "-$722.43",
+            ),
         ],
     )
     import_transactions(session, parse_export(f))
@@ -406,7 +575,16 @@ def test_dedupe_respects_date_window(session, tmp_path, project_factory):
     f = _txn_file(
         tmp_path,
         [
-            ("01/03/2026", "7149-00001-00001-20260301", "X", "ST LAURENT", "Paid", "L", "$100.00", "$114.98"),
+            (
+                "01/03/2026",
+                "7149-00001-00001-20260301",
+                "X",
+                "ST LAURENT",
+                "Paid",
+                "L",
+                "$100.00",
+                "$114.98",
+            ),
             ("20/03/2026", "0610000001", "X", "ST LAURENT", "Paid", "L", "$100.00", "$114.98"),
         ],
     )
@@ -420,8 +598,26 @@ def test_coverage_summary(session, tmp_path, project_factory):
     tf = _txn_file(
         tmp_path,
         [
-            ("22/06/2026", STL_GIFT_K, "BEAUBIEN OUEST", "STL-GIFT-K", "Paid", "Lorenzo", "$111.58", "$128.29"),
-            ("19/06/2026", "7149-ref", "BEAUBIEN OUEST", "ROCKLAND", "Refunded", "Lorenzo", "-$29.01", "-$33.35"),
+            (
+                "22/06/2026",
+                STL_GIFT_K,
+                "BEAUBIEN OUEST",
+                "STL-GIFT-K",
+                "Paid",
+                "Lorenzo",
+                "$111.58",
+                "$128.29",
+            ),
+            (
+                "19/06/2026",
+                "7149-ref",
+                "BEAUBIEN OUEST",
+                "ROCKLAND",
+                "Refunded",
+                "Lorenzo",
+                "-$29.01",
+                "-$33.35",
+            ),
         ],
     )
     import_transactions(session, parse_export(tf))

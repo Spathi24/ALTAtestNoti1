@@ -47,15 +47,59 @@ from project_db.db.models.work import ProjectStatus
 # ---------------------------------------------------------------------------
 
 _HEADERS = [
-    "Description", "Masterformat", "Material Amount", "Labour Amount",
-    "Total Amount", "Item_ID", "Coverage_Y_N", "Mat_Incl", "Exclusions",
-    "Notes", "SOW_Item_Ref",
+    "Description",
+    "Masterformat",
+    "Material Amount",
+    "Labour Amount",
+    "Total Amount",
+    "Item_ID",
+    "Coverage_Y_N",
+    "Mat_Incl",
+    "Exclusions",
+    "Notes",
+    "SOW_Item_Ref",
 ]
 _DATA_ROWS = [
     ["Plumbing", "22", "", "", 6800, "", "", "", "", "", ""],  # section total
-    ["Rough-in plumbing (drain, supply, vent)", "22", 800, 2400, "", "QI-001", "Y", "N", "", "PEX-A", "SOW-025"],
-    ["Supply and install plumbing fixtures", "22", 1600, 1200, "", "QI-002", "Y", "Y", "", "Moen Adler", "SOW-026"],
-    ["Hot water heater replacement", "22", 500, 300, "", "QI-003", "Y", "Y", "", "40-gal electric", "SOW-027"],
+    [
+        "Rough-in plumbing (drain, supply, vent)",
+        "22",
+        800,
+        2400,
+        "",
+        "QI-001",
+        "Y",
+        "N",
+        "",
+        "PEX-A",
+        "SOW-025",
+    ],
+    [
+        "Supply and install plumbing fixtures",
+        "22",
+        1600,
+        1200,
+        "",
+        "QI-002",
+        "Y",
+        "Y",
+        "",
+        "Moen Adler",
+        "SOW-026",
+    ],
+    [
+        "Hot water heater replacement",
+        "22",
+        500,
+        300,
+        "",
+        "QI-003",
+        "Y",
+        "Y",
+        "",
+        "40-gal electric",
+        "SOW-027",
+    ],
     ["", "", "", "", 6800, "Pre-Tax Total", "", "", "", "", ""],  # grand total
 ]
 
@@ -63,6 +107,7 @@ _DATA_ROWS = [
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_engine():
     engine = create_engine(
@@ -85,53 +130,79 @@ def _project_with_sow(session):
     session.add_all([org, client])
     session.flush()
     project = Project(
-        canonical_id=uuid.uuid4(), name="923-927 Rockland", code="2026001",
-        client_id=client.canonical_id, status=ProjectStatus.ACTIVE,
+        canonical_id=uuid.uuid4(),
+        name="923-927 Rockland",
+        code="2026001",
+        client_id=client.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(project)
     session.flush()
     pkg = SowPackage(
-        canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-        division_code="22", trade_name="Plumbing", title="22-Plumbing", status="draft",
+        canonical_id=uuid.uuid4(),
+        project_id=project.canonical_id,
+        division_code="22",
+        trade_name="Plumbing",
+        title="22-Plumbing",
+        status="draft",
     )
     session.add(pkg)
     session.flush()
     for code in ("SOW-025", "SOW-026", "SOW-027"):
-        session.add(SowItem(
-            canonical_id=uuid.uuid4(), project_id=project.canonical_id,
-            package_id=pkg.canonical_id, item_code=code, division_code="22",
-        ))
-    vendor = Vendor(canonical_id=uuid.uuid4(), name="Plombert Inc.", organization_id=org.canonical_id)
+        session.add(
+            SowItem(
+                canonical_id=uuid.uuid4(),
+                project_id=project.canonical_id,
+                package_id=pkg.canonical_id,
+                item_code=code,
+                division_code="22",
+            )
+        )
+    vendor = Vendor(
+        canonical_id=uuid.uuid4(), name="Plombert Inc.", organization_id=org.canonical_id
+    )
     session.add(vendor)
     session.flush()
     return org, project, pkg, vendor
 
 
-def _quote_doc_with_evidence(session, *, name="2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx",
-                             data_rows=None):
+def _quote_doc_with_evidence(
+    session, *, name="2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx", data_rows=None
+):
     rows = data_rows if data_rows is not None else _DATA_ROWS
     doc = Document(
-        canonical_id=uuid.uuid4(), name=name, url=f"https://drive/{name}",
+        canonical_id=uuid.uuid4(),
+        name=name,
+        url=f"https://drive/{name}",
         mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     session.add(doc)
     session.flush()
     parse = DocumentParse(
-        document_id=doc.canonical_id, parser_name="xlsx", parser_version="1",
-        status="success", rendered_text="x",
+        document_id=doc.canonical_id,
+        parser_name="xlsx",
+        parser_version="1",
+        status="success",
+        rendered_text="x",
     )
     session.add(parse)
     session.flush()
     rows_sample = [dict(zip(_HEADERS, r)) for r in rows]
     rows_preview = [list(_HEADERS)] + [list(r) for r in rows]
     span = EvidenceSpan(
-        document_id=doc.canonical_id, parse_id=parse.id, evidence_type="table_region",
+        document_id=doc.canonical_id,
+        parse_id=parse.id,
+        evidence_type="table_region",
         locator_json=json.dumps({"sheet": "Quote_Lines", "range": "A1:K6", "header_row": 1}),
-        content_json=json.dumps({
-            "sheet": "Quote_Lines", "headers": _HEADERS,
-            "rows_sample": rows_sample, "rows_preview": rows_preview,
-            "header_confidence": 1.0,
-        }),
+        content_json=json.dumps(
+            {
+                "sheet": "Quote_Lines",
+                "headers": _HEADERS,
+                "rows_sample": rows_sample,
+                "rows_preview": rows_preview,
+                "header_confidence": 1.0,
+            }
+        ),
         confidence=1.0,
     )
     session.add(span)
@@ -142,6 +213,7 @@ def _quote_doc_with_evidence(session, *, name="2026001_QUOTE_22-Plumbing_Plomber
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
+
 
 class TestSchema:
     def test_fresh_db_has_table_and_columns(self):
@@ -154,7 +226,9 @@ class TestSchema:
 
     def test_existing_db_migration_adds_table_and_columns(self):
         engine = create_engine(
-            "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
         )
         # Simulate pre-Phase-4: build metadata minus subcontractor_quote, then
         # drop the 4 new FLI columns.
@@ -181,9 +255,12 @@ class TestSchema:
 # Status vocabulary + filename derivation
 # ---------------------------------------------------------------------------
 
+
 class TestStatus:
     def test_status_from_filename(self):
-        assert _status_from_name("2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx") == "selected"
+        assert (
+            _status_from_name("2026001_QUOTE_22-Plumbing_PlombertInc_selected.xlsx") == "selected"
+        )
         assert _status_from_name("2026001_QUOTE_09-Finishes_ABCTile_pending.xlsx") == "pending"
         assert _status_from_name("x_recommended.xlsx") == "recommended"
         assert _status_from_name("x_rejected.xlsx") == "rejected"
@@ -195,7 +272,10 @@ class TestStatus:
         _org, project, pkg, vendor = _project_with_sow(s)
         doc, _span = _quote_doc_with_evidence(s)
         res = ingest_subcontractor_quote(
-            s, doc, project_id=project.canonical_id, package_id=pkg.canonical_id,
+            s,
+            doc,
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
             vendor_id=vendor.canonical_id,
         )
         assert res.status in SUBCONTRACTOR_QUOTE_STATUSES
@@ -206,6 +286,7 @@ class TestStatus:
 # ---------------------------------------------------------------------------
 # Parser: SOW_Item_Ref capture
 # ---------------------------------------------------------------------------
+
 
 class TestParserSowRef:
     def test_grid_parser_captures_sow_item_ref(self):
@@ -225,6 +306,7 @@ class TestParserSowRef:
 # Ingestion behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestIngest:
     @pytest.fixture
     def ingested(self):
@@ -233,7 +315,10 @@ class TestIngest:
         _org, project, pkg, vendor = _project_with_sow(s)
         doc, span = _quote_doc_with_evidence(s)
         res = ingest_subcontractor_quote(
-            s, doc, project_id=project.canonical_id, package_id=pkg.canonical_id,
+            s,
+            doc,
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
             vendor_id=vendor.canonical_id,
         )
         s.commit()
@@ -316,7 +401,10 @@ class TestIngest:
         s, _res, project, pkg, vendor, _span = ingested
         doc = s.query(Document).one()
         ingest_subcontractor_quote(
-            s, doc, project_id=project.canonical_id, package_id=pkg.canonical_id,
+            s,
+            doc,
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
             vendor_id=vendor.canonical_id,
         )
         s.commit()
@@ -336,21 +424,30 @@ class TestMultiTableWorkbook:
         # Add a second span mirroring the Parser_Contract metadata sheet.
         pc_headers = ["Sheet_Name", "Ingest", "Table_Name", "Primary_Key", "Notes"]
         pc_rows = [["Quote_Lines", "Y", "tblQuoteLines", "Item_ID", "..."]]
-        s.add(EvidenceSpan(
-            document_id=doc.canonical_id,
-            parse_id=s.query(DocumentParse).filter_by(document_id=doc.canonical_id).one().id,
-            evidence_type="table_region",
-            locator_json=json.dumps({"sheet": "Parser_Contract"}),
-            content_json=json.dumps({
-                "sheet": "Parser_Contract", "headers": pc_headers,
-                "rows_sample": [dict(zip(pc_headers, pc_rows[0]))],
-                "rows_preview": [pc_headers, *pc_rows], "header_confidence": 1.0,
-            }),
-            confidence=1.0,
-        ))
+        s.add(
+            EvidenceSpan(
+                document_id=doc.canonical_id,
+                parse_id=s.query(DocumentParse).filter_by(document_id=doc.canonical_id).one().id,
+                evidence_type="table_region",
+                locator_json=json.dumps({"sheet": "Parser_Contract"}),
+                content_json=json.dumps(
+                    {
+                        "sheet": "Parser_Contract",
+                        "headers": pc_headers,
+                        "rows_sample": [dict(zip(pc_headers, pc_rows[0]))],
+                        "rows_preview": [pc_headers, *pc_rows],
+                        "header_confidence": 1.0,
+                    }
+                ),
+                confidence=1.0,
+            )
+        )
         s.flush()
         res = ingest_subcontractor_quote(
-            s, doc, project_id=project.canonical_id, package_id=pkg.canonical_id,
+            s,
+            doc,
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
             vendor_id=vendor.canonical_id,
         )
         s.commit()
@@ -370,7 +467,10 @@ class TestSowRefFlagging:
         bad_rows[3][-1] = "SOW-099"  # Hot water heater -> unknown ref
         doc, _span = _quote_doc_with_evidence(s, data_rows=bad_rows)
         res = ingest_subcontractor_quote(
-            s, doc, project_id=project.canonical_id, package_id=pkg.canonical_id,
+            s,
+            doc,
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
             vendor_id=vendor.canonical_id,
         )
         s.commit()
@@ -379,7 +479,8 @@ class TestSowRefFlagging:
         # The affected cost rows are written but left UNLINKED (not silently
         # assigned to a wrong item).
         unlinked = [
-            r for r in s.query(FinancialLineItem).all()
+            r
+            for r in s.query(FinancialLineItem).all()
             if json.loads(r.source_meta_json)["sow_item_ref"] == "SOW-099"
         ]
         assert unlinked
@@ -393,13 +494,17 @@ class TestSowRefFlagging:
         bad_rows[1][-1] = ""  # first line item has no SOW_Item_Ref
         doc, _span = _quote_doc_with_evidence(s, data_rows=bad_rows)
         res = ingest_subcontractor_quote(
-            s, doc, project_id=project.canonical_id, package_id=pkg.canonical_id,
+            s,
+            doc,
+            project_id=project.canonical_id,
+            package_id=pkg.canonical_id,
             vendor_id=vendor.canonical_id,
         )
         s.commit()
         assert any("no SOW_Item_Ref" in w for w in res.warnings)
         unlinked = [
-            r for r in s.query(FinancialLineItem).all()
+            r
+            for r in s.query(FinancialLineItem).all()
             if json.loads(r.source_meta_json)["sow_item_ref"] == ""
         ]
         assert unlinked

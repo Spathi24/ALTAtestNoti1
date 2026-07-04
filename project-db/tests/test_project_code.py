@@ -28,6 +28,7 @@ from project_db.db.models.work import ProjectStatus
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -51,7 +52,9 @@ def _org_client(session):
     return org, client
 
 
-def _project(session, client, *, name, code=None, display_name=None, legacy_job_number=None, aliases=None):
+def _project(
+    session, client, *, name, code=None, display_name=None, legacy_job_number=None, aliases=None
+):
     p = Project(
         canonical_id=uuid.uuid4(),
         name=name,
@@ -70,6 +73,7 @@ def _project(session, client, *, name, code=None, display_name=None, legacy_job_
 # ---------------------------------------------------------------------------
 # Schema tests
 # ---------------------------------------------------------------------------
+
 
 class TestNewColumnsExist:
     def test_columns_present_on_fresh_db(self):
@@ -110,6 +114,7 @@ class TestNewColumnsExist:
 # Resolver tests
 # ---------------------------------------------------------------------------
 
+
 class TestResolveProject:
     @pytest.fixture
     def session(self):
@@ -117,7 +122,8 @@ class TestResolveProject:
         s = _make_session(engine)
         _org, client = _org_client(s)
         _project(
-            s, client,
+            s,
+            client,
             name="923 Rockland",
             code="2026001",
             display_name="2026001 — Rockland",
@@ -170,6 +176,7 @@ class TestResolveProject:
 # ---------------------------------------------------------------------------
 # Uniqueness constraint on code
 # ---------------------------------------------------------------------------
+
 
 class TestProjectCodeUnique:
     def test_duplicate_code_raises(self):

@@ -321,9 +321,7 @@ def ingest_telegram_labour_claims(
         return []
 
     try:
-        classification_confidence = max(
-            0.0, min(1.0, float(raw.get("classification_confidence")))
-        )
+        classification_confidence = max(0.0, min(1.0, float(raw.get("classification_confidence"))))
     except (TypeError, ValueError):
         classification_confidence = 0.0
 

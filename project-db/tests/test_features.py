@@ -78,9 +78,7 @@ def test_invalid_env_value_preserves_default():
     assert feature_enabled(
         "field_notes_typed", env={"PROJECT_DB_FEATURE_FIELD_NOTES_TYPED": "maybe"}
     )
-    assert not feature_enabled(
-        "obligations", env={"PROJECT_DB_FEATURE_OBLIGATIONS": "maybe"}
-    )
+    assert not feature_enabled("obligations", env={"PROJECT_DB_FEATURE_OBLIGATIONS": "maybe"})
 
 
 def test_unknown_features_fail_closed():

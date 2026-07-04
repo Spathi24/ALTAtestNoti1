@@ -545,10 +545,8 @@ CREATE TABLE purchase_order (
 """
 
 SQLITE_PURCHASE_ORDER_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS ix_purchase_order_project_id "
-    "ON purchase_order (project_id)",
-    "CREATE INDEX IF NOT EXISTS ix_purchase_order_package_id "
-    "ON purchase_order (package_id)",
+    "CREATE INDEX IF NOT EXISTS ix_purchase_order_project_id ON purchase_order (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_purchase_order_package_id ON purchase_order (package_id)",
 )
 
 # Phase 6: BudgetSnapshot (header) before BudgetSnapshotLine (FK order).
@@ -586,8 +584,7 @@ CREATE TABLE budget_snapshot_line (
 """
 
 SQLITE_BUDGET_SNAPSHOT_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_project_id "
-    "ON budget_snapshot (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_project_id ON budget_snapshot (project_id)",
     "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_line_snapshot_id "
     "ON budget_snapshot_line (snapshot_id)",
     "CREATE INDEX IF NOT EXISTS ix_budget_snapshot_line_project_id "
@@ -1138,9 +1135,7 @@ def ensure_sqlite_schema(engine) -> None:
             )
         # Phase 2: project identity columns + partial unique index on code.
         if "project" in tables:
-            _add_missing_columns(
-                conn, inspector, "project", SQLITE_PROJECT_COLUMNS
-            )
+            _add_missing_columns(conn, inspector, "project", SQLITE_PROJECT_COLUMNS)
             conn.execute(
                 text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_project_code_unique "

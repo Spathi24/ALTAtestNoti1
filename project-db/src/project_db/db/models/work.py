@@ -47,9 +47,9 @@ class Project(Base, CanonicalMixin):
     # Enforced by partial unique index in migrations: ix_project_code_unique.
     code = Column(String, nullable=True)
     # Phase 2 identity columns (additive — existing canonical_id/name unchanged).
-    display_name = Column(String, nullable=True)       # e.g. "2026001 — Rockland"
+    display_name = Column(String, nullable=True)  # e.g. "2026001 — Rockland"
     legacy_job_number = Column(String, nullable=True)  # e.g. "923" (pre-SOP label)
-    aliases = Column(Text, nullable=True)              # JSON array of lookup strings
+    aliases = Column(Text, nullable=True)  # JSON array of lookup strings
     status = Column(SAEnum(ProjectStatus), nullable=False, default=ProjectStatus.PROPOSED)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
