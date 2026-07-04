@@ -11,3 +11,6 @@
 
 # Codebase-wide ruff autofix + format sweep (2026-06-16), no behavior change.
 6e34f4b640bdc485525cfe5e98e0f80c59c09a43
+
+# Repo-wide ruff format activation (2026-07-04), no behavior change.
+6b85de92a82cec3fd7200cabc89c63805fbabe51

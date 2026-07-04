@@ -14,14 +14,14 @@ Run the `alta-preflight` skill, or manually:
    `.claude/worktrees/...` path. `git status` clean of `.env`/`*.sqlite`/`*.pyc`.
 2. Read in order: this file → `PROJECT_STATE.md` (root) → active slice doc if
    one is linked → `project-db/docs/HANDOFF.md` → top `CHANGELOG.md` entry.
-3. Suite + lint green: `pytest -q` (count matches the top CHANGELOG entry) and
-   `ruff check .`. Note: whole-repo `ruff format --check .` is NOT green yet —
-   formatter activation is a deliberate one-commit ratchet (pyproject +
-   CONTRIBUTING). Keep files you *edit* format-clean; do not piecemeal-reformat
-   untouched files.
-4. `python scripts/doctor.py` — read-only invariant sweep; report any FAIL to
+3. Interpreter: `python --version` is 3.11 and
+   `python -c "import project_db, openai, openpyxl"` works (rule 12).
+4. Suite + lint green: `python -m pytest tests/ -q` (count matches the top
+   CHANGELOG entry) and `python -m ruff check .` — run them as SEPARATE
+   commands so exit codes mean something.
+5. `python scripts/doctor.py` — read-only invariant sweep; report any FAIL to
    the user before starting.
-5. **Anchor:** quote the active slice's Definition of Done + hard scope limits
+6. **Anchor:** quote the active slice's Definition of Done + hard scope limits
    verbatim into your plan. Re-read them mid-slice. One slice per session; at
    any limitation, park it in HANDOFF and STOP.
 
@@ -78,6 +78,18 @@ features pile onto a half-working product. **We are breaking that loop.**
 - **Self-scrutiny (required after every change):** ask *"did this save someone
   time, or did I just make the code more complete?"* If the latter, you're in
   the loop — stop and say so out loud.
+- **Visible delta or say so:** every slice ends with one command or URL the
+  user can run to SEE the change (plus a coverage line — "works on N of 22
+  projects"), or an explicit "nothing visible changed, here's why". Green
+  tests are invisible to the owner; that gap caused the worst trust collapse
+  on record (06-19).
+- **No silent deferral:** anything the code deliberately skips (a doc type, a
+  project, a side of the ledger) is recorded in PROJECT_STATE as "deliberately
+  not ingested: X, because Y" the moment the decision is made.
+- **Pilot examples are examples, not the target distribution.** The owner's
+  standing words (06-19): *"just because I gave rockland projects as examples
+  doesnt mean that OVERFITTING is the right answer."* Validate on the hardest
+  real doc, not the friendliest fixture.
 - Hidden features (`src/project_db/features.py`) stay hidden until a real user
   asks for one by name. Hiding is reversible (env var); it is not deletion.
 
@@ -115,6 +127,11 @@ Rules:
 - If a doc contradicts reality, fix it or archive it. **Do not add a fifth
   canonical/strategy doc** to reconcile the other four. (The root working-memory
   docs above are the sanctioned exception — they record state, not authority.)
+- **External-LLM pastes get distilled, not ingested.** When the user pastes a
+  long plan authored with another model, distill it to <=10 bullet decisions in
+  PROJECT_STATE.md (or the active slice doc) and work from those — re-reasoning
+  over multi-page pastes burns context and accelerates compaction. If it
+  contradicts an architecture invariant, say so instead of absorbing it.
 
 ---
 
@@ -129,18 +146,28 @@ Rules:
    Current count lives at the top of CHANGELOG — do not hardcode it here. Add a
    test with every behavior change; update tests when an API surface changes.
 3. **Push to `origin/main` after every meaningful, *approved* change** — not
-   mid-planning. `git add <specific files, never -A>`, HEREDOC commit, `git push
-   origin main`. If behind, `git fetch origin && git pull --ff-only origin main`
-   first. (During a planning/freeze discussion, don't commit until told to.)
+   mid-planning. `git add <specific files, never -A>`, then commit **via the
+   Bash tool with a heredoc, or `git commit -F <scratch file>` — NEVER a
+   multi-line `-m` in PowerShell** (its quoting shreds the message into
+   pathspecs; ~10 recorded failures). `git push origin main`. If behind,
+   `git fetch origin && git pull --ff-only origin main` first. (During a
+   planning/freeze discussion, don't commit until told to.)
 4. **Validate on the real system** — from the real repo path, against the real
    workspace. Don't just `pytest` and declare victory. Use the `alta-validate`
    skill: provenance (real data, not your own fixture), reconciliation (an
    independent path agrees, to the penny for money), downstream (smoke the
    nearest consumer). The CHANGELOG entry records the live evidence and the
    honest gaps.
-5. **Windows console:** stdout is UTF-8-hardened via `cli.force_utf8_output()`,
-   but prefer ASCII (`->`, `OK:`, `FAIL:`, `-`, `...`) for clean rendering.
-   One-off scripts you write must call `force_utf8_output()` themselves.
+5. **Windows console & shells:** stdout is UTF-8-hardened via
+   `cli.force_utf8_output()`, but prefer ASCII (`->`, `OK:`, `FAIL:`, `-`,
+   `...`) for clean rendering. One-off scripts you write must call
+   `force_utf8_output()` themselves. Known artifacts: in PowerShell 5.1,
+   piping a native CLI into `Select-Object -First N` (or similar) returns
+   exit 255/1 with CORRECT output — don't chase it as a failure; and Unix-isms
+   (`tail`, `head`, heredocs, `&&`) belong in the Bash tool, not PowerShell.
+   One-off scripts >15 lines go to a scratchpad `.py` file, not an inline
+   shell string; anything scanning the full corpus/DB runs in the background
+   (foreground commands die at 120s).
 6. **No redundant API calls.** If we synced it, we hold it — query the DB, not
    the source. (e.g. `board_id` is embedded in `ExternalId.external_url`;
    `MondayClient.list_board_columns` is cached per-instance.)
@@ -148,12 +175,13 @@ Rules:
    if `git status` shows them, something is wrong.
 8. **Every commit credits Claude:** end the body (via HEREDOC) with
    `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
-9. **Lint gate:** `ruff check .` GREEN before moving to the next slice, not only
-   at the end. Ruff is **pinned** in `project-db/pyproject.toml` (`ruff==0.15.18`)
-   — never "fix" code to satisfy an unpinned newer ruff; check the pin first, bump
-   it deliberately in its own commit. (Whole-repo `ruff format` is a separate,
-   not-yet-activated ratchet — keep edited files format-clean, don't reformat
-   untouched ones.)
+9. **Lint gate:** `ruff check .` and `ruff format --check .` GREEN before
+   moving to the next slice, not only at the end (formatter activated
+   repo-wide 2026-07-04; the commit SHA is in `.git-blame-ignore-revs`).
+   Ruff is **pinned** in `project-db/pyproject.toml` (`ruff==0.15.18`) —
+   never "fix" code to satisfy an unpinned newer ruff; check the pin first,
+   bump it deliberately in its own commit. Lint the files you touch as you
+   go; never chain pytest+ruff in one command.
 10. **Schema changes use the custom migration system, not Alembic.** Every new
     table/column needs BOTH the SQLAlchemy model AND a DDL/ALTER block in
     `db/migrations.py::ensure_sqlite_schema`, in FK-dependency order. Additive
@@ -163,6 +191,26 @@ Rules:
     calls (client-vs-vendor role, quote-vs-worksheet, side inversion, ambiguous
     lifecycle) run on the strong tier — never gpt-4o-mini. Pin model snapshots.
     Confirm credit balances with the owner before any live LLM run.
+12. **One interpreter: `python` (3.11).** This machine also has `py -3.13`;
+    mixing them caused phantom "missing package" failures and a user-facing
+    CLI breakage. Use `python` / `python -m` for everything; if an import
+    fails, suspect the interpreter before the code. Preflight asserts it.
+13. **Credit discipline (owner mandate, repeated 06-01→07-04):** the owner
+    works on a limited credit budget and work has HARD-STOPPED on empty
+    balances at least five times. Therefore: (a) bulk/corpus AI work is NEVER
+    Claude-subagent fan-out — write a one-shot OpenAI-API script (pattern:
+    `scripts/reconcile_financials_llm.py`, Batch API when possible); (b) any
+    background agent/workflow or batch LLM run needs a stated cost estimate
+    and an explicit yes first; (c) dev/test paths default to the mock
+    provider; (d) when the user signals low credits, switch to terse,
+    single-pass execution — no exploratory loops; (e) before any operation
+    that outlives a turn, commit + write state to disk first, so a mid-run
+    credit death loses nothing.
+14. **External-service automation needs a written go/no-go.** Any automation
+    that logs into or scrapes a third-party service with real company
+    credentials requires the risk stated and the user's explicit yes BEFORE
+    building; ONE bot-detection signal (challenge, reset, captcha) = full
+    stop, no retry. (Home Depot bot incident, 2026-06-23.)
 
 ---
 
@@ -206,7 +254,7 @@ ALTAtest/
 ├── .claude/
 │   ├── settings.json             ← hooks wiring (SessionStart + Bash guard)
 │   ├── hooks/                    ← guard_bash.py, session_start.py
-│   └── skills/                   ← alta-preflight, alta-validate, alta-migrations
+│   └── skills/                   ← alta-preflight, alta-validate, alta-migrations, alta-finance-domain
 ├── docs/                         ← external API references (Monday, Drive) — keep
 └── project-db/                   ← the Python package
     ├── README.md                 ← what it is + setup/usage
@@ -217,7 +265,8 @@ ALTAtest/
     │   ├── adding-a-connector.md ← how-to
     │   └── archive/              ← history, NOT instructions
     ├── scripts/monday_demo.py    ← interactive Monday push/pull CLI
-    ├── scripts/doctor.py         ← read-only invariant sweep (preflight step 4)
+    ├── scripts/doctor.py         ← read-only invariant sweep (preflight step 5)
+    ├── scripts/db_probe.py       ← canonical read-only DB probe + import crib
     └── src/project_db/           ← cli.py, db/, identity/, connectors/, ai/, web/, features.py
 ```
 

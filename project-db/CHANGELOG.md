@@ -9,7 +9,52 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
-## 2026-07-03 — session-discipline tooling: skills, hooks, doctor, ruff pin
+## 2026-07-04 — transcript audit round 2: division-code fix, db_probe, finance skill, format activation
+
+A 4-subagent deep-read of all 17 real session transcripts (~120MB) clustered
+the recurring friction and shipped the fixes the 07-03 pass did not cover.
+Full cluster list with verbatim evidence is in the session; the load-bearing
+outcomes:
+
+- **Real bug fixed — the 1012-vs-10-12 division trap.** Filenames spell range
+  divisions dashless (`1012`, settled convention); the DB canonical form is
+  `10-12`. The Phase 5 quote-document resolver exact-matched the raw filename
+  code against `SowPackage.division_code`, so range-division quotes could
+  never resolve their package. New `financial_divisions.canonical_division_code()`
+  folds `1012`/`10`/`11`/`12` -> `10-12` at the parse boundary; template
+  generator cells canonicalized (filenames stay dashless); mock Drive
+  regenerated; 2 new parse cases in test_quote_document_resolver.
+- **`scripts/db_probe.py`** — the canonical read-only DB probe; its docstring
+  is the import crib (session_scope / canonical_id / parser signatures) that
+  kills the recurring traceback-roulette API guessing (~20+ wrong-symbol
+  probes on record). Validated live: resolves `2026001` -> 923-927 Rockland
+  (31 docs, 181 tasks, 101 ledger rows, all revenue-side).
+- **`alta-finance-domain` skill** — controlled vocabularies (quote statuses,
+  cost lifecycle, division codes, project/PO formats) + the trap list (side
+  inversion, vendor-column cost sheets, selected-vs-competing aggregation,
+  Quebec-French numerals, markup layers), each tied to the real bug it caused.
+- **Formatter ACTIVATED repo-wide** (35 files, behavior-free) — with ruff now
+  pinned, CI's blocking `ruff format --check` would have gone red; the sweep
+  SHA is recorded in `.git-blame-ignore-revs` per CONTRIBUTING.
+- **CLAUDE.md hard rules 12-14** (one interpreter: `python`/3.11; credit
+  discipline — no subagent fan-out for corpus work, cost+consent before batch
+  LLM, mock provider for dev; external-service automation go/no-go with
+  first-signal stop) + BUILD FREEZE additions (visible delta per slice, no
+  silent deferral, pilot-examples-are-not-the-target-distribution) + the
+  PowerShell multi-line commit ban (Bash heredoc or `git commit -F`) + the
+  external-LLM-paste distillation convention.
+- **Skills updated:** preflight gains the interpreter check, the db_probe
+  step, post-compaction re-anchor, and a session-end checklist (Read before
+  HANDOFF wipe/CHANGELOG append; session-local artifacts; deferral ledger;
+  visible delta). alta-validate gains coverage/counters/visible-delta
+  standards.
+
+Parked (noted, deliberately not built): handoff-drafter script, per-project
+coverage report command, PM ground-truth fixture for aggregate regression.
+
+Suite: **1676 passed** (2 new resolver parse cases). ruff check + format both
+green.
+
 
 Meta-slice (no product features — build freeze respected): the recurring
 session-start/validation failure modes are now mechanically enforced instead of
