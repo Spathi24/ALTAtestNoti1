@@ -86,10 +86,12 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
     are computed here that the aggregator already owns.  None when the project
     doesn't resolve (route renders a 404).
     """
+    from project_db.ai.financial_divisions import division_by_code
     from project_db.ai.green_sheet import report_green_sheet
     from project_db.ai.views import _resolve_project
     from project_db.db.models.core import Vendor
     from project_db.db.models.finance import BudgetSnapshot, SubcontractorQuote
+    from project_db.db.models.sow import SowItem, SowPackage
 
     project = _resolve_project(session, project_id)
     if project is None:
@@ -138,6 +140,53 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
     else:
         provenance = "empty"
 
+    # Scope of Work: the real contract backbone. Group SowItems by division so
+    # the page shows the actual project scope (this is populated real data even
+    # before any budget/quote exists).
+    sow_items = (
+        session.query(SowItem).filter(SowItem.project_id == project.canonical_id).all()
+    )
+    pkg_trade = {
+        p.canonical_id: p.trade_name
+        for p in session.query(SowPackage).filter(
+            SowPackage.project_id == project.canonical_id
+        )
+    }
+    scope_by_div: dict[str, dict[str, Any]] = {}
+    for it in sow_items:
+        div = it.division_code or "99"
+        grp = scope_by_div.setdefault(
+            div,
+            {
+                "division_code": div,
+                "division_name": division_by_code(div).name,
+                "trade": pkg_trade.get(it.package_id),
+                "included": 0,
+                "excluded": 0,
+                "line_items": [],
+            },
+        )
+        if it.included:
+            grp["included"] += 1
+        else:
+            grp["excluded"] += 1
+        grp["line_items"].append(
+            {"code": it.item_code, "description": it.description, "included": bool(it.included)}
+        )
+    scope_rows = [scope_by_div[d] for d in sorted(scope_by_div)]
+    scope = {
+        "rows": scope_rows,
+        "total_items": len(sow_items),
+        "total_included": sum(1 for i in sow_items if i.included),
+        "total_excluded": sum(1 for i in sow_items if not i.included),
+        "package_count": len(pkg_trade),
+    }
+
+    # If there's no financial data yet but there IS real scope, that's a
+    # meaningful "scoped" state -- not "empty".
+    if provenance == "empty" and sow_items:
+        provenance = "scoped"
+
     return {
         "project_name": project.name,
         "project_code": project.code,
@@ -146,6 +195,7 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
         "green_sheet": gs,
         "tendering": tendering,
         "quote_total": len(quotes),
+        "scope": scope,
     }
 
 

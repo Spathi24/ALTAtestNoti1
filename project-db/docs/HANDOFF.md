@@ -78,7 +78,10 @@ report_green_sheet → /projects/{id}/green-sheet
 
 ## Numbers right now
 
-Suite **1697 green** (1690 + 7 SOW-ingest tests). `doctor.py`
+Suite **1698 green** (SOW ingest + a Scope-of-Work-render regression test).
+The Financial Command Center now shows a **Scope of Work** card (real SOW
+items grouped by division, included vs excluded, expandable) — verified LIVE
+on the real DB: Rockland shows "REAL SCOPE INGESTED — 111 SOW items". `doctor.py`
 0 fail / 1 known warn (79 legacy NULL cost_status rows, allow-listed
 downstream). **RUFF NOT RE-RUN THIS SESSION** — the ruff native binary is
 blocked by a Windows Application Control policy on this machine (`WinError

@@ -15,11 +15,13 @@
         &middot; <a class="fin-back" href="/projects/{{ d.project_id }}">&larr; project</a>
       </p>
     </div>
-    <div class="fin-prov {{ d.provenance }}">
+    <div class="fin-prov {{ 'live' if d.provenance == 'scoped' else d.provenance }}">
       {% if d.provenance == "mock" %}
         <b>MOCK / DEMO DATA</b> — pilot template numbers, not real project finances
       {% elif d.provenance == "live" %}
         <b>LIVE DATA</b> — from ingested project documents
+      {% elif d.provenance == "scoped" %}
+        <b>REAL SCOPE INGESTED</b> — {{ d.scope.total_items }} SOW items; quotes &amp; budget next
       {% else %}
         <b>NO FINANCIAL DATA YET</b>
       {% endif %}
@@ -69,6 +71,47 @@
       <div class="hint">budget &minus; (committed + actual)</div>
     </div>
   </div>
+
+  {# ---- Scope of Work: the real contract backbone ---- #}
+  {% if d.scope and d.scope.total_items %}
+  <div class="fin-card">
+    <h2>Scope of Work &mdash; {{ d.scope.total_items }} items across {{ d.scope.package_count }} trade packages</h2>
+    <p class="note">
+      The contract backbone: {{ d.scope.total_included }} included,
+      {{ d.scope.total_excluded }} explicitly excluded. Anything outside this scope
+      becomes a tracked change order &mdash; never silently absorbed.
+    </p>
+    <table class="fin-table">
+      <thead>
+        <tr>
+          <th class="l">Div</th><th class="l">Trade</th>
+          <th>Included</th><th>Excluded</th><th class="l">Scope items</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in d.scope.rows %}
+        <tr>
+          <td class="l fin-code-cell">{{ row.division_code }}</td>
+          <td class="l">{{ row.trade or row.division_name }}</td>
+          <td class="num pos">{{ row.included }}</td>
+          <td class="num {{ 'muted' if not row.excluded }}">{{ row.excluded or "&mdash;" | safe }}</td>
+          <td class="l muted">
+            <details>
+              <summary>{{ row.line_items | length }} item{{ "s" if row.line_items|length != 1 }}</summary>
+              {% for it in row.line_items %}
+                <div style="padding:.15rem 0">
+                  {% if it.included %}<span class="pill sel">in</span>{% else %}<span class="pill rej">excl</span>{% endif %}
+                  <span class="fin-code-cell">{{ it.code }}</span> {{ it.description }}
+                </div>
+              {% endfor %}
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 
   {% if gs.divisions %}
   {# ---- per-division table ---- #}

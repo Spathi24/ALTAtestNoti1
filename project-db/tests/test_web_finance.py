@@ -26,6 +26,7 @@ from project_db.db.models import (
     Client,
     Organization,
     Project,
+    SowItem,
     SowPackage,
     SubcontractorQuote,
     Vendor,
@@ -98,6 +99,22 @@ def mock_project(session, org: Organization):
     session.add(vendor)
     session.flush()
 
+    # Real SOW items (covers the Scope-of-Work section render -- the path that
+    # hit the Jinja dict-`.items` trap on real Rockland data).
+    session.add(
+        SowItem(
+            project_id=p.canonical_id, package_id=pkg.canonical_id, item_code="SOW-003",
+            description="Rough-in plumbing", division_code="22", included=True,
+        )
+    )
+    session.add(
+        SowItem(
+            project_id=p.canonical_id, package_id=None, item_code="SOW-018",
+            description="Permit fees", division_code="01", included=False,
+        )
+    )
+    session.flush()
+
     selected = SubcontractorQuote(
         project_id=p.canonical_id, package_id=pkg.canonical_id, vendor_id=vendor.canonical_id,
         division_code="22", status="selected", amount=Decimal("6800.00"), currency="CAD",
@@ -162,6 +179,17 @@ class TestFinanceCommandCenter:
         # Lifecycle stage labels present.
         for stage in ("Budget", "Quoted", "Committed", "Actual", "Variance"):
             assert stage in body
+
+    def test_scope_of_work_section_renders_items(self, client, mock_project):
+        """The Scope-of-Work card must render real SOW items (regression: the
+        `row.items` -> dict.items() Jinja trap 500'd on real data)."""
+        r = client.get(f"/projects/{mock_project.canonical_id}/finance")
+        assert r.status_code == 200
+        body = r.text
+        assert "Scope of Work" in body
+        assert "Rough-in plumbing" in body  # included item
+        assert "Permit fees" in body  # excluded item
+        assert "change order" in body  # the "outside scope = change order" note
 
     def test_tendering_shows_selected_quote(self, client, mock_project):
         r = client.get(f"/projects/{mock_project.canonical_id}/finance")
