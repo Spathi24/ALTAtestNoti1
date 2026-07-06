@@ -78,19 +78,23 @@ report_green_sheet → /projects/{id}/green-sheet
 
 ## Numbers right now
 
-Suite **1690 green** (1682 + 8 Financial-Command-Center web tests). `doctor.py`
+Suite **1697 green** (1690 + 7 SOW-ingest tests). `doctor.py`
 0 fail / 1 known warn (79 legacy NULL cost_status rows, allow-listed
 downstream). **RUFF NOT RE-RUN THIS SESSION** — the ruff native binary is
 blocked by a Windows Application Control policy on this machine (`WinError
 4551`), an environment issue, not a code issue; new code was hand-kept to the
 100-char line limit + isort order. Re-run `python -m ruff check .` +
 `format --check .` once the policy allows it before the next slice.
-Real DB: Rockland `code=2026001`, 11 SowPackages / 31 SowItems (division codes
-canonicalized 2026-07-04 `1012` → `10-12`, 4 rows — recorded), 0
-SubcontractorQuote / PurchaseOrder / BudgetSnapshot rows (all demo data lives
-ONLY in the demo DB). **Rockland's 31 SowItems are MOCK constants** (source_meta
-`"mock SOW_ITEMS smoke-test population"`), NOT parsed from a real SOW file —
-there is no SOW-file parser yet.
+Real DB: Rockland `code=2026001`. **REAL SOW INGESTED 2026-07-05** — the
+owner's `2026001_SOW_v1_consolidated.xlsx` (the mock template shape, filled
+with real Rockland scope) ingested via the new `ai/sow_ingest.py`: **111 real
+SowItems (86 included / 25 explicit exclusions) across 13 SowPackages**,
+replacing the 31 mock items (0 mock rows remain). Real DB backed up first
+(`project_db.sqlite.bak_presowingest_*`). Still 0 SubcontractorQuote /
+PurchaseOrder / BudgetSnapshot in the real DB (those ingesters don't exist
+yet). NOTE: CSI div `28` (Fire Detection) has no entry in
+`ai/financial_divisions.py` so it renders as name "Unclassified" (code `28`
+is preserved, not lost) — a small vocab gap to add, not a data problem.
 
 ## How to run the demo
 
@@ -110,24 +114,26 @@ python scripts/demo_rockland.py serve     # http://127.0.0.1:8123
 
 ## Parked / open questions (forward ideas — wiped, won't ossify)
 
-- **THE DRIVE GO-LIVE WORKSTREAM (the actual next real-data build).** Only the
-  QUOTE ingester exists today. To make a convention-organized real Drive folder
-  produce real green-sheet numbers, three ingesters + one command are needed —
-  each reads a template sheet the resolver already identifies by filename:
-  1. **SOW-file ingester** — `{code}_SOW_v1.xlsx` (`SOW_Items` sheet) →
-     `SowPackage`/`SowItem` rows (replaces today's mock constants).
-  2. **BUDGET-file ingester** — `{code}_BUDGET_v1.xlsx` (`Budget_Lines`) →
-     `BudgetSnapshot`/`BudgetSnapshotLine` (the demo does this inline; extract
-     it into a real reusable ingester).
-  3. **QUOTE loop** — `ingest-quotes` over synced convention-named Documents:
-     resolver → `ingest_subcontractor_quote`. (JOBCOST ingestion is a later,
-     separate track — the gold template is rich; start with SOW+BUDGET+QUOTE.)
-  4. **`ingest-project-financials <project>` CLI** wrapping all three,
-     idempotent, so one command lights up a project.
-  Deliberately NOT built yet: zero real convention-named files exist in Drive,
-  so these would be untestable speculation. Build them the week the team
-  uploads the first real convention-organized project folder (the adoption
-  checklist at the bottom of `../../docs/templates/NAMING_CONVENTIONS.md`).
+- **THE DRIVE GO-LIVE WORKSTREAM (the actual next real-data build).**
+  1. **SOW-file ingester — ✅ BUILT 2026-07-05** (`ai/sow_ingest.py`,
+     7 tests, run on real Rockland SOW → 111 items / 13 packages). Reads the
+     `SOW_Items` sheet → `SowPackage`/`SowItem`, div-01 = GC overhead
+     (no package), canonicalizes division codes, idempotent replace.
+  2. **BUDGET-file ingester — NOT built.** `{code}_BUDGET_v1.xlsx`
+     (`Budget_Lines`) → `BudgetSnapshot`/`BudgetSnapshotLine` (the demo does
+     this inline; extract into a reusable ingester, same shape as #1).
+  3. **QUOTE path — NOT built as a loop.** The per-file
+     `ingest_subcontractor_quote` + `resolve_quote_document` exist; still need
+     the derive-quotes-from-real-estimates step (the DB already has parsed
+     `927 QUOTE` / `ACCEPTED QUOTE` / `Estimate_*.pdf` with evidence spans) and
+     an `ingest-quotes` loop over synced convention-named Documents.
+  4. **`ingest-project-financials <project>` CLI** wrapping #1–#3, idempotent.
+  Owner's fuller vision (2026-07-05, reconcile before building — see below):
+  the pipeline should GENERATE downstream files from the SOW (SOW → packages →
+  quotes → budget), organize by PHASES (subfolders per phase, changes
+  propagate downward), and eventually WRITE back to Google Drive. Those are
+  bigger, partly-gated builds; see PROJECT_STATE "Current Focus" for the
+  reconciliation with the meeting doc + the phased plan.
 - Actuals stage: deterministic invoice→PO matcher writing
   `cost_status='actual'` (llm-v1 rows stay NULL, never auto-promoted).
 - HD/hourly unification into the green-sheet (variable-cost tolerance flags).

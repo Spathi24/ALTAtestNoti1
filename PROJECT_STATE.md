@@ -15,6 +15,43 @@
 
 ## Current Focus
 
+**REAL DATA STARTED FLOWING (2026-07-05).** Owner supplied the first real
+convention-shaped file: `2026001_SOW_v1_consolidated.xlsx` (mock template shape,
+real Rockland scope, 111 items). New `ai/sow_ingest.py` ingested it into the REAL
+DB → 111 real SowItems / 13 packages, replacing the 31 mock items (DB backed up
+first). This is the first non-mock data in the new spine.
+
+**OWNER'S FULLER PIPELINE VISION (2026-07-05) — RECONCILED WITH THE MEETING DOC,
+all aligned, NOT divergent.** The owner clarified the intended flow and it matches
+`MEETING_SYNTHESIS §1–§7` exactly (structure/traceability; SOW → packages → quotes
+→ budget → PO → actual; downward; flag-never-silently-sort; LLM-advisor via
+Proposal gate). What's NEW vs §12 and needs its own design (do NOT panic-build):
+1. **Generation/derivation pipeline:** SOW (from a PDF/consolidated sheet) →
+   auto-generate the package files → quotes → budget (budget = quotes ÷ margins,
+   split by package). JOBCOST is the LAST station (actuals modification). Per
+   §12.3 generation is LLM-ADVISORY via the Proposal gate — never silent
+   overwrite. The owner wants "input a PDF SOW → get the formatted SOW Excel →
+   generate everything downstream."
+2. **PHASES as a sub-dimension:** each main folder (SOW/packages/quotes/budget)
+   further split by phase (Phase 1, Phase 2…); modifications propagate DOWNWARD
+   from a phase's SOW to that phase's packages→quotes→budget. This is a NEW
+   structural layer not in §12 — needs a `phase` field on the SOW/package/quote
+   rows + folder convention. Additive; design with owner before building.
+3. **Google Drive WRITE capability:** owner wants it online (auto-write generated
+   Excel back to Drive). This is the PARKED, GATED capability (CLAUDE.md rule 14 +
+   REFOUNDATION_BUILD_NOTES "Drive Write Capability" section): requires read-only
+   audit → migration plan → dry-run → per-batch human approval → copy-first →
+   rollback log. Do NOT just turn on Drive writes; build it in that strict order.
+   Quotes: the DB ALREADY has the parsed estimate/quote docs (`927 QUOTE`,
+   `ACCEPTED QUOTE`, `Estimate_537014_*.pdf`, `Final SOW.pdf` — all parsed with
+   evidence spans), so quote-file generation can read real DB evidence, not guess.
+
+**Provenance correction (2026-07-05):** the gold `JOB_COST_TEMPLATE_structured.xlsx`
+was derived from a ST-LAURENT job-cost file, NOT Rockland. This is FINE — a template
+is a blank STRUCTURE (project-agnostic); nothing built on it used St-Laurent
+numbers. The only correction: JOBCOST is the actuals/modification station (last),
+so it is NOT copied early — the pipeline starts from SOW.
+
 **NEW GROUND-UP UI STARTED (2026-07-04) — see [UI_REFOUNDATION.md](docs/UI_REFOUNDATION.md).**
 Slice U1 DONE: a per-project **Financial Command Center** (`/projects/{id}/finance`,
 flag `finance_home`, new self-contained design language in `web/static/finance.css`,

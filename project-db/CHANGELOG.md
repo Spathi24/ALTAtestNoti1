@@ -9,6 +9,42 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-07-05 — first REAL data: SOW-file ingester + real Rockland SOW
+
+The first non-mock data flows into the new spine. The owner supplied
+`2026001_SOW_v1_consolidated.xlsx` — the settled SOW template shape filled with
+Rockland's real, consolidated scope (111 items across 14 CSI divisions).
+
+- **`ai/sow_ingest.py`** — the real SOW-file ingester (first of the three
+  "Drive go-live" ingesters, built now that a real file exists to test
+  against). Reads the `SOW_Items` sheet (Item_ID / CSI_Div_Code / Trade /
+  Description / Included / Material_Spec / Notes) → `SowPackage` + `SowItem`
+  rows. One package per CSI division except `01` (General Requirements = GC
+  overhead, no subcontractor package → items get `package_id=NULL`, matching
+  the Phase-3 rule). Division codes canonicalized (`1012` → `10-12`).
+  Idempotent per project (delete + rebuild). Deterministic, no LLM (meeting
+  §9: deterministic path is primary for templated inputs). 7 tests against a
+  synthetic in-memory workbook (self-contained).
+- **Ran on the REAL Rockland DB** (backed up first,
+  `project_db.sqlite.bak_presowingest_*`): 31 mock SowItems → **111 real
+  SowItems (86 included / 25 explicit exclusions) across 13 SowPackages**;
+  0 mock rows remain. Rockland's scope spine is now real (real exclusions
+  like "Permit fees", "Engineering fees" — the change-order boundary).
+- Known small gap surfaced: CSI division `28` (Fire Detection) has no entry
+  in `ai/financial_divisions.py`, so it renders as name "Unclassified" (the
+  code `28` is preserved, not lost) — a one-line vocab add, recorded.
+
+Also reconciled the owner's fuller pipeline vision (generation SOW→packages→
+quotes→budget; phase sub-folders with downward propagation; Drive write-back)
+against MEETING_SYNTHESIS — all aligned, none divergent; the new pieces
+(phases, generation, Drive write) are recorded in PROJECT_STATE as designed-
+next, not panic-built. Provenance corrected: the gold JOBCOST template came
+from St-Laurent, which is fine (a template is a blank structure).
+
+Suite: **1697 passed** (+7). doctor 0 fail. (ruff still blocked by the machine
+AppControl policy; new code hand-kept to the 100-char limit + isort.)
+
+
 ## 2026-07-04 — new ground-up UI: the Financial Command Center (slice U1)
 
 The refoundation spine gets its flagship surface: a per-project financial
