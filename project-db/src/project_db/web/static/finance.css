@@ -1,0 +1,121 @@
+/* Financial Command Center -- the new ground-up UI design language
+   (UI_REFOUNDATION.md Slice U1). Self-contained; does NOT depend on pico.css.
+   Scoped under .fin so it can coexist with the legacy app on the same page. */
+
+.fin {
+  --fin-bg: #0d1117;
+  --fin-surface: #161b22;
+  --fin-surface-2: #1c2330;
+  --fin-border: #2a3441;
+  --fin-text: #e6edf3;
+  --fin-muted: #8b949e;
+  --fin-accent: #3b82f6;
+  --fin-pos: #3fb950;
+  --fin-warn: #d29922;
+  --fin-neg: #f85149;
+  --fin-pipe: #a371f7;
+  --fin-radius: 12px;
+  --fin-gap: 1rem;
+
+  background: var(--fin-bg);
+  color: var(--fin-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  padding: 1.5rem clamp(1rem, 4vw, 3rem) 4rem;
+  margin: -1rem calc(-1 * clamp(1rem, 4vw, 3rem));
+  border-radius: var(--fin-radius);
+}
+
+.fin * { box-sizing: border-box; }
+
+.fin a { color: var(--fin-accent); text-decoration: none; }
+.fin a:hover { text-decoration: underline; }
+
+/* ---- header ---- */
+.fin-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--fin-gap); flex-wrap: wrap; margin-bottom: 1.25rem;
+}
+.fin-head h1 { font-size: 1.6rem; margin: 0 0 .25rem; font-weight: 650; }
+.fin-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fin-accent); font-size: .95rem;
+}
+.fin-sub { color: var(--fin-muted); font-size: .9rem; margin: 0; }
+
+/* ---- provenance banner ---- */
+.fin-prov {
+  display: inline-flex; align-items: center; gap: .5rem;
+  padding: .5rem .85rem; border-radius: 8px; font-size: .85rem; font-weight: 600;
+  border: 1px solid transparent;
+}
+.fin-prov b { letter-spacing: .04em; }
+.fin-prov.mock  { background: rgba(210,153,34,.12); color: var(--fin-warn); border-color: rgba(210,153,34,.35); }
+.fin-prov.live  { background: rgba(63,185,80,.12);  color: var(--fin-pos);  border-color: rgba(63,185,80,.35); }
+.fin-prov.empty { background: rgba(139,148,158,.12); color: var(--fin-muted); border-color: rgba(139,148,158,.3); }
+
+/* ---- lifecycle flow strip ---- */
+.fin-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin: 1.25rem 0; }
+.fin-stage {
+  background: var(--fin-surface); border: 1px solid var(--fin-border);
+  border-radius: var(--fin-radius); padding: 1rem; position: relative;
+}
+.fin-stage .lbl { color: var(--fin-muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+.fin-stage .val { font-size: 1.5rem; font-weight: 650; margin-top: .35rem; font-variant-numeric: tabular-nums; }
+.fin-stage .hint { color: var(--fin-muted); font-size: .72rem; margin-top: .2rem; }
+.fin-stage.variance .val.pos { color: var(--fin-pos); }
+.fin-stage.variance .val.neg { color: var(--fin-neg); }
+.fin-stage.pipe .val { color: var(--fin-pipe); }
+
+/* ---- cards ---- */
+.fin-card {
+  background: var(--fin-surface); border: 1px solid var(--fin-border);
+  border-radius: var(--fin-radius); padding: 1.25rem; margin-bottom: 1.25rem;
+}
+.fin-card > h2 { font-size: 1.1rem; margin: 0 0 .25rem; font-weight: 600; }
+.fin-card > .note { color: var(--fin-muted); font-size: .85rem; margin: 0 0 1rem; }
+
+/* ---- table ---- */
+.fin-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.fin-table th, .fin-table td { padding: .55rem .6rem; text-align: right; border-bottom: 1px solid var(--fin-border); }
+.fin-table th:first-child, .fin-table td:first-child,
+.fin-table th.l, .fin-table td.l { text-align: left; }
+.fin-table thead th { color: var(--fin-muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+.fin-table tbody tr:hover { background: var(--fin-surface-2); }
+.fin-table td.num { font-variant-numeric: tabular-nums; }
+.fin-table .pos { color: var(--fin-pos); }
+.fin-table .neg { color: var(--fin-neg); }
+.fin-table .muted { color: var(--fin-muted); }
+.fin-code-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fin-muted); }
+
+/* ---- flags / pills ---- */
+.fin-flag { display: block; color: var(--fin-warn); font-size: .78rem; padding: .3rem 0 .3rem 0; }
+.pill {
+  display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem;
+  font-weight: 600; border: 1px solid var(--fin-border);
+}
+.pill.sel { background: rgba(63,185,80,.14); color: var(--fin-pos); border-color: rgba(63,185,80,.3); }
+.pill.pend { background: rgba(163,113,247,.14); color: var(--fin-pipe); border-color: rgba(163,113,247,.3); }
+.pill.rej { background: rgba(139,148,158,.12); color: var(--fin-muted); }
+.pill.awd { background: rgba(59,130,246,.14); color: var(--fin-accent); border-color: rgba(59,130,246,.3); }
+
+/* ---- tendering columns ---- */
+.fin-tender { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .75rem; }
+.fin-tender .col { background: var(--fin-surface-2); border: 1px solid var(--fin-border); border-radius: 10px; padding: .85rem; }
+.fin-tender .col h3 { font-size: .85rem; margin: 0 0 .6rem; display: flex; justify-content: space-between; align-items: center; }
+.fin-bid { display: flex; justify-content: space-between; gap: .5rem; font-size: .85rem; padding: .35rem 0; border-bottom: 1px dashed var(--fin-border); }
+.fin-bid:last-child { border-bottom: 0; }
+.fin-bid .v { color: var(--fin-muted); }
+
+/* ---- empty state ---- */
+.fin-empty { text-align: center; padding: 2.5rem 1rem; color: var(--fin-muted); }
+.fin-empty h2 { color: var(--fin-text); font-weight: 600; }
+.fin-empty ol { display: inline-block; text-align: left; max-width: 40rem; margin-top: 1rem; }
+
+/* ---- misc ---- */
+.fin-scope {
+  background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.25);
+  border-radius: 8px; padding: .6rem .85rem; font-size: .82rem; color: var(--fin-muted); margin-bottom: 1.25rem;
+}
+.fin-scope b { color: var(--fin-warn); }
+.fin-back { font-size: .85rem; }

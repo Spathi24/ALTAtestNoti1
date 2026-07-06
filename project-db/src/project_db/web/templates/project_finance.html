@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project_name }} - Financials{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', path='finance.css') }}">
+{% set gs = d.green_sheet %}
+<div class="fin">
+
+  <div class="fin-head">
+    <div>
+      <h1>{{ d.project_name }}</h1>
+      <p class="fin-sub">
+        <span class="fin-code">{{ d.project_code or "no code" }}</span>
+        &middot; Financial Command Center
+        &middot; <a class="fin-back" href="/projects/{{ d.project_id }}">&larr; project</a>
+      </p>
+    </div>
+    <div class="fin-prov {{ d.provenance }}">
+      {% if d.provenance == "mock" %}
+        <b>MOCK / DEMO DATA</b> — pilot template numbers, not real project finances
+      {% elif d.provenance == "live" %}
+        <b>LIVE DATA</b> — from ingested project documents
+      {% else %}
+        <b>NO FINANCIAL DATA YET</b>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="fin-scope">
+    <b>Fixed-cost side only.</b> Home Depot purchases and hourly labour (the
+    variable-cost buckets) are not in these numbers yet. Variance here is not
+    the whole-project over/under.
+  </div>
+
+  {# ---- lifecycle flow strip: the money pipeline at a glance ---- #}
+  <div class="fin-flow">
+    <div class="fin-stage">
+      <div class="lbl">Budget</div>
+      <div class="val">{% if gs.total_budget is not none %}${{ "{:,.0f}".format(gs.total_budget) }}{% else %}&mdash;{% endif %}</div>
+      <div class="hint">{% if gs.budget_snapshot_label %}snapshot {{ gs.budget_snapshot_label }}{% else %}no baseline set{% endif %}</div>
+    </div>
+    <div class="fin-stage">
+      <div class="lbl">Quoted (selected)</div>
+      <div class="val">{% if gs.total_quoted is not none %}${{ "{:,.0f}".format(gs.total_quoted) }}{% else %}&mdash;{% endif %}</div>
+      <div class="hint">chosen quotes, pre-PO</div>
+    </div>
+    {% if gs.total_pending_bids is not none %}
+    <div class="fin-stage pipe">
+      <div class="lbl">Pending bids</div>
+      <div class="val">${{ "{:,.0f}".format(gs.total_pending_bids) }}</div>
+      <div class="hint">competing — not expected cost</div>
+    </div>
+    {% endif %}
+    <div class="fin-stage">
+      <div class="lbl">Committed (POs)</div>
+      <div class="val">{% if gs.total_committed is not none %}${{ "{:,.0f}".format(gs.total_committed) }}{% else %}&mdash;{% endif %}</div>
+      <div class="hint">awarded purchase orders</div>
+    </div>
+    <div class="fin-stage">
+      <div class="lbl">Actual spend</div>
+      <div class="val">{% if gs.total_actual is not none %}${{ "{:,.0f}".format(gs.total_actual) }}{% else %}&mdash;{% endif %}</div>
+      <div class="hint">invoiced / paid</div>
+    </div>
+    <div class="fin-stage variance">
+      <div class="lbl">Variance</div>
+      <div class="val {{ 'pos' if gs.total_variance and gs.total_variance >= 0 else 'neg' if gs.total_variance is not none else '' }}">
+        {% if gs.total_variance is not none %}${{ "{:,.0f}".format(gs.total_variance) }}{% else %}&mdash;{% endif %}
+      </div>
+      <div class="hint">budget &minus; (committed + actual)</div>
+    </div>
+  </div>
+
+  {% if gs.divisions %}
+  {# ---- per-division table ---- #}
+  <div class="fin-card">
+    <h2>By trade / division</h2>
+    <p class="note">Every cost traces to a division. Quoted = selected quote only; competing bids sit in their own column and are never summed into expected cost.</p>
+    <table class="fin-table">
+      <thead>
+        <tr>
+          <th class="l">Div</th><th class="l">Trade</th>
+          <th>Budget</th><th>Quoted</th><th>Pending</th>
+          <th>Committed</th><th>Actual</th><th>Variance</th><th class="l">Tendering</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in gs.divisions %}
+        <tr>
+          <td class="l fin-code-cell">{{ row.division_code }}</td>
+          <td class="l">{{ row.division_name }}</td>
+          <td class="num">{% if row.budget_amount is not none %}${{ "{:,.0f}".format(row.budget_amount) }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+          <td class="num">{% if row.quoted_cost is not none %}${{ "{:,.0f}".format(row.quoted_cost) }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+          <td class="num">{% if row.pending_bids_cost is not none %}<span class="muted">${{ "{:,.0f}".format(row.pending_bids_cost) }}</span>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+          <td class="num">{% if row.committed_cost is not none %}${{ "{:,.0f}".format(row.committed_cost) }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+          <td class="num">{% if row.actual_cost is not none %}${{ "{:,.0f}".format(row.actual_cost) }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+          <td class="num {{ 'pos' if row.variance and row.variance >= 0 else 'neg' if row.variance is not none else '' }}">
+            {% if row.variance is not none %}${{ "{:,.0f}".format(row.variance) }}{% else %}<span class="muted">&mdash;</span>{% endif %}
+          </td>
+          <td class="l muted">{{ row.package_count }}pkg / {{ row.quote_count }}q{% if row.selected_quote_count %} / {{ row.selected_quote_count }} sel{% endif %}</td>
+        </tr>
+        {% if row.warnings %}
+        <tr><td></td><td colspan="8" class="l"><span class="fin-flag">&#9888; {{ row.warnings | join(" · ") }}</span></td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- tendering panel: compare-by-coverage lives here ---- #}
+  <div class="fin-card">
+    <h2>Tendering &mdash; {{ d.quote_total }} quote{{ "s" if d.quote_total != 1 }}</h2>
+    <p class="note">Selection is a human decision through the Proposal gate. A selected quote is intent; only a PO award commits cost.</p>
+    {% if d.quote_total %}
+    <div class="fin-tender">
+      {% for status, label, cls in [("selected","Selected","sel"), ("pending","Pending","pend"), ("recommended","Recommended","pend"), ("rejected","Rejected","rej"), ("awarded","Awarded (PO)","awd")] %}
+        {% set bids = d.tendering.get(status, []) %}
+        {% if bids %}
+        <div class="col">
+          <h3><span class="pill {{ cls }}">{{ label }}</span> <span class="muted">{{ bids|length }}</span></h3>
+          {% for b in bids %}
+          <div class="fin-bid">
+            <span>{{ b.vendor }} <span class="v">· div {{ b.division_code or "—" }}</span></span>
+            <span>{% if b.amount is not none %}${{ "{:,.0f}".format(b.amount) }}{% else %}&mdash;{% endif %}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No subcontractor quotes ingested for this project yet.</p>
+    {% endif %}
+  </div>
+
+  {% else %}
+  {# ---- honest empty state ---- #}
+  <div class="fin-card">
+    <div class="fin-empty">
+      <h2>Nothing to show yet</h2>
+      <p>This project has no SOW / quote / budget rows in the new financial spine.
+         To light this up:</p>
+      <ol>
+        <li>Organize the project's Drive folder to the naming convention (<code>{code}_SOW_v1.xlsx</code>, <code>{code}_BUDGET_v1.xlsx</code>, <code>{code}_QUOTE_&hellip;.xlsx</code>).</li>
+        <li>Run the ingesters over the synced documents.</li>
+        <li>Select quotes and award POs; the pipeline above fills in as it happens.</li>
+      </ol>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

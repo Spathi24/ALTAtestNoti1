@@ -15,6 +15,17 @@
 
 ## Current Focus
 
+**NEW GROUND-UP UI STARTED (2026-07-04) — see [UI_REFOUNDATION.md](docs/UI_REFOUNDATION.md).**
+Slice U1 DONE: a per-project **Financial Command Center** (`/projects/{id}/finance`,
+flag `finance_home`, new self-contained design language in `web/static/finance.css`,
+template `project_finance.html`, service `ui_views.project_finance_home`). The whole
+money lifecycle on one screen (budget → quoted → committed → actual → variance) +
+tendering breakdown + honest MOCK/LIVE/EMPTY provenance badge. Read-only; numbers
+come from `report_green_sheet` verbatim. Verified live in browser (dark dashboard
+renders, correct pilot numbers). Rules/scope: UI_REFOUNDATION.md (NO new tech stack,
+NO old-page rehab, mount-later). The older `/green-sheet` route is now effectively a
+subset of the command center's "By trade" table; kept until slice U3 retires it.
+
 **REFOUNDATION FRONT-OF-SPINE BUILT END-TO-END (2026-07-02 → 07-04).** Phases 1–6
 (mock template Drive → Project.code identity → SowPackage/SowItem →
 SubcontractorQuote + cost lifecycle → PurchaseOrder/award → BudgetSnapshot +
@@ -24,6 +35,13 @@ green-sheet aggregator), the filename resolver (Phase 5 item #3), the
 front-door seed, serve on :8123). Full detail + honest gaps:
 `project-db/docs/HANDOFF.md` (retyped 07-04) and
 [REFOUNDATION_BUILD_NOTES](docs/REFOUNDATION_BUILD_NOTES.md).
+**The Drive go-live code gap (the actual next real-data work):** only the QUOTE
+ingester (`subcontractor_quote_ingest.py`) exists. There is NO SOW-file ingester
+(SowItems are mock constants tagged `"mock SOW_ITEMS smoke-test population"`, NOT
+parsed), NO BUDGET-file ingester (demo seeds budget from the xlsx directly), NO
+JOBCOST ingester, and NO CLI/Drive wiring for any of it. Building those three
+ingesters + an `ingest-project-financials` command is what turns a
+convention-organized real Drive folder into real green-sheet numbers.
 **The remaining blocker is OPERATIONAL, not code:** zero real Drive files
 follow the naming convention and only Rockland has SOW structure — team
 checklist at the bottom of `docs/templates/NAMING_CONVENTIONS.md`.

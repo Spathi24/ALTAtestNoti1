@@ -60,9 +60,17 @@ report_green_sheet → /projects/{id}/green-sheet
   (SELECTED quote only) / pending_bids (competing, never summed) /
   committed / actual (allow-list: NULL-legacy or 'actual') / unclassified
   (flagged) / variance = budget − (committed+actual).
-- **UI (2026-07-04)** `/projects/{id}/green-sheet` (flag `green_sheet`,
-  default on; template `project_green_sheet.html`; linked from project
-  detail). States its fixed-cost-only scope and budget provenance on-page.
+- **UI green-sheet (2026-07-04)** `/projects/{id}/green-sheet` (flag
+  `green_sheet`; template `project_green_sheet.html`). Now effectively a
+  subset of the Command Center below; kept until UI slice U3 retires it.
+- **UI Financial Command Center (2026-07-04, NEW ground-up UI — slice U1 of
+  `../../docs/UI_REFOUNDATION.md`)** `/projects/{id}/finance` (flag
+  `finance_home`; new self-contained design language `web/static/finance.css`;
+  template `project_finance.html`; service `ui_views.project_finance_home`).
+  The whole money lifecycle on one screen + tendering + honest
+  MOCK/LIVE/EMPTY provenance badge. Read-only; all numbers from
+  `report_green_sheet` verbatim. This is the shell the rest gets mounted onto
+  (rules in UI_REFOUNDATION.md: no new tech stack, no old-page rehab now).
 - **Demo harness (2026-07-04)** `scripts/demo_rockland.py` — copies the real
   DB to `project_db.demo.sqlite` (canonical DB never touched), seeds the
   pilot THROUGH the real pipeline, serves on :8123. `.claude/launch.json` has
@@ -70,12 +78,19 @@ report_green_sheet → /projects/{id}/green-sheet
 
 ## Numbers right now
 
-Suite **1682 green** (1676 + 6 green-sheet web tests); `ruff check` + `ruff
-format --check` green; `doctor.py` 0 fail / 1 known warn (79 legacy NULL
-cost_status rows, allow-listed downstream). Real DB: Rockland `code=2026001`,
-11 SowPackages / 31 SowItems (division codes canonicalized 2026-07-04:
-`1012` → `10-12`, 4 rows — recorded, not silent), 0 SubcontractorQuote /
-PurchaseOrder / BudgetSnapshot rows (all demo data lives ONLY in the demo DB).
+Suite **1690 green** (1682 + 8 Financial-Command-Center web tests). `doctor.py`
+0 fail / 1 known warn (79 legacy NULL cost_status rows, allow-listed
+downstream). **RUFF NOT RE-RUN THIS SESSION** — the ruff native binary is
+blocked by a Windows Application Control policy on this machine (`WinError
+4551`), an environment issue, not a code issue; new code was hand-kept to the
+100-char line limit + isort order. Re-run `python -m ruff check .` +
+`format --check .` once the policy allows it before the next slice.
+Real DB: Rockland `code=2026001`, 11 SowPackages / 31 SowItems (division codes
+canonicalized 2026-07-04 `1012` → `10-12`, 4 rows — recorded), 0
+SubcontractorQuote / PurchaseOrder / BudgetSnapshot rows (all demo data lives
+ONLY in the demo DB). **Rockland's 31 SowItems are MOCK constants** (source_meta
+`"mock SOW_ITEMS smoke-test population"`), NOT parsed from a real SOW file —
+there is no SOW-file parser yet.
 
 ## How to run the demo
 
@@ -95,16 +110,27 @@ python scripts/demo_rockland.py serve     # http://127.0.0.1:8123
 
 ## Parked / open questions (forward ideas — wiped, won't ossify)
 
-- **`project_db ingest-quotes` CLI** — the last glue for LIVE Drive flow:
-  loop synced Documents whose filename matches the convention → resolver →
-  ingester. Deliberately NOT built yet: zero real convention-named files
-  exist in Drive, so it would be untestable speculation. Build it the week
-  the team uploads the first real convention-named quote (checklist step 5).
+- **THE DRIVE GO-LIVE WORKSTREAM (the actual next real-data build).** Only the
+  QUOTE ingester exists today. To make a convention-organized real Drive folder
+  produce real green-sheet numbers, three ingesters + one command are needed —
+  each reads a template sheet the resolver already identifies by filename:
+  1. **SOW-file ingester** — `{code}_SOW_v1.xlsx` (`SOW_Items` sheet) →
+     `SowPackage`/`SowItem` rows (replaces today's mock constants).
+  2. **BUDGET-file ingester** — `{code}_BUDGET_v1.xlsx` (`Budget_Lines`) →
+     `BudgetSnapshot`/`BudgetSnapshotLine` (the demo does this inline; extract
+     it into a real reusable ingester).
+  3. **QUOTE loop** — `ingest-quotes` over synced convention-named Documents:
+     resolver → `ingest_subcontractor_quote`. (JOBCOST ingestion is a later,
+     separate track — the gold template is rich; start with SOW+BUDGET+QUOTE.)
+  4. **`ingest-project-financials <project>` CLI** wrapping all three,
+     idempotent, so one command lights up a project.
+  Deliberately NOT built yet: zero real convention-named files exist in Drive,
+  so these would be untestable speculation. Build them the week the team
+  uploads the first real convention-organized project folder (the adoption
+  checklist at the bottom of `../../docs/templates/NAMING_CONVENTIONS.md`).
 - Actuals stage: deterministic invoice→PO matcher writing
   `cost_status='actual'` (llm-v1 rows stay NULL, never auto-promoted).
 - HD/hourly unification into the green-sheet (variable-cost tolerance flags).
-- SOW/PKG file ingestion (SowItem rows from a real `*_SOW_v1.xlsx`; today's
-  31 items were seeded from the approved mock constants, not parsed).
 - LLM-advisory slices (quote coverage-comparison vs SOW; owner explicitly
   encourages LLM use where deterministic is impractical — Proposal-gated,
   never a ledger writer).

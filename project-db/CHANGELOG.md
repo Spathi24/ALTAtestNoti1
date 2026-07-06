@@ -9,6 +9,50 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-07-04 — new ground-up UI: the Financial Command Center (slice U1)
+
+The refoundation spine gets its flagship surface: a per-project financial
+command center with a new, self-contained design language that becomes the
+shell older surfaces get mounted onto over time. Rules + scope for the whole
+UI initiative are in `../../docs/UI_REFOUNDATION.md` (no new tech stack, no
+old-page rehab now, read-only first, honest provenance on every page).
+
+- **`/projects/{id}/finance`** (flag `finance_home`, default on; linked as
+  "Financials" from project detail). One screen tells the whole money story:
+  a lifecycle flow strip (Budget → Quoted[selected] → Pending bids →
+  Committed → Actual → Variance), a by-trade table, and a tendering panel
+  grouping quotes by status (selected / pending / rejected / awarded). All
+  dollar numbers come verbatim from `report_green_sheet`; UI composition is
+  in `ui_views.project_finance_home`; the design language is a self-contained
+  `web/static/finance.css` (dark dashboard, scoped under `.fin`, does not
+  depend on pico.css).
+- **Honest by construction:** a prominent provenance badge — MOCK/DEMO (a
+  budget snapshot flagged mock), LIVE (real ingested data), or EMPTY (with a
+  "what lights this up" checklist). A fixed-cost-scope banner (Home Depot +
+  hourly labour are not in these numbers). This is the UI initiative's #1
+  rule — never let a clean render imply validated real numbers.
+- Verified LIVE in a browser (preview harness on the isolated demo DB): dark
+  command-center renders, provenance MOCK badge, flow strip budget $90,700 /
+  committed $6,800 / pending bids $21,500 / variance $83,900, tendering panel
+  splitting pending vs awarded. 8 web tests (`test_web_finance.py`) incl. the
+  live/mock/empty provenance branches and the feature-flag 404.
+- The older `/green-sheet` page is now effectively a subset of the command
+  center's by-trade table; kept until UI slice U3 retires it (mount-later
+  discipline, parity already proven — same aggregator).
+
+Investigation this session also nailed down the Drive go-live gap precisely
+(now in HANDOFF + PROJECT_STATE): only the QUOTE ingester exists — there is
+no SOW-file, BUDGET-file, or JOBCOST ingester and no Drive wiring, and
+Rockland's 31 SowItems are mock constants, not parsed from a real file. That
+ingestion workstream is the next real-data build, deferred until real
+convention-named files exist.
+
+Suite: **1690 passed** (+8 web). doctor 0 fail. NOTE: `ruff` could not be run
+— its native binary is blocked by a Windows Application Control policy on
+this machine (WinError 4551); new code was hand-kept to the 100-char limit +
+isort order; re-run ruff once the policy allows.
+
+
 ## 2026-07-04 — green-sheet UI + isolated demo harness (the spine becomes visible)
 
 The refoundation slice the whole 07-02 arc was building toward: the financial

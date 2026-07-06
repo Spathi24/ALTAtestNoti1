@@ -77,6 +77,78 @@ def project_green_sheet(session: Session, project_id: str) -> dict[str, Any] | N
     return rep
 
 
+def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | None:
+    """Financial Command Center composition (UI Slice U1, read-only).
+
+    Composes the canonical ``report_green_sheet`` aggregator (all dollar
+    numbers come from there, verbatim) with a tendering breakdown (quotes by
+    status) and an honest provenance signal (mock / live / empty).  No numbers
+    are computed here that the aggregator already owns.  None when the project
+    doesn't resolve (route renders a 404).
+    """
+    from project_db.ai.green_sheet import report_green_sheet
+    from project_db.ai.views import _resolve_project
+    from project_db.db.models.core import Vendor
+    from project_db.db.models.finance import BudgetSnapshot, SubcontractorQuote
+
+    project = _resolve_project(session, project_id)
+    if project is None:
+        return None
+
+    gs = report_green_sheet(session, project_id)
+    if isinstance(gs, dict) and gs.get("error"):
+        return None
+
+    # Tendering: quotes grouped by lifecycle status, with vendor names resolved.
+    quotes = (
+        session.query(SubcontractorQuote)
+        .filter(SubcontractorQuote.project_id == project.canonical_id)
+        .all()
+    )
+    vendor_names = {
+        v.canonical_id: v.name
+        for v in session.query(Vendor).all()
+    }
+    tendering = {"selected": [], "pending": [], "recommended": [], "rejected": [], "awarded": []}
+    for q in quotes:
+        row = {
+            "vendor": vendor_names.get(q.vendor_id, "(unresolved vendor)"),
+            "division_code": q.division_code,
+            "amount": float(q.amount) if q.amount is not None else None,
+            "status": q.status,
+        }
+        tendering.setdefault(q.status, []).append(row)
+
+    # Provenance: honest by construction. A budget snapshot flagged "mock"
+    # (the demo seed) => MOCK; real budget/quote data => LIVE; nothing => EMPTY.
+    snap = (
+        session.query(BudgetSnapshot)
+        .filter(BudgetSnapshot.project_id == project.canonical_id)
+        .order_by(BudgetSnapshot.created_at.desc())
+        .first()
+    )
+    snap_label = (snap.label or "") if snap else ""
+    snap_meta = (snap.source_meta_json or "") if snap else ""
+    snap_blob = f"{snap_label} {snap_meta}".lower()
+    has_any = bool(quotes) or snap is not None or (gs.get("divisions"))
+    if "mock" in snap_blob or "demo" in snap_blob:
+        provenance = "mock"
+    elif has_any and (quotes or snap is not None):
+        provenance = "live"
+    else:
+        provenance = "empty"
+
+    return {
+        "project_name": project.name,
+        "project_code": project.code,
+        "project_id": str(project.canonical_id),
+        "provenance": provenance,
+        "green_sheet": gs,
+        "tendering": tendering,
+        "quote_total": len(quotes),
+    }
+
+
 def project_labour(session: Session, project_id: str) -> dict[str, Any] | None:
     """Consolidated labour shifts (Gmail + Telegram) for one project.
 

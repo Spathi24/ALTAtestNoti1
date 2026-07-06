@@ -30,6 +30,9 @@ DEFAULT_FEATURES: dict[str, bool] = {
     # Green-sheet: per-division budget vs quoted vs committed vs actual
     # (the refoundation financial gate view; reads report_green_sheet).
     "green_sheet": True,
+    # Financial Command Center -- the new ground-up UI (UI_REFOUNDATION.md
+    # Slice U1): the whole money lifecycle for one project on one screen.
+    "finance_home": True,
     "task_date_edit": True,
     # Explicitly quarantined by default.
     "field_notes_email": False,
