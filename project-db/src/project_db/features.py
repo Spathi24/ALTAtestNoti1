@@ -33,6 +33,9 @@ DEFAULT_FEATURES: dict[str, bool] = {
     # Financial Command Center -- the new ground-up UI (UI_REFOUNDATION.md
     # Slice U1): the whole money lifecycle for one project on one screen.
     "finance_home": True,
+    # ScopeContext / Evidence Inspector (UI_REFOUNDATION.md Slice U1.5): the
+    # visible-surface companion to the ScopeContext migration (SC-1/SC-2).
+    "scope_context_inspector": True,
     "task_date_edit": True,
     # Explicitly quarantined by default.
     "field_notes_email": False,

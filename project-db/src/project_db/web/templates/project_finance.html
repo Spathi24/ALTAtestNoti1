@@ -13,6 +13,7 @@
         <span class="fin-code">{{ d.project_code or "no code" }}</span>
         &middot; Financial Command Center
         &middot; <a class="fin-back" href="/projects/{{ d.project_id }}">&larr; project</a>
+        &middot; <a class="fin-back" href="/projects/{{ d.project_id }}/scope-contexts">Scope Contexts &rarr;</a>
       </p>
     </div>
     <div class="fin-prov {{ 'live' if d.provenance == 'scoped' else d.provenance }}">

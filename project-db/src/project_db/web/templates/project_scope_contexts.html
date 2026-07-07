@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ d.project_name }} - Scope Contexts{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', path='finance.css') }}">
+<div class="fin">
+
+  <div class="fin-head">
+    <div>
+      <h1>{{ d.project_name }}</h1>
+      <p class="fin-sub">
+        <span class="fin-code">{{ d.project_code or "no code" }}</span>
+        &middot; Scope Contexts
+        &middot; <a class="fin-back" href="/projects/{{ d.project_id }}">&larr; project</a>
+        &middot; <a class="fin-back" href="/projects/{{ d.project_id }}/finance">Financials &rarr;</a>
+      </p>
+    </div>
+    <div class="fin-prov {{ d.provenance }}">
+      {% if d.provenance == "live" %}
+        <b>LIVE DATA</b> — {{ d.context_count }} scope context{{ "s" if d.context_count != 1 }},
+        {{ d.total_documents }} document{{ "s" if d.total_documents != 1 }}
+      {% else %}
+        <b>NO SCOPE CONTEXTS YET</b>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="fin-scope">
+    <b>A ScopeContext is a coherent scope boundary within this project</b>
+    (site / unit / area / phase / contract scope) — not a separate project.
+    Employees, materials and financing flow freely across contexts of the same
+    project; contexts partition scope &amp; authority, not cost-sharing.
+    A document with no context binding is either <b>legacy / not yet migrated</b>
+    (harmless) or <b>unresolved / quarantined</b> (we tried to bind it and could
+    not) — those are deliberately different states, shown separately below.
+  </div>
+
+  {% if d.contexts %}
+  {% for c in d.contexts %}
+  <div class="fin-card">
+    <h2>{{ c.label or c.context_key }} <span class="muted">({{ c.context_key }})</span></h2>
+    <p class="note">
+      {% if c.kind %}kind: {{ c.kind }}{% endif %}
+      {% if c.site %} &middot; site: {{ c.site }}{% endif %}
+      {% if c.unit_area %} &middot; unit/area: {{ c.unit_area }}{% endif %}
+      {% if c.phase %} &middot; phase: {{ c.phase }}{% endif %}
+      &middot; {{ c.document_count }} document{{ "s" if c.document_count != 1 }} bound
+    </p>
+    {% if c.documents %}
+    <table class="fin-table">
+      <thead><tr><th class="l">Document</th><th class="l">Folder</th></tr></thead>
+      <tbody>
+        {% for doc in c.documents %}
+        <tr>
+          <td class="l">{{ doc.name }}</td>
+          <td class="l muted">{{ doc.folder_path or "&mdash;" | safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No documents bound to this context yet.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  <div class="fin-card">
+    <h2>Unresolved &mdash; {{ d.unresolved_count }} document{{ "s" if d.unresolved_count != 1 }}</h2>
+    <p class="note">
+      Quarantine: ALTA looked for a context binding and could not find one
+      (registered folder mapping did not match). Never guessed, never silently
+      assigned. Distinct from the {{ d.legacy_unscoped_count }} legacy-unscoped
+      document{{ "s" if d.legacy_unscoped_count != 1 }} below, which simply
+      predate this migration.
+    </p>
+    {% if d.unresolved_documents %}
+    <table class="fin-table">
+      <thead><tr><th class="l">Document</th><th class="l">Folder</th></tr></thead>
+      <tbody>
+        {% for doc in d.unresolved_documents %}
+        <tr>
+          <td class="l">{{ doc.name }}</td>
+          <td class="l muted">{{ doc.folder_path or "&mdash;" | safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Nothing unresolved.</p>
+    {% endif %}
+  </div>
+
+  <div class="fin-card">
+    <h2>Data health</h2>
+    <p class="note">
+      {{ d.context_count }} scope context{{ "s" if d.context_count != 1 }} &middot;
+      {{ d.total_documents }} total document{{ "s" if d.total_documents != 1 }} &middot;
+      {{ d.legacy_unscoped_count }} legacy-unscoped (pre-migration, harmless) &middot;
+      {{ d.unresolved_count }} unresolved (quarantined)
+      {% if d.not_applicable_count %}&middot; {{ d.not_applicable_count }} not-applicable{% endif %}
+    </p>
+  </div>
+
+</div>
+{% endblock %}

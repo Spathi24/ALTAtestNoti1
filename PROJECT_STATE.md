@@ -70,8 +70,12 @@ sow/quote/budget/FLI context FKs deferred to their own ownership-settling slices
 Documents-only, EXPLICIT registered folder map not "first subfolder"). Real DB
 (backed up `*.bak_sc2_*`): 3 pilot contexts; 24 docs RESOLVED (923=2/927=18/
 exterior=4), 7 UNRESOLVED; 1158 non-pilot docs untouched; counts unchanged.
-Suite 1720. **NEXT = U1.5 (visible-surface gate): a minimal read-only
-ScopeContext inspector must exist BEFORE SC-3/SC-5.** Do not start SC-3/SC-5 first.
+Suite 1720. **U1.5 DONE 2026-07-07** — `/projects/{id}/scope-contexts`
+(flag `scope_context_inspector`), same `.fin` shell, linked both ways with
+`/finance`. Verified LIVE: 3 contexts (923_INTERIOR=2/927_UNIT=18/EXTERIOR=4
+docs), 7 unresolved (real filenames shown), 0 legacy-unscoped for the pilot.
+6 tests, suite 1726. Visible-surface gate satisfied -> SC-3/SC-5 may proceed
+next (not started).
 
 **DOC/CONTEXT-ALIGNMENT PASS 2026-07-07 (no feature code).** (1) SC-0.5 recorded
 honestly: it is a CONNECTOR-WIDE change (Monday may populate but not overwrite

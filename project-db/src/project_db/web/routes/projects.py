@@ -71,6 +71,18 @@ def register(router: APIRouter, templates: Jinja2Templates) -> None:
             raise HTTPException(status_code=404, detail="Project not found")
         return templates.TemplateResponse(request, "project_finance.html", {"d": data})
 
+    @router.get("/projects/{project_id}/scope-contexts", response_class=HTMLResponse)
+    def project_scope_contexts_show(
+        project_id: str,
+        request: Request,
+        session: Session = Depends(db),
+    ) -> HTMLResponse:
+        _require_feature("scope_context_inspector")
+        data = ui_views.project_scope_contexts(session, project_id)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return templates.TemplateResponse(request, "project_scope_contexts.html", {"d": data})
+
     @router.get("/projects/{project_id}/green-sheet", response_class=HTMLResponse)
     def project_green_sheet_show(
         project_id: str,

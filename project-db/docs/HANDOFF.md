@@ -105,12 +105,19 @@ items" and "SIGNED CONTRACT ON FILE $66,539.65".
   exterior=4), 7 NULL/root-only-path docs `UNRESOLVED`; 1158 non-pilot docs
   untouched (`LEGACY_UNSCOPED`); document/FLI/sow counts unchanged; 111 SowItems
   untouched. 13 tests (`test_backfill_scope_contexts.py`). Full suite 1720.
-- **NEXT: U1.5 (VISIBLE-SURFACE GATE)** — a minimal read-only **ScopeContext /
-  evidence inspector** in the finance UI shell (contexts, per-context bound-doc
-  counts, unresolved count) is now DUE before ScopeContext expands into SOW
-  ownership (SC-3 generalized resolver / SC-5). Per CLAUDE.md's visible-surface
-  gate: ≤1 backend slice (SC-2) before an operator-visible surface for the new
-  state. Do NOT start SC-3/SC-5 before U1.5.
+- **U1.5 DONE** — ScopeContext / Evidence Inspector, `/projects/{id}/scope-contexts`
+  (flag `scope_context_inspector`, default on). `ui_views.project_scope_contexts`
+  + `project_scope_contexts.html` (same `.fin` design language, mounted not
+  forked). Shows every ScopeContext with its bound documents, the UNRESOLVED
+  (quarantine) card, and a data-health summary that keeps LEGACY_UNSCOPED
+  visibly distinct from UNRESOLVED. Linked both ways with the Financial Command
+  Center. Verified LIVE on the real DB: Rockland shows 3 contexts
+  (923_INTERIOR=2 docs, 927_UNIT=18 docs, EXTERIOR=4 docs), 7 unresolved
+  documents (real filenames + folder paths), 0 legacy-unscoped for the pilot.
+  6 new web tests. Full suite 1726.
+- **NEXT** — per the visible-surface gate, ScopeContext may now advance into its
+  next backend slice (SC-3 generalized resolver, or SC-5 SowVersion/scope-axis
+  work) since a visible inspector exists. Not started.
 
 **ARCHITECTURE RECONCILIATION 2026-07-07** (owner's two design reports): the
 data-flow is now mapped in `docs/architecture/` — `alta_financial_spine.ump`

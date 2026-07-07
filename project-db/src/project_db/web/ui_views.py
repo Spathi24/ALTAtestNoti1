@@ -209,6 +209,83 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
     }
 
 
+def project_scope_contexts(session: Session, project_id: str) -> dict[str, Any] | None:
+    """ScopeContext / Evidence Inspector (UI Slice U1.5, read-only).
+
+    The visible-surface companion to SC-1/SC-2 (docs/UI_REFOUNDATION.md
+    "VISIBLE-SURFACE GATE"): a coherent scope boundary and its document
+    bindings must be inspectable in the UI, not only via SQL/CLI/tests. Shows
+    every ScopeContext for the project with its bound documents, plus the
+    UNRESOLVED (quarantine) and LEGACY_UNSCOPED counts -- the two states a
+    plain NULL scope_context_id would otherwise conflate. None when the
+    project doesn't resolve (route renders a 404).
+    """
+    from project_db.ai.views import _resolve_project
+    from project_db.db.models import ScopeContext
+
+    project = _resolve_project(session, project_id)
+    if project is None:
+        return None
+
+    contexts = (
+        session.query(ScopeContext)
+        .filter(ScopeContext.project_id == project.canonical_id)
+        .order_by(ScopeContext.context_key)
+        .all()
+    )
+    docs = (
+        session.query(Document).filter(Document.project_id == project.canonical_id).all()
+    )
+
+    def _doc_row(d: Document) -> dict[str, Any]:
+        return {"name": d.name, "folder_path": d.folder_path, "url": d.url}
+
+    docs_by_context: dict[Any, list[Document]] = {}
+    unresolved_docs: list[Document] = []
+    legacy_count = 0
+    not_applicable_count = 0
+    for d in docs:
+        state = d.context_resolution_state
+        if state == "RESOLVED" and d.scope_context_id is not None:
+            docs_by_context.setdefault(d.scope_context_id, []).append(d)
+        elif state == "UNRESOLVED":
+            unresolved_docs.append(d)
+        elif state == "NOT_APPLICABLE":
+            not_applicable_count += 1
+        else:  # LEGACY_UNSCOPED (or any future default) -- pre-existing, not quarantine
+            legacy_count += 1
+
+    context_rows = [
+        {
+            "context_key": c.context_key,
+            "label": c.label,
+            "kind": c.kind,
+            "site": c.site,
+            "unit_area": c.unit_area,
+            "phase": c.phase,
+            "document_count": len(docs_by_context.get(c.canonical_id, [])),
+            "documents": [_doc_row(d) for d in docs_by_context.get(c.canonical_id, [])],
+        }
+        for c in contexts
+    ]
+
+    provenance = "empty" if not contexts and not docs else "live"
+
+    return {
+        "project_name": project.name,
+        "project_code": project.code,
+        "project_id": str(project.canonical_id),
+        "provenance": provenance,
+        "contexts": context_rows,
+        "context_count": len(contexts),
+        "total_documents": len(docs),
+        "unresolved_count": len(unresolved_docs),
+        "unresolved_documents": [_doc_row(d) for d in unresolved_docs],
+        "legacy_unscoped_count": legacy_count,
+        "not_applicable_count": not_applicable_count,
+    }
+
+
 def project_labour(session: Session, project_id: str) -> dict[str, Any] | None:
     """Consolidated labour shifts (Gmail + Telegram) for one project.
 
