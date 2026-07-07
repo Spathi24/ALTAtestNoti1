@@ -130,26 +130,34 @@ authoritative at exactly one level, chosen by its resolution state — never bot
 > compatibility · tests · manual DB verify · rollback/risk · non-goals · prereq ·
 > unlocks. **SC-0 is this document.**
 
-### SC-0.5 — Monday contract_amount containment guard (tiny, its own commit)
-- **Purpose (exactly one thing):** prevent Monday from silently overwriting the
-  temporary `Project.contract_amount` containment value until the
-  context/agreement mapping is designed.
-- **Files:** `connectors/monday/connector.py` (the apply path at ~726).
-- **Approach:** inventory the safest minimal guard first (candidates: skip
-  writing `contract_amount` when a project already has a non-NULL value it did
-  not originate; or an explicit "manually pinned" marker; or gate the field in
-  the connector's field-apply allow-list). Choose the least-invasive that the
-  existing connector structure supports; do **not** redesign the connector.
-- **Schema:** prefer none. If a pin marker is needed, that is a separate call-out
-  before coding.
-- **Tests:** a Monday-apply that would overwrite a pinned value is blocked; a
-  normal project without a pinned value is unaffected.
-- **Manual verify:** simulate the connector apply path against the pilot; confirm
-  `$66,539.65` survives.
-- **Rollback:** guard is a conditional; removable.
-- **Non-goals:** no ScopeContext, no agreement model, no contract semantics.
-- **Prereq:** none. **Unlocks:** safe to proceed to SC-1 without losing the value.
-- **Condition:** only if the connector can currently run and overwrite the value.
+### SC-0.5 — Monday contract_amount guard — **DONE** (commit 3e52c0f)
+- **What was actually implemented:** `contract_amount` added to the project
+  upsert's existing `create_only_attrs` set in
+  `connectors/monday/connector.py::_upsert_project` (alongside `name`).
+- **HONEST SEMANTIC EFFECT — this is a connector-WIDE behaviour change, not a
+  Rockland-only guard:**
+
+  ```
+  OLD:
+  Monday may update Project.contract_amount on existing projects.
+
+  TRANSITION (now):
+  Monday may POPULATE contract_amount on project creation,
+  but may NOT overwrite it on any subsequent sync -- for EVERY project,
+  not only 2026001.
+
+  REASON:
+  Project-level contract ownership is semantically unresolved while
+  ScopeContext / agreement ownership is being established (SC-8 retires this).
+  ```
+
+  This is acceptable (arguably preferable) because project-level contract amount
+  is now semantically suspect, but it must not be described as merely protecting
+  the pilot's `$66,539.65`. It changed Monday's ownership of the field globally.
+- **Tests:** `test_connector_sync.py::TestMondayContractAmountGuard` — a re-sync
+  carrying a different `contract_amount` does not overwrite the stored value;
+  `budget_amount` (not guarded) still updates normally.
+- **Rollback:** remove `contract_amount` from the set. **Superseded by:** SC-8.
 
 ### SC-1 — additive ScopeContext model + Document binding fields (schema only)
 - **Purpose:** create the seam. No behaviour change.

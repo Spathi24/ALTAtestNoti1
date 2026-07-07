@@ -133,6 +133,52 @@ Rules:
   over multi-page pastes burns context and accelerates compaction. If it
   contradicts an architecture invariant, say so instead of absorbing it.
 
+### Document authority hierarchy (which wins when two disagree)
+
+Highest to lowest. If two files conflict at different levels, **surface the
+conflict before editing** — do NOT silently rewrite several docs "for
+consistency" (a known failure mode with cheaper models).
+
+1. `CLAUDE.md` — operational / repo invariants (this file).
+2. `docs/MEETING_SYNTHESIS_financial_refoundation.md` — business/product authority.
+3. `docs/REFOUNDATION_BUILD_NOTES.md` — implemented semantic rules, migration
+   reality, permanent financial invariants.
+4. `docs/architecture/FINANCIAL_SPINE_MAP.md` — target architecture/context map
+   (living map, NOT a schema mandate).
+5. active initiative plan (e.g. `docs/architecture/SCOPECONTEXT_TRANSITION_PLAN.md`)
+   — current local execution/migration plan.
+6. `docs/UI_REFOUNDATION.md` — UI initiative contract.
+7. `PROJECT_STATE.md` — distilled current decisions/state.
+8. `HANDOFF.md` — immediate completed/next execution state.
+9. `docs/architecture/*.ump` — visualization only; never an authority alone.
+
+An implementation discovery may update **HANDOFF, PROJECT_STATE, and the active
+initiative plan.** It does **not** license broadly rewriting CLAUDE.md,
+MEETING_SYNTHESIS, REFOUNDATION_BUILD_NOTES, or FINANCIAL_SPINE_MAP — change an
+authority/architecture doc only when a *settled semantic decision actually
+changed*, and say so.
+
+### Financial-spine slice read pack + preflight (mandatory)
+
+Assume NO implicit conversational context (a cheaper model may run the slice).
+Continuity comes from reading files, not memory. Before EVERY financial-spine
+implementation slice, read — in order: (1) `CLAUDE.md`, (2) `PROJECT_STATE.md`,
+(3) `HANDOFF.md`, (4) the active initiative plan, (5) `FINANCIAL_SPINE_MAP.md`;
+then the **relevant sections only** of (6) `MEETING_SYNTHESIS…`, (7)
+`REFOUNDATION_BUILD_NOTES` (permanent rules + migration discipline + current
+state); (8) `NAMING_CONVENTIONS.md` if Drive/filename/XLSX ingestion is touched;
+(9) `UI_REFOUNDATION.md` if any visible surface / UI-facing report contract is
+touched; then the slice-specific code: the models owning the touched entities,
+their migration blocks, **every writer/ingester and every current
+consumer/report/UI surface** found by grep (do not assume), the relevant targeted
+tests, and the commits that established the previous slice. Then emit a compact
+**PREFLIGHT** before editing: `FILES READ · CURRENT INVARIANTS ·
+ENTITIES/WRITERS TOUCHED · CURRENT CONSUMERS · SLICE WRITES · MUST NOT TOUCH ·
+KNOWN RISKS · TARGETED TESTS · REAL-DB VERIFICATION`. Only then implement. Do not
+read the whole repo blindly; search for every affected entity/writer/consumer.
+(The `alta-preflight` skill covers the generic session start; this is the
+per-slice, financial-spine-specific read pack.)
+
 ---
 
 ## Hard rules (still load-bearing)

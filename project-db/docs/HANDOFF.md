@@ -85,9 +85,12 @@ items" and "SIGNED CONTRACT ON FILE $66,539.65".
 
 **SCOPECONTEXT MIGRATION UNDERWAY** (plan:
 `docs/architecture/SCOPECONTEXT_TRANSITION_PLAN.md`, corrections applied).
-- **SC-0.5 DONE** — Monday `contract_amount` clobber guard: added to the project
-  upsert's `create_only_attrs`, so a Monday re-sync can't overwrite the
-  containment value. Test in `test_connector_sync.py`.
+- **SC-0.5 DONE** — Monday `contract_amount` guard: added to the project upsert's
+  `create_only_attrs`. **Connector-WIDE effect (honest):** Monday may now populate
+  `contract_amount` on project *creation* but may NOT overwrite it on later sync,
+  for EVERY project — not just 2026001. Reason: project-level contract ownership
+  is semantically unresolved until context/agreement ownership exists (SC-8
+  retires this). Not merely a pilot containment. Test in `test_connector_sync.py`.
 - **SC-1 DONE** — additive `ScopeContext` model + migration (`db/models/
   scope_context.py`, `UNIQUE(project_id, context_key)`, no context-level
   authority) + two `Document` columns (`scope_context_id` nullable FK,

@@ -67,6 +67,25 @@ unbound, counts unchanged. Suite 1707. **NEXT: SC-2** deterministic pilot backfi
 touch the 111 SowItems). SC-1 FK surface deliberately minimal (Document only);
 sow/quote/budget/FLI context FKs deferred to their own ownership-settling slices.
 
+**DOC/CONTEXT-ALIGNMENT PASS 2026-07-07 (no feature code).** (1) SC-0.5 recorded
+honestly: it is a CONNECTOR-WIDE change (Monday may populate but not overwrite
+`contract_amount` on ANY project), not a pilot-only guard. (2) `UI_REFOUNDATION.md`
+expanded: the UI is an **operator control surface over canonical state**, not a
+dashboard. Read-only is the FIRST STAGE per surface, not the target doctrine.
+Added invariants: missing params VISIBLE (UNSET/UNRESOLVED/NEEDS INPUT); TWO
+provenance axes (env MOCK/LIVE/EMPTY + semantic SOURCE/HUMAN_CONFIRMED/DERIVED/
+AI_INFERRED/MODEL_PREDICTED/UNRESOLVED/STALE); canonical params inspectable; EDIT
+THE CAUSE never the derived total (recompute+htmx); **VISIBLE-SURFACE GATE** (no
+major entity/stage is product-complete while only visible via SQL/CLI/tests; ≤1
+dependent slice before an operator-visible inspector exists). UI slice order
+revised: U0 contract → U1 command center → **U1.5 ScopeContext/evidence
+inspector** → U2 scope+WR → U3 estimate/budget → U4 tendering → U5 execution →
+U6 forecast → U7 changes → U8 portfolio (portfolio is NO LONGER 2nd). (3) CLAUDE.md
+gained the **document authority hierarchy** + the **financial-spine slice read
+pack + preflight** (assume no chat memory; read files, emit PREFLIGHT before
+editing). **Visible-surface obligation:** after SC-2, a minimal ScopeContext
+inspector (U1.5) must exist before ScopeContext expands into SOW ownership (SC-5+).
+
 **REAL DATA STARTED FLOWING (2026-07-05).** Owner supplied the first real
 convention-shaped file: `2026001_SOW_v1_consolidated.xlsx` (mock template shape,
 real Rockland scope, 111 items). New `ai/sow_ingest.py` ingested it into the REAL
