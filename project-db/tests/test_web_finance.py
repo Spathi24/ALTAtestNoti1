@@ -71,7 +71,8 @@ def mock_project(session, org: Organization):
     session.add(c)
     session.flush()
     p = Project(
-        name="923 Fin Test", code="2026001", client_id=c.canonical_id, status=ProjectStatus.ACTIVE
+        name="923 Fin Test", code="2026001", client_id=c.canonical_id,
+        status=ProjectStatus.ACTIVE, contract_amount=Decimal("66539.65"),
     )
     session.add(p)
     session.flush()
@@ -190,6 +191,16 @@ class TestFinanceCommandCenter:
         assert "Rough-in plumbing" in body  # included item
         assert "Permit fees" in body  # excluded item
         assert "change order" in body  # the "outside scope = change order" note
+
+    def test_signed_contract_line_is_honest(self, client, mock_project):
+        """The contract figure renders, labelled as the signed contract value --
+        NOT as a whole-project total (the project may hold several segments)."""
+        r = client.get(f"/projects/{mock_project.canonical_id}/finance")
+        assert r.status_code == 200
+        body = r.text
+        assert "66,539.65" in body
+        assert "Signed contract on file" in body
+        assert "not necessarily the whole-project total" in body
 
     def test_tendering_shows_selected_quote(self, client, mock_project):
         r = client.get(f"/projects/{mock_project.canonical_id}/finance")

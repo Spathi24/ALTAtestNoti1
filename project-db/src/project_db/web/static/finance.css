@@ -119,3 +119,14 @@
 }
 .fin-scope b { color: var(--fin-warn); }
 .fin-back { font-size: .85rem; }
+
+/* Signed-contract line: an honest single figure, never a project-wide total. */
+.fin-contract {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: .6rem;
+  padding: .55rem .85rem; margin-bottom: .75rem;
+  border: 1px solid var(--fin-border, #30363d); border-radius: 8px;
+  background: rgba(88,166,255,.05);
+}
+.fin-contract .lbl { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--fin-muted); }
+.fin-contract .val { font-size: 1.35rem; font-weight: 650; color: var(--fin-fg, #e6edf3); }
+.fin-contract .hint { flex-basis: 100%; font-size: .74rem; color: var(--fin-muted); }

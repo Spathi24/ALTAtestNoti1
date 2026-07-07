@@ -1,0 +1,301 @@
+// =============================================================================
+//  ALTA — Adaptive Project Financial Control : canonical data-flow model
+// =============================================================================
+//  This is the AUTHORITATIVE data-flow picture the team agreed to (2026-07-07),
+//  distilled from docs/MEETING_SYNTHESIS_financial_refoundation.md and the
+//  ProjectInfo1 / EstimatorDocumentation analyses.
+//
+//  It is a MAP, not a mandate. Every class is tagged:
+//     [BUILT]   exists in code today (src/project_db/db/models/*), works.
+//     [MODIFY]  exists but its shape must change to match these guidelines.
+//     [TARGET]  does not exist yet; structure current work to fit it, do not
+//               pre-empt with big permanent changes before conventions settle.
+//
+//  Render/validate:  https://cruise.umple.org/umpleonline/  (paste this file)
+//  Companion prose:  docs/architecture/FINANCIAL_SPINE_MAP.md
+//
+//  THE ONE SENTENCE (ProjectInfo1 p.63):
+//    Evidence -> ScopeContext -> SowItem -> WorkRequirement
+//                 <-> EstimateLine <-> Package/Quote -> PO
+//                 -> CostEvent -> forecast -> budget/margin control loop.
+//    There is NO SOW<->estimate bijection; reality is many-to-many with
+//    provenance. Fixed-vs-variable is a property of FULFILMENT, not of scope.
+// =============================================================================
+
+namespace alta.financial_spine;
+
+// ------------------------------------------------------------------ AXES ----
+// Three ORTHOGONAL axes describe every piece of cost information.
+
+// Axis B — financial lifecycle. [BUILT] on FinancialLineItem.cost_status.
+enum CostStatus { estimated; quoted; committed; actual; }
+
+// Axis C — cost behaviour / procurement mode. [BUILT] as purchase_type.
+// Fixed vs variable is chosen HERE (fulfilment), never on the scope item.
+enum PurchaseType {
+  fixed_subcontractor;   // subcontractor / professional
+  fixed_supplier;        // fixed-price material supplier
+  variable_material;     // Home Depot / Rona / retail  (variable)
+  hourly_labour;         // Telegram/Gmail hourly wages  (variable)
+  mixed;
+}
+
+// Axis A — scope state. [MODIFY] today SowItem.included is a lossy boolean.
+// ProjectInfo1 p.49-51: Included=N conflates five different states.
+enum ScopeState {
+  INCLUDED; EXCLUDED; CLIENT_RESPONSIBILITY; PROPOSED; UNRESOLVED; SUPERSEDED;
+}
+enum Responsibility { GC; CLIENT; SUBCONTRACTOR; SUPPLIER; SHARED; UNKNOWN; }
+enum ActionRole { SUPPLY; INSTALL; DESIGN; INSPECT; COORDINATE; DEMOLISH; REPAIR; }
+
+// Quote tendering vocabulary. [BUILT] SubcontractorQuote.status.
+enum QuoteStatus { pending; recommended; selected; rejected; awarded; }
+
+// Provenance class of a value — must never overwrite across classes.
+// ProjectInfo1 p.52,60: historical estimate != model prediction.
+enum EstimateOrigin {
+  historical_document; human_entered; deterministic_formula;
+  model_predicted; reconstructed_partial;
+}
+
+// Why an unplanned cost demand appeared. [TARGET] — the broken-floor case
+// is NOT a change order (client scope did not change). ProjectInfo1 p.30.
+enum ExceptionCause {
+  BASE_SCOPE; CLIENT_SCOPE_CHANGE; HIDDEN_CONDITION; REWORK;
+  ACCIDENTAL_DAMAGE; VENDOR_FAILURE; WARRANTY; DESIGN_REVISION;
+  SCHEDULE_ACCELERATION; UNKNOWN;
+}
+
+// =========================================================== EVIDENCE LAYER ==
+// Drive files are authoritative EVIDENCE. The DB is authoritative STATE.
+// Generated XLSX are materialized VIEWS. (ProjectInfo1 p.35)
+
+class Document {              // [BUILT] one Drive file (name, checksum, folder_path)
+  name; mime_type; md5_checksum; folder_path;
+}
+
+class DocumentParse {         // [BUILT] one parse pass over a document revision
+  parser; parsedAt;
+}
+
+class EvidenceSpan {          // [BUILT] page/sheet/row + extracted text + confidence
+  locator; extractedText; Double confidence;
+}
+
+// Authority ranking across competing docs for one (context, role).
+// [TARGET] "flag, never silently sort". Rank: signed > supersession >
+// version token > folder role > version seq > mtime > filename date >
+// completeness. (ProjectInfo1 p.7-8, 42)
+class SourceAuthorityDecision {
+  documentRole; verdict;   // active | superseded | UNRESOLVED_CONFLICT
+}
+
+// =========================================================== CONTRACT CORE ==
+
+class Client { name; }        // [BUILT]
+
+class Project {               // [BUILT] the join nucleus. code = YYYYNNN.
+  code; name; Double contract_amount;
+}
+
+// [TARGET] *** THE #1 NEAR-TERM STRUCTURAL GAP ***
+// Project is too coarse. Pilot 2026001 = 923 interior (signed ~$66.5k) +
+// 927 unit (~$191k) + exterior (~$4k) = three scopes, one client.
+// Authority resolution and "which SOW wins" happen WITHIN a ScopeContext,
+// never across the whole project. (ProjectInfo1 p.44-45, confirmed by owner)
+class ScopeContext {
+  site; unitOrArea; phase; contractScopeLabel;
+}
+
+class SowVersion {            // [TARGET] versioned, stateful SOW per context.
+  Integer version;           // today SowItems hang directly off Project.
+}
+
+// [MODIFY] BUILT as SowItem(item_code, description, division_code, included:bool,
+// package_id?). Must gain ScopeState/Responsibility/ActionRole and hang off a
+// SowVersion, not the Project directly.
+class SowItem {
+  item_code; description; division_code;
+  ScopeState scopeState;     // replaces the lossy `included` boolean
+  Responsibility responsibility;
+  ActionRole actionRole;
+  material_spec;
+}
+
+// [TARGET] *** THE MISSING CONCEPTUAL LAYER ***
+// A SowItem is a CONTRACT STATEMENT, not a procurement unit. One SowItem
+// decomposes into the quantities of work that must actually be fulfilled.
+// SOW Item != Package != Budget Line != Fixed Cost. (ProjectInfo1 p.11-13,41)
+class WorkRequirement {
+  description; trade; Double quantity; unit; material_spec;
+  earliestStart; latestFinish; status;
+}
+
+// =========================================================== ESTIMATION BRANCH
+// Left branch off the approved SOW. See EstimatorDocumentation.pdf (PARKED).
+
+// [TARGET] stable cross-project cost type, e.g.
+// FLOORING.ENGINEERED_HARDWOOD.INSTALL — the index the estimator learns on.
+class CostArchetype { code; trade; family; }
+
+// [TARGET] historical human estimate line (Estimate #25008). ORIGINAL evidence
+// of a pricing decision — NOT recoverable from the SOW by inversion.
+class EstimateLine {
+  description; Double materialAmount; Double labourAmount; Double total;
+  EstimateOrigin origin;
+}
+
+// [TARGET] *** M:N, the anti-bijection ***. One estimate line can price many
+// work requirements and vice-versa. Forcing a single SOW_Item_Ref or
+// Included=Y/N destroys information. (ProjectInfo1 p.46-48, 57)
+associationClass EstimateLineCoverage {
+  coverageType;   // full | partial
+  * EstimateLine estimateLine;
+  * WorkRequirement workRequirement;
+}
+
+// =========================================================== TENDERING BRANCH
+// Right branch off the approved SOW.
+
+class Vendor { name; }        // [BUILT]
+
+class SowPackage {            // [BUILT] scope-only tender grouping (by trade/div)
+  division_code; trade_name; title; status;
+}
+
+class SubcontractorQuote {    // [BUILT] cost-side vendor offer; status vocab above
+  division_code; Double amount; currency;
+  QuoteStatus status;
+}
+
+class PurchaseOrder {         // [BUILT] the ONE writer of committed cost
+  po_number; Double amount;
+}
+
+// =========================================================== BUDGET BASELINE ==
+
+class BudgetSnapshot {        // [BUILT] immutable baseline; rebaseline = new snap
+  label; takenAt;
+}
+class BudgetSnapshotLine {    // [BUILT] per-division: B_i = F_i + V_i + R_i
+  division_code; division_name;
+  Double fixed; Double variableAllowance; Double riskReserve;
+}
+
+// =========================================================== EXECUTION / COSTS
+
+// [MODIFY] BUILT as the money ledger (side, amount_type, cost_status,
+// purchase_type, division_code, links). It IS today's cost row; the CostEvent/
+// CostAllocation model below is the target unification it should converge to.
+class FinancialLineItem {
+  division_code; side; amount_type; Double amount; currency;
+  CostStatus cost_status; PurchaseType purchase_type;
+}
+
+// [TARGET] *** UNIFIED COST MODEL ***. Fixed and variable costs are the SAME
+// object with DIFFERENT uncertainty. (ProjectInfo1 p.25)
+class CostEvent {
+  Double amount; eventDate; PurchaseType purchaseType; CostStatus lifecycleState;
+  Boolean observedOrForecast; source;
+}
+
+// [TARGET] fixed PO -> one deterministic allocation (weight 1.0).
+// Home Depot -> posterior probabilities over work requirements (sum to 1),
+// confidence via entropy. Labour: observed <= true; estimate the missing part.
+// Do NOT rewrite one $100 purchase into two fake facts. (ProjectInfo1 p.21-24)
+associationClass CostAllocation {
+  Double allocationWeight; Double confidence; method;
+  * CostEvent costEvent;
+  * WorkRequirement workRequirement;
+}
+
+class HomeDepotPurchase {     // [BUILT] variable material stream A (till-linked)
+  merchant; sku; Double amount; purchaseDate;
+}
+class LabourClaim {           // [BUILT] variable stream B (Telegram/Gmail hourly)
+  Double hours; reportedTrade; claimDate; Double confidence;
+}
+
+class ContractObligation {    // [BUILT] unbilled/overdue money watcher
+  kind; Double amount; dueDate;
+}
+
+// [TARGET] general cost-demand event. Broken floor -> ExecutionException with
+// cause=ACCIDENTAL_DAMAGE, NOT a change order. Client scope change -> ScopeDelta
+// -> ChangeOrder. Distinct paths. (ProjectInfo1 p.29-31)
+class ProjectException {
+  ExceptionCause cause; Boolean billableToClient; description;
+}
+
+// =========================================================== DERIVED VIEWS ===
+// [BUILT as computed report] green sheet is a VIEW, never a stored table.
+// Extend to EFC / headroom / forecast margin / confidence. (ProjectInfo1 p.31-32)
+class GreenSheetRow {
+  division_code;
+  Double budget; Double selectedQuote; Double committed; Double actual;
+  Double probableVariableCost; Double forecastToComplete;
+  Double expectedFinalCost; Double headroom; Double forecastMargin;
+  Double confidence;
+}
+
+// =============================================================== ASSOCIATIONS =
+association {
+  1 Client -- * Project;
+  1 Project -- * ScopeContext;          // [TARGET] the segment layer
+  1 ScopeContext -- * SowVersion;       // [TARGET]
+  1 SowVersion -- * SowItem;            // [MODIFY] today Project -- * SowItem
+  1 SowItem -- * WorkRequirement;       // [TARGET] the missing layer
+  1 Project -- * SowPackage;            // [BUILT]
+  0..1 SowPackage -- * WorkRequirement; // [TARGET] tenderable WRs group here
+  0..1 CostArchetype -- * WorkRequirement; // [TARGET] estimator index
+  1 SowPackage -- * SubcontractorQuote; // [BUILT]
+  1 Vendor -- * SubcontractorQuote;     // [BUILT]
+  0..1 SubcontractorQuote -- 0..1 PurchaseOrder; // [BUILT] award = commit
+  1 Project -- * BudgetSnapshot;        // [BUILT]
+  1 BudgetSnapshot <@>- * BudgetSnapshotLine; // [BUILT] composition
+  1 Project -- * FinancialLineItem;     // [BUILT]
+  0..1 WorkRequirement -- * FinancialLineItem; // [TARGET] trace cost -> WR
+  0..1 SowItem -- * FinancialLineItem;  // [BUILT] coarse link exists today
+  1 Project -- * CostEvent;             // [TARGET]
+  0..1 PurchaseOrder -- * CostEvent;    // [TARGET] fixed actuals match to PO
+  1 Project -- * ProjectException;      // [TARGET]
+  0..1 SowItem -- * ProjectException;   // [TARGET] damaged item linkage
+  1 Project -- * Document;              // [BUILT]
+  1 Document -- * DocumentParse;        // [BUILT]
+  1 DocumentParse -- * EvidenceSpan;    // [BUILT]
+  1 Project -- * ContractObligation;    // [BUILT]
+  1 HomeDepotPurchase -- 0..1 CostEvent;// [TARGET] HD -> cost event
+  1 LabourClaim -- 0..1 CostEvent;      // [TARGET] labour -> cost event
+}
+
+// =============================================================== LIFECYCLES ==
+// The stateful objects whose lifecycle the controller reconciles.
+
+class SowVersion {            // [TARGET] scope authority lifecycle
+  state {
+    draft    { propose -> proposed; }
+    proposed { approve -> approved; }
+    approved { sign -> signed;  supersede -> superseded; }
+    signed   { supersede -> superseded; }   // signed dominates draft
+    superseded { }
+  }
+}
+
+class SubcontractorQuote {    // [BUILT] tendering lifecycle (human-gated)
+  lifecycle {
+    pending     { recommend -> recommended; }
+    recommended { select -> selected;  reject -> rejected; }
+    selected    { award -> awarded;   reject -> rejected; }  // select = intent
+    rejected    { }
+    awarded     { }                                          // award = commit
+  }
+}
+
+class FinancialLineItem {     // [BUILT] Axis-B cost lifecycle
+  money {
+    estimated { quote -> quoted; }
+    quoted    { commit -> committed; }
+    committed { invoice -> actual; }
+    actual    { }
+  }
+}

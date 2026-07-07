@@ -78,10 +78,22 @@ report_green_sheet → /projects/{id}/green-sheet
 
 ## Numbers right now
 
-Suite **1698 green** (SOW ingest + a Scope-of-Work-render regression test).
-The Financial Command Center now shows a **Scope of Work** card (real SOW
-items grouped by division, included vs excluded, expandable) — verified LIVE
-on the real DB: Rockland shows "REAL SCOPE INGESTED — 111 SOW items". `doctor.py`
+Suite **1699 green** (SOW ingest + Scope-of-Work render + signed-contract-line
+regression tests). The Financial Command Center shows a **Scope of Work** card
+(real SOW items by division, expandable) and an honest **signed-contract line** —
+verified LIVE on the real DB: Rockland shows "REAL SCOPE INGESTED — 111 SOW
+items" and "SIGNED CONTRACT ON FILE $66,539.65".
+
+**ARCHITECTURE RECONCILIATION 2026-07-07** (owner's two design reports): the
+data-flow is now mapped in `docs/architecture/` — `alta_financial_spine.ump`
+(Umple class diagram + lifecycles, tagged BUILT/MODIFY/TARGET) and
+`FINANCIAL_SPINE_MAP.md` (plain-English pipeline + differentiation table + pilot
+reconciliation). 10 distilled decisions in `PROJECT_STATE.md` → "ARCHITECTURE
+RECONCILIATION". Headline: ALTA is a closed-loop cost *controller*; `ScopeContext`
+(segment) + `WorkRequirement` are the two missing structural layers; estimator
+stays parked. **Pilot contract corrected $191,843.68 → $66,539.65** (923 signed
+segment only; 927 + exterior held separate — the project is 3 scopes under one
+client). DB backed up (`project_db.sqlite.bak_precontract_*`). `doctor.py`
 0 fail / 1 known warn (79 legacy NULL cost_status rows, allow-listed
 downstream). **RUFF NOT RE-RUN THIS SESSION** — the ruff native binary is
 blocked by a Windows Application Control policy on this machine (`WinError

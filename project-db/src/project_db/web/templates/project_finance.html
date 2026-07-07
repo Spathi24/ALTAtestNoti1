@@ -28,6 +28,15 @@
     </div>
   </div>
 
+  {% if d.contract %}
+  <div class="fin-contract">
+    <span class="lbl">Signed contract on file</span>
+    <span class="val">${{ "{:,.2f}".format(d.contract.amount) }}</span>
+    <span class="hint">the signed contract value &mdash; a project may hold more
+      than one scope segment, so this is not necessarily the whole-project total</span>
+  </div>
+  {% endif %}
+
   <div class="fin-scope">
     <b>Fixed-cost side only.</b> Home Depot purchases and hourly labour (the
     variable-cost buckets) are not in these numbers yet. Variance here is not

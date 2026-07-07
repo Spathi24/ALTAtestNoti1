@@ -15,6 +15,43 @@
 
 ## Current Focus
 
+**ARCHITECTURE RECONCILIATION (2026-07-07) — owner supplied two design reports
+(`ProjectInfo1_merged.pdf` 64pp, `EstimatorDocumentation.pdf` 23pp). Distilled to
+a data-flow map + Umple diagram in `docs/architecture/` (FINANCIAL_SPINE_MAP.md +
+alta_financial_spine.ump). Read those before big finance/parser work.** The 10
+load-bearing decisions:
+1. **ALTA is a closed-loop cost CONTROLLER, not an estimator.** Planning loop +
+   execution loop reconcile → forecast-to-complete → margin. Estimation is
+   secondary to traceability (matches MEETING_SYNTHESIS).
+2. **`ScopeContext`/segment layer is the #1 near-term gap** — `Project` is too
+   coarse. Pilot 2026001 = 3 scopes (923 interior SIGNED $66,539.65 / 927 unit
+   ~$191,843.68 / exterior ~$4k). Authority resolution happens WITHIN a context.
+3. **`WorkRequirement` is the missing layer** between SowItem (a contract
+   statement) and procurement. SOW Item ≠ Package ≠ Budget Line ≠ Fixed Cost.
+4. **Fixed vs variable is a property of FULFILMENT, not scope** — lives on
+   CostEvent/PurchaseType, never on the SowItem.
+5. **No SOW↔estimate bijection** — it's M:N with provenance (`EstimateLineCoverage`).
+   Forcing single `SOW_Item_Ref` or `Included=Y/N` destroys information.
+6. **`SowItem.included:bool` is lossy → `ScopeState` enum** (INCLUDED/EXCLUDED/
+   CLIENT_RESPONSIBILITY/PROPOSED/UNRESOLVED/SUPERSEDED) + Responsibility + ActionRole.
+7. **Unify cost into `CostEvent`+`CostAllocation`**: fixed = deterministic
+   allocation (w=1); Home Depot = posterior probabilities over WRs (entropy =
+   confidence); labour observed ≤ true, estimate the missing part. Don't fake splits.
+8. **Damage/rework ≠ change order.** Client scope change → ScopeDelta → ChangeOrder;
+   broken floor (scope unchanged) → `ProjectException(cause)`. Distinct paths.
+9. **Authority resolver: flag, never "newest wins."** Signed > supersession >
+   version token > folder role > version seq > mtime > filename date > completeness.
+10. **Estimator stays PARKED** (needs ~20+ clean projects; we have ~1). Until then
+    it's a Tier-C scope-only prior with wide honest error bars. `EstimatorDocumentation.pdf`
+    → its own slice doc when we reach step 6. Nothing built contradicts this; the
+    plan is additive (only real reshapes: included→ScopeState, insert WorkRequirement).
+
+**Pilot fix applied 2026-07-07:** `Project.contract_amount` corrected
+$191,843.68 → **$66,539.65** (923 signed segment only; 927 + exterior held
+separate). DB backed up (`project_db.sqlite.bak_precontract_*`).
+**Deliberately-not-ingested:** 927 unit + exterior segments held separate until
+the ScopeContext layer exists.
+
 **REAL DATA STARTED FLOWING (2026-07-05).** Owner supplied the first real
 convention-shaped file: `2026001_SOW_v1_consolidated.xlsx` (mock template shape,
 real Rockland scope, 111 items). New `ai/sow_ingest.py` ingested it into the REAL

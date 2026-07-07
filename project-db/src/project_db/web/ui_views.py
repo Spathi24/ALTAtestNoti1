@@ -187,6 +187,15 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
     if provenance == "empty" and sow_items:
         provenance = "scoped"
 
+    # Contract value on file. IMPORTANT: this is the signed contract amount, NOT
+    # necessarily a whole-project total -- a project can be several scope
+    # contexts under one client (pilot 2026001 = 923 signed + 927 + exterior).
+    # See docs/architecture/FINANCIAL_SPINE_MAP.md. Label it honestly; never
+    # present it as a project-wide profit figure.
+    contract = None
+    if project.contract_amount is not None:
+        contract = {"amount": project.contract_amount}
+
     return {
         "project_name": project.name,
         "project_code": project.code,
@@ -196,6 +205,7 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
         "tendering": tendering,
         "quote_total": len(quotes),
         "scope": scope,
+        "contract": contract,
     }
 
 
