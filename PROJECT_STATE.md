@@ -32,8 +32,11 @@ load-bearing decisions:
    CostEvent/PurchaseType, never on the SowItem.
 5. **No SOW↔estimate bijection** — it's M:N with provenance (`EstimateLineCoverage`).
    Forcing single `SOW_Item_Ref` or `Included=Y/N` destroys information.
-6. **`SowItem.included:bool` is lossy → `ScopeState` enum** (INCLUDED/EXCLUDED/
-   CLIENT_RESPONSIBILITY/PROPOSED/UNRESOLVED/SUPERSEDED) + Responsibility + ActionRole.
+6. **`SowItem.included:bool` is lossy → THREE ORTHOGONAL axes** (owner correction
+   2026-07-07): `scope_state` (INCLUDED/EXCLUDED/PROPOSED/UNRESOLVED/SUPERSEDED) +
+   `responsibility` (GC/CLIENT/...) + `action_role` (SUPPLY/INSTALL/...).
+   CLIENT_RESPONSIBILITY is NOT a scope_state (client-supplied = INCLUDED +
+   responsibility=CLIENT + action_role=SUPPLY).
 7. **Unify cost into `CostEvent`+`CostAllocation`**: fixed = deterministic
    allocation (w=1); Home Depot = posterior probabilities over WRs (entropy =
    confidence); labour observed ≤ true, estimate the missing part. Don't fake splits.

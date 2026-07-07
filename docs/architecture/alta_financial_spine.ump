@@ -41,10 +41,12 @@ enum PurchaseType {
 }
 
 // Axis A — scope state. [MODIFY] today SowItem.included is a lossy boolean.
-// ProjectInfo1 p.49-51: Included=N conflates five different states.
-enum ScopeState {
-  INCLUDED; EXCLUDED; CLIENT_RESPONSIBILITY; PROPOSED; UNRESOLVED; SUPERSEDED;
-}
+// ProjectInfo1 p.49-51: Included=N conflates several distinct states.
+// THREE INDEPENDENT AXES (owner correction 2026-07-07): scope_state,
+// responsibility, action_role are ORTHOGONAL. CLIENT_RESPONSIBILITY is NOT a
+// scope_state -- "client supplies shower glass, GC installs it" =
+// scope_state=INCLUDED, responsibility=CLIENT/GC, action_role=SUPPLY/INSTALL.
+enum ScopeState { INCLUDED; EXCLUDED; PROPOSED; UNRESOLVED; SUPERSEDED; }
 enum Responsibility { GC; CLIENT; SUBCONTRACTOR; SUPPLIER; SHARED; UNKNOWN; }
 enum ActionRole { SUPPLY; INSTALL; DESIGN; INSPECT; COORDINATE; DEMOLISH; REPAIR; }
 
