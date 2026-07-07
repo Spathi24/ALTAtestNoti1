@@ -36,6 +36,12 @@ SQLITE_DOCUMENT_COLUMNS: dict[str, str] = {
     "owner_email": "VARCHAR",
     "is_trashed": "BOOLEAN NOT NULL DEFAULT 0",
     "source_meta_json": "TEXT",
+    # SC-1 (ScopeContext migration). scope_context_id is an application-level FK
+    # only on existing SQLite (ALTER cannot add REFERENCES); create_all builds
+    # the real constraint. context_resolution_state distinguishes LEGACY_UNSCOPED
+    # (this default, for pre-existing rows) from UNRESOLVED (quarantine).
+    "scope_context_id": "TEXT",
+    "context_resolution_state": "VARCHAR NOT NULL DEFAULT 'LEGACY_UNSCOPED'",
 }
 
 
@@ -422,6 +428,33 @@ SQLITE_EMAIL_INGEST_INDEXES = (
 )
 
 # Phase 3: Scope of Work -- SowPackage before SowItem (FK order).
+# SC-1 (ScopeContext migration): a coherent scope boundary within a project.
+# References project (which always exists). Additive/foundational -- no other
+# table gets a context FK in SC-1; Document carries the only binding columns.
+SQLITE_SCOPE_CONTEXT_DDL = """
+CREATE TABLE scope_context (
+    canonical_id TEXT PRIMARY KEY,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    notes VARCHAR,
+    project_id TEXT NOT NULL,
+    context_key VARCHAR NOT NULL,
+    label VARCHAR,
+    kind VARCHAR,
+    site VARCHAR,
+    unit_area VARCHAR,
+    phase VARCHAR,
+    source_meta_json TEXT,
+    FOREIGN KEY (project_id) REFERENCES project(canonical_id),
+    CONSTRAINT uq_scope_context_project_key UNIQUE (project_id, context_key)
+)
+"""
+
+SQLITE_SCOPE_CONTEXT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_scope_context_project_id "
+    "ON scope_context (project_id)",
+)
+
 SQLITE_SOW_PACKAGE_DDL = """
 CREATE TABLE sow_package (
     canonical_id TEXT PRIMARY KEY,
@@ -1142,6 +1175,12 @@ def ensure_sqlite_schema(engine) -> None:
                     "ON project (code) WHERE code IS NOT NULL"
                 )
             )
+        # SC-1: ScopeContext -- a scope boundary within a project (FK -> project,
+        # which exists). Additive foundation; Document already got its two binding
+        # columns via SQLITE_DOCUMENT_COLUMNS above.
+        _create_table_if_missing(conn, tables, "scope_context", SQLITE_SCOPE_CONTEXT_DDL)
+        for _idx_ddl in SQLITE_SCOPE_CONTEXT_INDEXES:
+            conn.execute(text(_idx_ddl))
         # Phase 3: Scope of Work -- SowPackage before SowItem (FK order).
         _create_table_if_missing(conn, tables, "sow_package", SQLITE_SOW_PACKAGE_DDL)
         _create_table_if_missing(conn, tables, "sow_item", SQLITE_SOW_ITEM_DDL)

@@ -78,11 +78,27 @@ report_green_sheet → /projects/{id}/green-sheet
 
 ## Numbers right now
 
-Suite **1699 green** (SOW ingest + Scope-of-Work render + signed-contract-line
-regression tests). The Financial Command Center shows a **Scope of Work** card
+Suite **1707 green**. The Financial Command Center shows a **Scope of Work** card
 (real SOW items by division, expandable) and an honest **signed-contract line** —
 verified LIVE on the real DB: Rockland shows "REAL SCOPE INGESTED — 111 SOW
 items" and "SIGNED CONTRACT ON FILE $66,539.65".
+
+**SCOPECONTEXT MIGRATION UNDERWAY** (plan:
+`docs/architecture/SCOPECONTEXT_TRANSITION_PLAN.md`, corrections applied).
+- **SC-0.5 DONE** — Monday `contract_amount` clobber guard: added to the project
+  upsert's `create_only_attrs`, so a Monday re-sync can't overwrite the
+  containment value. Test in `test_connector_sync.py`.
+- **SC-1 DONE** — additive `ScopeContext` model + migration (`db/models/
+  scope_context.py`, `UNIQUE(project_id, context_key)`, no context-level
+  authority) + two `Document` columns (`scope_context_id` nullable FK,
+  `context_resolution_state` default `LEGACY_UNSCOPED`). Schema-only, no
+  backfill, no behaviour change. Applied to the real DB (backed up
+  `*.bak_sc1_*`): all 1189 documents `LEGACY_UNSCOPED`, 0 bound; document/FLI/
+  sow counts unchanged. 7 tests in `test_scope_context.py`.
+- **NEXT: SC-2** — deterministic pilot backfill (3 contexts: 923_INTERIOR /
+  927_UNIT / EXTERIOR) binding **Documents only** via the registered folder map
+  (`923 Rockland/`,`927 ROCKLAND/`,`EXTERIOR/`); NULL-path docs → `UNRESOLVED`.
+  Do NOT touch the 111 SowItems. Not started.
 
 **ARCHITECTURE RECONCILIATION 2026-07-07** (owner's two design reports): the
 data-flow is now mapped in `docs/architecture/` — `alta_financial_spine.ump`

@@ -55,6 +55,18 @@ separate). DB backed up (`project_db.sqlite.bak_precontract_*`).
 **Deliberately-not-ingested:** 927 unit + exterior segments held separate until
 the ScopeContext layer exists.
 
+**SCOPECONTEXT MIGRATION (plan: `docs/architecture/SCOPECONTEXT_TRANSITION_PLAN.md`).**
+SC-0 (inventory) + plan corrections done. **SC-0.5 DONE** (Monday contract_amount
+clobber guard via `create_only_attrs`). **SC-1 DONE 2026-07-07** — additive
+`ScopeContext` (`UNIQUE(project_id, context_key)`, stable `context_key`, NO
+context-level authority) + `Document.scope_context_id`/`context_resolution_state`
+(`LEGACY_UNSCOPED` default, distinct from `UNRESOLVED` quarantine). Schema-only,
+applied to real DB (backed up `*.bak_sc1_*`), all 1189 docs LEGACY_UNSCOPED/
+unbound, counts unchanged. Suite 1707. **NEXT: SC-2** deterministic pilot backfill
+(3 contexts, Documents-only, registered folder map, NULL-path→UNRESOLVED; do NOT
+touch the 111 SowItems). SC-1 FK surface deliberately minimal (Document only);
+sow/quote/budget/FLI context FKs deferred to their own ownership-settling slices.
+
 **REAL DATA STARTED FLOWING (2026-07-05).** Owner supplied the first real
 convention-shaped file: `2026001_SOW_v1_consolidated.xlsx` (mock template shape,
 real Rockland scope, 111 items). New `ai/sow_ingest.py` ingested it into the REAL

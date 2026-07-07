@@ -78,6 +78,19 @@ class Document(Base, CanonicalMixin):
         ForeignKey("project.canonical_id"),
         nullable=True,
     )
+    # ScopeContext binding (SC-1, docs/architecture/SCOPECONTEXT_TRANSITION_PLAN.md).
+    # Nullable FK -- NULL means "not context-bound". The resolution STATE (below)
+    # distinguishes the reasons a binding is absent: LEGACY_UNSCOPED (pre-existing)
+    # is observably different from UNRESOLVED (quarantine). Additive: nothing reads
+    # these until a later slice opts in; existing rows default to LEGACY_UNSCOPED.
+    scope_context_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("scope_context.canonical_id"),
+        nullable=True,
+    )
+    context_resolution_state = Column(
+        String, nullable=False, default="LEGACY_UNSCOPED"
+    )
     deal_id = Column(
         UUID(as_uuid=True),
         ForeignKey("deal.canonical_id"),

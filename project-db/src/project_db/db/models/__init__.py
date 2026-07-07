@@ -84,6 +84,10 @@ from project_db.db.models.roadmap import (
     RoadmapPhase,
     RoadmapTask,
 )
+from project_db.db.models.scope_context import (
+    CONTEXT_RESOLUTION_STATES,
+    ScopeContext,
+)
 from project_db.db.models.sow import (
     SOW_PACKAGE_STATUSES,
     SowItem,
@@ -126,6 +130,7 @@ __all__ = [
     "RECONCILIATION_ISSUE_TYPES",
     "RECONCILIATION_SEVERITIES",
     "RECONCILIATION_SOURCES",
+    "CONTEXT_RESOLUTION_STATES",
     "RECONCILIATION_STATUSES",
     "ROADMAP_PHASE_ORDER",
     "SOW_PACKAGE_STATUSES",
@@ -173,6 +178,7 @@ __all__ = [
     "RoadmapActor",
     "RoadmapPhase",
     "RoadmapTask",
+    "ScopeContext",
     "SourceSystem",
     "SowItem",
     "SowPackage",
