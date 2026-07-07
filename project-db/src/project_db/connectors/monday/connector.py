@@ -734,8 +734,14 @@ class MondayConnector(BaseConnector):
             attrs=attrs,
             # Attach to the Drive-defined Project (civic / exact name).
             # create_only_attrs keeps the Drive folder name authoritative.
+            # `contract_amount` is create-only DURING THE SCOPECONTEXT TRANSITION
+            # (SC-0.5, 2026-07-07): the pilot's Project.contract_amount is a
+            # temporary signed-contract-on-file containment value, and a project
+            # can hold several scope contexts. Until contract value is owned by a
+            # context's governing agreement (SC-8), a Monday re-sync MUST NOT
+            # silently overwrite it. Set once on create; never clobber on update.
             matcher=ProjectMatcher(),
-            create_only_attrs={"name"},
+            create_only_attrs={"name", "contract_amount"},
         )
         self._record_result(result.was_created, result.was_matched)
 

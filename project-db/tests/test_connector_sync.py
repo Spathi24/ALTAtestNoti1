@@ -222,6 +222,44 @@ class TestMondayConnectorColumnMapping:
         assert fields.budget_amount == Decimal("50000")
 
 
+class TestMondayContractAmountGuard:
+    """SC-0.5: a Monday re-sync must not silently overwrite the temporary
+    Project.contract_amount containment value (set outside Monday during the
+    ScopeContext transition). It is create-only, like `name`."""
+
+    @patch("project_db.connectors.monday.connector.MondayClient")
+    def test_resync_does_not_overwrite_contract_amount(self, mock_client_class, session, org):
+        from types import SimpleNamespace
+
+        from project_db.connectors.monday import MondayConnector
+        from project_db.db.models import Project
+
+        mock_client_class.return_value = MagicMock()
+        conn = MondayConnector(session=session, organization_id=org.canonical_id)
+        board = {"id": "b1", "name": "Client Projects"}
+        item = {"id": "555", "name": "923-927 Rockland"}
+
+        def _fields(contract, budget):
+            return SimpleNamespace(
+                client_name=None, status=None, start_date=None, end_date=None,
+                budget_amount=budget, contract_amount=contract,
+            )
+
+        # First sync creates the project and sets contract_amount.
+        conn._upsert_project(board, item, _fields(Decimal("66539.65"), Decimal("1000")))
+        session.commit()
+        p = session.query(Project).filter(Project.name == "923-927 Rockland").one()
+        assert p.contract_amount == Decimal("66539.65")
+
+        # Re-sync of the SAME Monday item carrying a different contract_amount
+        # must NOT overwrite it; budget_amount (not guarded) still updates.
+        conn._upsert_project(board, item, _fields(Decimal("191843.68"), Decimal("2000")))
+        session.commit()
+        session.refresh(p)
+        assert p.contract_amount == Decimal("66539.65")  # guarded (containment)
+        assert p.budget_amount == Decimal("2000")  # not guarded -> updates normally
+
+
 # =====================================================================
 # QuickBooks — these will be fleshed out in Block 3. The connector
 # already exists but is not battle-tested. These tests confirm the
