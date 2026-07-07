@@ -98,10 +98,19 @@ items" and "SIGNED CONTRACT ON FILE $66,539.65".
   backfill, no behaviour change. Applied to the real DB (backed up
   `*.bak_sc1_*`): all 1189 documents `LEGACY_UNSCOPED`, 0 bound; document/FLI/
   sow counts unchanged. 7 tests in `test_scope_context.py`.
-- **NEXT: SC-2** — deterministic pilot backfill (3 contexts: 923_INTERIOR /
-  927_UNIT / EXTERIOR) binding **Documents only** via the registered folder map
-  (`923 Rockland/`,`927 ROCKLAND/`,`EXTERIOR/`); NULL-path docs → `UNRESOLVED`.
-  Do NOT touch the 111 SowItems. Not started.
+- **SC-2 DONE** — `scripts/backfill_scope_contexts.py` (idempotent, Documents
+  only). Created 3 pilot contexts (923_INTERIOR / 927_UNIT / EXTERIOR) via an
+  EXPLICIT registered folder-segment map (not "first subfolder"). Applied to the
+  real DB (backed up `*.bak_sc2_*`): 24 pilot docs `RESOLVED` (923=2 / 927=18 /
+  exterior=4), 7 NULL/root-only-path docs `UNRESOLVED`; 1158 non-pilot docs
+  untouched (`LEGACY_UNSCOPED`); document/FLI/sow counts unchanged; 111 SowItems
+  untouched. 13 tests (`test_backfill_scope_contexts.py`). Full suite 1720.
+- **NEXT: U1.5 (VISIBLE-SURFACE GATE)** — a minimal read-only **ScopeContext /
+  evidence inspector** in the finance UI shell (contexts, per-context bound-doc
+  counts, unresolved count) is now DUE before ScopeContext expands into SOW
+  ownership (SC-3 generalized resolver / SC-5). Per CLAUDE.md's visible-surface
+  gate: ≤1 backend slice (SC-2) before an operator-visible surface for the new
+  state. Do NOT start SC-3/SC-5 before U1.5.
 
 **ARCHITECTURE RECONCILIATION 2026-07-07** (owner's two design reports): the
 data-flow is now mapped in `docs/architecture/` — `alta_financial_spine.ump`

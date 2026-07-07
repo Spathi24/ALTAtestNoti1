@@ -66,6 +66,12 @@ unbound, counts unchanged. Suite 1707. **NEXT: SC-2** deterministic pilot backfi
 (3 contexts, Documents-only, registered folder map, NULL-path→UNRESOLVED; do NOT
 touch the 111 SowItems). SC-1 FK surface deliberately minimal (Document only);
 sow/quote/budget/FLI context FKs deferred to their own ownership-settling slices.
+**SC-2 DONE 2026-07-07** — `scripts/backfill_scope_contexts.py` (idempotent,
+Documents-only, EXPLICIT registered folder map not "first subfolder"). Real DB
+(backed up `*.bak_sc2_*`): 3 pilot contexts; 24 docs RESOLVED (923=2/927=18/
+exterior=4), 7 UNRESOLVED; 1158 non-pilot docs untouched; counts unchanged.
+Suite 1720. **NEXT = U1.5 (visible-surface gate): a minimal read-only
+ScopeContext inspector must exist BEFORE SC-3/SC-5.** Do not start SC-3/SC-5 first.
 
 **DOC/CONTEXT-ALIGNMENT PASS 2026-07-07 (no feature code).** (1) SC-0.5 recorded
 honestly: it is a CONNECTOR-WIDE change (Monday may populate but not overwrite
