@@ -241,8 +241,12 @@ class TestMondayContractAmountGuard:
 
         def _fields(contract, budget):
             return SimpleNamespace(
-                client_name=None, status=None, start_date=None, end_date=None,
-                budget_amount=budget, contract_amount=contract,
+                client_name=None,
+                status=None,
+                start_date=None,
+                end_date=None,
+                budget_amount=budget,
+                contract_amount=contract,
             )
 
         # First sync creates the project and sets contract_amount.

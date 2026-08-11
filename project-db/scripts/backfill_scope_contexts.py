@@ -88,7 +88,10 @@ def backfill_pilot_scope_contexts(session, *, project_code: str = PILOT_PROJECT_
         )
         if ctx is None:
             ctx = ScopeContext(
-                project_id=project.canonical_id, context_key=key, label=label, kind=kind,
+                project_id=project.canonical_id,
+                context_key=key,
+                label=label,
+                kind=kind,
             )
             session.add(ctx)
             session.flush()
@@ -99,7 +102,7 @@ def backfill_pilot_scope_contexts(session, *, project_code: str = PILOT_PROJECT_
     seg_map = _segment_to_key()
     docs = session.query(Document).filter(Document.project_id == project.canonical_id).all()
     resolved = unresolved = 0
-    per_ctx: dict[str, int] = {k: 0 for k in PILOT_CONTEXTS}
+    per_ctx: dict[str, int] = dict.fromkeys(PILOT_CONTEXTS, 0)
     for d in docs:
         key = resolve_context_key(d.folder_path, segment_to_key=seg_map)
         if key is not None:

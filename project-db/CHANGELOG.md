@@ -9,6 +9,100 @@ If you want **"how did we get here?"** read top to bottom.
 
 ---
 
+## 2026-08-11 — base repair after a 4-week gap (green gates restored)
+
+No feature work. The four days before the break left three gates quietly red;
+this entry records finding and closing them, plus the CHANGELOG backfill below.
+
+- **Ruff was never actually red — it was never actually run.** The 07-04→07-07
+  sessions recorded "ruff blocked by a Windows Application Control policy
+  (WinError 4551)" and hand-kept the new code to the line limit instead. The
+  policy no longer blocks the binary. Running it found **3 real errors**
+  (`C420` dict-comprehension in `backfill_scope_contexts.py`, `RUF022`
+  unsorted `__all__` after `CONTEXT_RESOLUTION_STATES` was appended, `F401`
+  unused `uuid` in `test_scope_context.py`) and **11 files** drifted from
+  `ruff format`. All autofixes; `ruff check` + `ruff format --check` GREEN.
+- **One test was a time bomb, not a regression.**
+  `test_web_phase_d1.py::TestProposeTimelines::test_happy_path_...` mocked an
+  LLM timeline of `2026-07-01 → 2026-07-10`; `ai/proposals.py` correctly
+  rejects a timeline entirely in the past, so the test passed the day it was
+  written and went red on 2026-07-11 by the calendar alone. Fixed with dates
+  relative to `date.today()`. (`test_proposals.py` had already hit this trap
+  and solved it by freezing `today` — cross-referenced in the new comment.)
+  Suite green again.
+- **CHANGELOG backfilled**: the 2026-07-07 entry below was missing entirely —
+  five commits (SC-0.5 → U1.5) shipped without one.
+
+**Real-DB state audit (the honest headline, previously not written down
+anywhere).** The Financial Command Center renders **no money at all** on the
+canonical DB. `report_green_sheet('2026001')` returns `None` for every field —
+total_budget / quoted / committed / actual — across all 13 divisions, because
+the pilot has **0 SubcontractorQuote, 0 PurchaseOrder, 0 BudgetSnapshot** and
+**0 cost-side ledger rows**. Every dollar ever seen on that page came from
+`project_db.demo.sqlite` (mock template seed). What IS real on the pilot: 111
+SowItems, 13 SowPackages, 3 ScopeContexts (24 docs bound), `contract_amount`
+$66,539.65, and 101 evidence-linked ledger rows that are **all revenue-side**
+— the green sheet only reports the cost side, so the two halves never meet.
+Separately, real money already sits in the DB and reaches no financial surface:
+**192 Home Depot transactions / $59,337**, of which **85 txns / $27,916.62
+(47%) resolve to no project at all**.
+
+Suite: **1726 passed**. ruff check + format GREEN. doctor 0 fail / 1 known warn.
+
+
+## 2026-07-07 — ScopeContext foundation (SC-0.5 → SC-2) + U1.5 inspector
+
+*(Backfilled 2026-08-11 — this day shipped five commits with no CHANGELOG
+entry at the time.)*
+
+The architecture reconciliation of the owner's two design reports named
+`ScopeContext` the #1 near-term gap: `Project` is too coarse, because the pilot
+is **one project, one client, three coherent scope boundaries** (923 interior
+SIGNED $66,539.65 / 927 unit ~$191,843.68 / exterior ~$4k). This day built the
+smallest additive seam for that, in dependency order.
+
+- **SC-0.5** (`3e52c0f`) — `contract_amount` added to the Monday project
+  upsert's `create_only_attrs`. **Connector-wide, not a pilot guard:** Monday
+  may now populate `contract_amount` on project *creation* but may not
+  overwrite it on any later sync, for every project. Reason: project-level
+  contract ownership is semantically unresolved until context/agreement
+  ownership exists (SC-8 retires this). Without it the next `monday_demo.py
+  pull` would have clobbered the corrected pilot value.
+- **SC-1** (`a1b4084`) — additive `ScopeContext` model + migration
+  (`UNIQUE(project_id, context_key)`, stable `context_key`, deliberately **no**
+  context-level authority — authority belongs to a source/SowVersion within a
+  context) plus exactly two `Document` columns: `scope_context_id` (nullable
+  FK) and `context_resolution_state` (default `LEGACY_UNSCOPED`, observably
+  distinct from the `UNRESOLVED` quarantine). Schema only, no backfill, no
+  behaviour change. Applied to the real DB (backed up `*.bak_sc1_*`): all 1189
+  documents `LEGACY_UNSCOPED`, 0 bound, all counts unchanged. 7 tests.
+- **Doc/context-alignment pass** (`ef4cec7`) — no feature code. SC-0.5 recorded
+  honestly as connector-wide; `UI_REFOUNDATION.md` rewritten as the
+  **operator-control-surface** contract (read-only is the first stage per
+  surface, not the target) with six invariants incl. the **visible-surface
+  gate**; `CLAUDE.md` gained the **document authority hierarchy** and the
+  **financial-spine slice read pack + preflight**, so continuity comes from
+  files rather than chat memory.
+- **SC-2** (`f6b9769`) — `scripts/backfill_scope_contexts.py`, idempotent,
+  Documents-only, using an **explicit registered folder-segment map** (never
+  "first subfolder", which would turn `SOW/` into a context; never an LLM).
+  Applied to the real DB (backed up `*.bak_sc2_*`): 3 pilot contexts;
+  **24 docs RESOLVED** (923=2 / 927=18 / exterior=4), **7 UNRESOLVED**
+  (NULL/root-only `folder_path` — real quarantine); **1158 non-pilot docs
+  untouched**; the 111 SowItems untouched; all counts unchanged. 13 tests.
+- **U1.5** (`1ffb558`) — the visible-surface gate discharged:
+  `/projects/{id}/scope-contexts` (flag `scope_context_inspector`), mounted on
+  the same `.fin` design language and linked both ways with the Financial
+  Command Center. Shows every context with its bound documents, the UNRESOLVED
+  quarantine card, and a data-health summary keeping `LEGACY_UNSCOPED` visibly
+  distinct from `UNRESOLVED`. Verified live in a browser on the real DB (real
+  filenames + folder paths). 6 web tests.
+
+Suite: **1726 passed**. doctor 0 fail. (ruff was *believed* blocked by the
+machine's AppControl policy all four days — see the 2026-08-11 entry; it had
+in fact drifted red.)
+
+
 ## 2026-07-05 — first REAL data: SOW-file ingester + real Rockland SOW
 
 The first non-mock data flows into the new spine. The owner supplied

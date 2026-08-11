@@ -25,8 +25,10 @@ from project_db.db.models.work import ProjectStatus
 @pytest.fixture
 def db_engine():
     engine = create_engine(
-        "sqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        "sqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
     yield engine
@@ -57,40 +59,66 @@ def pilot_like_project(session, org: Organization):
     session.add(c)
     session.flush()
     p = Project(
-        name="923-927 Rockland", code="2026001", client_id=c.canonical_id,
+        name="923-927 Rockland",
+        code="2026001",
+        client_id=c.canonical_id,
         status=ProjectStatus.ACTIVE,
     )
     session.add(p)
     session.flush()
 
     ctx_a = ScopeContext(
-        project_id=p.canonical_id, context_key="923_INTERIOR",
-        label="923 Rockland -- Interior", kind="unit", unit_area="3rd floor",
+        project_id=p.canonical_id,
+        context_key="923_INTERIOR",
+        label="923 Rockland -- Interior",
+        kind="unit",
+        unit_area="3rd floor",
     )
     ctx_b = ScopeContext(
-        project_id=p.canonical_id, context_key="927_UNIT", label="927 Rockland -- Unit",
+        project_id=p.canonical_id,
+        context_key="927_UNIT",
+        label="927 Rockland -- Unit",
     )
     session.add_all([ctx_a, ctx_b])
     session.flush()
 
-    session.add(Document(
-        name="Final SOW.pdf", url="drive://sow", project_id=p.canonical_id,
-        folder_path="923-927 Rockland/923 Rockland",
-        scope_context_id=ctx_a.canonical_id, context_resolution_state="RESOLVED",
-    ))
-    session.add(Document(
-        name="927 QUOTE.xlsx", url="drive://927quote", project_id=p.canonical_id,
-        folder_path="923-927 Rockland/927 ROCKLAND",
-        scope_context_id=ctx_b.canonical_id, context_resolution_state="RESOLVED",
-    ))
-    session.add(Document(
-        name="mystery.pdf", url="drive://mystery", project_id=p.canonical_id,
-        folder_path=None, context_resolution_state="UNRESOLVED",
-    ))
-    session.add(Document(
-        name="old invoice.pdf", url="drive://old", project_id=p.canonical_id,
-        context_resolution_state="LEGACY_UNSCOPED",
-    ))
+    session.add(
+        Document(
+            name="Final SOW.pdf",
+            url="drive://sow",
+            project_id=p.canonical_id,
+            folder_path="923-927 Rockland/923 Rockland",
+            scope_context_id=ctx_a.canonical_id,
+            context_resolution_state="RESOLVED",
+        )
+    )
+    session.add(
+        Document(
+            name="927 QUOTE.xlsx",
+            url="drive://927quote",
+            project_id=p.canonical_id,
+            folder_path="923-927 Rockland/927 ROCKLAND",
+            scope_context_id=ctx_b.canonical_id,
+            context_resolution_state="RESOLVED",
+        )
+    )
+    session.add(
+        Document(
+            name="mystery.pdf",
+            url="drive://mystery",
+            project_id=p.canonical_id,
+            folder_path=None,
+            context_resolution_state="UNRESOLVED",
+        )
+    )
+    session.add(
+        Document(
+            name="old invoice.pdf",
+            url="drive://old",
+            project_id=p.canonical_id,
+            context_resolution_state="LEGACY_UNSCOPED",
+        )
+    )
     session.commit()
     return p
 

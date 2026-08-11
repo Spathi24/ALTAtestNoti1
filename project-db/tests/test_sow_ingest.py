@@ -42,7 +42,7 @@ def _make_workbook_bytes(rows=None):
     wb.remove(wb.active)
     ws = wb.create_sheet("SOW_Items")
     ws.append(_HEADERS)
-    for r in (rows if rows is not None else _ROWS):
+    for r in rows if rows is not None else _ROWS:
         ws.append(r)
     pc = wb.create_sheet("Parser_Contract")
     pc.append(["Sheet_Name", "Ingest", "Table_Name", "Primary_Key", "Notes"])
@@ -69,8 +69,11 @@ def _project(session, *, code="2026001"):
     session.add_all([org, client])
     session.flush()
     p = Project(
-        canonical_id=uuid.uuid4(), name="923-927 Rockland", code=code,
-        client_id=client.canonical_id, status=ProjectStatus.ACTIVE,
+        canonical_id=uuid.uuid4(),
+        name="923-927 Rockland",
+        code=code,
+        client_id=client.canonical_id,
+        status=ProjectStatus.ACTIVE,
     )
     session.add(p)
     session.flush()
@@ -110,22 +113,24 @@ class TestSowIngest:
         p = _project(session)
         ingest_sow_workbook(session, p, _make_workbook_bytes())
         session.commit()
-        item = session.query(SowItem).filter_by(
-            project_id=p.canonical_id, item_code="SOW-007"
-        ).one()
+        item = (
+            session.query(SowItem).filter_by(project_id=p.canonical_id, item_code="SOW-007").one()
+        )
         assert item.division_code == "10-12"
-        pkg = session.query(SowPackage).filter_by(
-            project_id=p.canonical_id, division_code="10-12"
-        ).one()
+        pkg = (
+            session.query(SowPackage)
+            .filter_by(project_id=p.canonical_id, division_code="10-12")
+            .one()
+        )
         assert item.package_id == pkg.canonical_id
 
     def test_excluded_item_flag(self, session):
         p = _project(session)
         ingest_sow_workbook(session, p, _make_workbook_bytes())
         session.commit()
-        excl = session.query(SowItem).filter_by(
-            project_id=p.canonical_id, item_code="SOW-006"
-        ).one()
+        excl = (
+            session.query(SowItem).filter_by(project_id=p.canonical_id, item_code="SOW-006").one()
+        )
         assert excl.included is False
 
     def test_idempotent_replace(self, session):

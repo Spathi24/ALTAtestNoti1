@@ -107,10 +107,7 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
         .filter(SubcontractorQuote.project_id == project.canonical_id)
         .all()
     )
-    vendor_names = {
-        v.canonical_id: v.name
-        for v in session.query(Vendor).all()
-    }
+    vendor_names = {v.canonical_id: v.name for v in session.query(Vendor).all()}
     tendering = {"selected": [], "pending": [], "recommended": [], "rejected": [], "awarded": []}
     for q in quotes:
         row = {
@@ -143,14 +140,10 @@ def project_finance_home(session: Session, project_id: str) -> dict[str, Any] | 
     # Scope of Work: the real contract backbone. Group SowItems by division so
     # the page shows the actual project scope (this is populated real data even
     # before any budget/quote exists).
-    sow_items = (
-        session.query(SowItem).filter(SowItem.project_id == project.canonical_id).all()
-    )
+    sow_items = session.query(SowItem).filter(SowItem.project_id == project.canonical_id).all()
     pkg_trade = {
         p.canonical_id: p.trade_name
-        for p in session.query(SowPackage).filter(
-            SowPackage.project_id == project.canonical_id
-        )
+        for p in session.query(SowPackage).filter(SowPackage.project_id == project.canonical_id)
     }
     scope_by_div: dict[str, dict[str, Any]] = {}
     for it in sow_items:
@@ -233,9 +226,7 @@ def project_scope_contexts(session: Session, project_id: str) -> dict[str, Any] 
         .order_by(ScopeContext.context_key)
         .all()
     )
-    docs = (
-        session.query(Document).filter(Document.project_id == project.canonical_id).all()
-    )
+    docs = session.query(Document).filter(Document.project_id == project.canonical_id).all()
 
     def _doc_row(d: Document) -> dict[str, Any]:
         return {"name": d.name, "folder_path": d.folder_path, "url": d.url}

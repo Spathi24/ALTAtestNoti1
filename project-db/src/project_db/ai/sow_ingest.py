@@ -114,7 +114,7 @@ def ingest_sow_workbook(
         div = canonical_division_code(str(raw_div).strip()) if raw_div is not None else "99"
         if div in _NO_PACKAGE_DIVISIONS or div in packages:
             continue
-        trade = (str(row.get("Trade")).strip() if row.get("Trade") else None)
+        trade = str(row.get("Trade")).strip() if row.get("Trade") else None
         pkg = SowPackage(
             project_id=project.canonical_id,
             division_code=div,

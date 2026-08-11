@@ -15,6 +15,36 @@
 
 ## Current Focus
 
+**POST-GAP BASE REPAIR + STATE AUDIT (2026-08-11).** First session after a
+4-week break (last work 2026-07-07). No feature work. Three gates were quietly
+red and are now green: **3 ruff errors + 11 unformatted files** (the 07-04→07-07
+sessions believed ruff was blocked by a Windows AppControl policy and skipped the
+gate — **that block is gone**, don't repeat the note without re-testing); **one
+failing test** that was a *time bomb, not a regression*
+(`test_web_phase_d1.py` mocked a timeline of 2026-07-01→07-10 and
+`ai/proposals.py` correctly rejects timelines entirely in the past — it went red
+on 07-11 by the calendar; fixed with dates relative to `date.today()`); and a
+**CHANGELOG missing five commits** (SC-0.5 → U1.5), now backfilled.
+
+**THE HONEST HEADLINE (audited against the real DB, not the docs):
+the structure is built, the money is empty.** `report_green_sheet('2026001')`
+returns `None` for budget / quoted / committed / actual across all 13 divisions,
+because the pilot has **0 SubcontractorQuote, 0 PurchaseOrder, 0 BudgetSnapshot,
+0 cost-side ledger rows**. Every dollar ever seen on the Financial Command Center
+came from `project_db.demo.sqlite` (mock seed). Real on the pilot: 111 SowItems,
+13 packages, 3 ScopeContexts, `contract_amount` $66,539.65, and 101 ledger rows
+that are **all revenue-side** — and the green sheet reports only the cost side,
+so the two halves never meet. Meanwhile real money sits in the DB reaching no
+financial surface: **192 Home Depot transactions / $59,337.48**, of which
+**85 txns / $27,916.62 (47%) resolve to no project at all**. Full numbers:
+`project-db/docs/HANDOFF.md`.
+
+**DIRECTION DECISION IS OPEN.** ~2–3 weeks left at the job, no working MVP in 3
+months. Three arcs were put to the owner (HD money MVP / close the cost-side loop
+/ continue the ScopeContext ladder); they chose "fix the base first, then
+decide". The ladder is architecturally correct but is 6+ slices from anything a
+PM can open — weigh that against the remaining time before committing.
+
 **ARCHITECTURE RECONCILIATION (2026-07-07) — owner supplied two design reports
 (`ProjectInfo1_merged.pdf` 64pp, `EstimatorDocumentation.pdf` 23pp). Distilled to
 a data-flow map + Umple diagram in `docs/architecture/` (FINANCIAL_SPINE_MAP.md +

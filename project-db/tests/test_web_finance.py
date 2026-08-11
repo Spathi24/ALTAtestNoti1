@@ -71,8 +71,11 @@ def mock_project(session, org: Organization):
     session.add(c)
     session.flush()
     p = Project(
-        name="923 Fin Test", code="2026001", client_id=c.canonical_id,
-        status=ProjectStatus.ACTIVE, contract_amount=Decimal("66539.65"),
+        name="923 Fin Test",
+        code="2026001",
+        client_id=c.canonical_id,
+        status=ProjectStatus.ACTIVE,
+        contract_amount=Decimal("66539.65"),
     )
     session.add(p)
     session.flush()
@@ -90,8 +93,11 @@ def mock_project(session, org: Organization):
         )
     )
     pkg = SowPackage(
-        project_id=p.canonical_id, division_code="22", trade_name="Plumbing",
-        title="22-Plumbing", status="draft",
+        project_id=p.canonical_id,
+        division_code="22",
+        trade_name="Plumbing",
+        title="22-Plumbing",
+        status="draft",
     )
     session.add(pkg)
     vendor = Vendor(
@@ -104,29 +110,49 @@ def mock_project(session, org: Organization):
     # hit the Jinja dict-`.items` trap on real Rockland data).
     session.add(
         SowItem(
-            project_id=p.canonical_id, package_id=pkg.canonical_id, item_code="SOW-003",
-            description="Rough-in plumbing", division_code="22", included=True,
+            project_id=p.canonical_id,
+            package_id=pkg.canonical_id,
+            item_code="SOW-003",
+            description="Rough-in plumbing",
+            division_code="22",
+            included=True,
         )
     )
     session.add(
         SowItem(
-            project_id=p.canonical_id, package_id=None, item_code="SOW-018",
-            description="Permit fees", division_code="01", included=False,
+            project_id=p.canonical_id,
+            package_id=None,
+            item_code="SOW-018",
+            description="Permit fees",
+            division_code="01",
+            included=False,
         )
     )
     session.flush()
 
     selected = SubcontractorQuote(
-        project_id=p.canonical_id, package_id=pkg.canonical_id, vendor_id=vendor.canonical_id,
-        division_code="22", status="selected", amount=Decimal("6800.00"), currency="CAD",
+        project_id=p.canonical_id,
+        package_id=pkg.canonical_id,
+        vendor_id=vendor.canonical_id,
+        division_code="22",
+        status="selected",
+        amount=Decimal("6800.00"),
+        currency="CAD",
     )
     session.add(selected)
     session.flush()
     session.add(
         FinancialLineItem(
-            project_id=p.canonical_id, division_code="22", side="cost", amount_type="material",
-            status="unknown", cost_status="quoted", subcontractor_quote_id=selected.canonical_id,
-            amount=Decimal("6800.00"), currency="CAD", source="grid",
+            project_id=p.canonical_id,
+            division_code="22",
+            side="cost",
+            amount_type="material",
+            status="unknown",
+            cost_status="quoted",
+            subcontractor_quote_id=selected.canonical_id,
+            amount=Decimal("6800.00"),
+            currency="CAD",
+            source="grid",
         )
     )
     session.commit()
@@ -149,8 +175,11 @@ def live_project(session, org: Organization):
     session.flush()
     session.add(
         BudgetSnapshotLine(
-            snapshot_id=snap.canonical_id, project_id=p.canonical_id,
-            division_code="22", division_name="Plumbing", budget_amount=Decimal("5000.00"),
+            snapshot_id=snap.canonical_id,
+            project_id=p.canonical_id,
+            division_code="22",
+            division_name="Plumbing",
+            budget_amount=Decimal("5000.00"),
         )
     )
     session.commit()

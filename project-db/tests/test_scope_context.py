@@ -8,8 +8,6 @@ no behaviour change -- these tests pin exactly that.
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy import text as _text
@@ -25,7 +23,9 @@ def project(session, org: Organization) -> Project:
     session.add(c)
     session.flush()
     p = Project(
-        name="923-927 Rockland", code="2026001", client_id=c.canonical_id,
+        name="923-927 Rockland",
+        code="2026001",
+        client_id=c.canonical_id,
         status=ProjectStatus.ACTIVE,
     )
     session.add(p)
@@ -36,8 +36,11 @@ def project(session, org: Organization) -> Project:
 class TestScopeContextModel:
     def test_create_and_read(self, session, project):
         ctx = ScopeContext(
-            project_id=project.canonical_id, context_key="923_INTERIOR",
-            label="923 Rockland -- Interior", kind="unit", unit_area="3rd floor",
+            project_id=project.canonical_id,
+            context_key="923_INTERIOR",
+            label="923 Rockland -- Interior",
+            kind="unit",
+            unit_area="3rd floor",
         )
         session.add(ctx)
         session.commit()
@@ -60,7 +63,9 @@ class TestScopeContextModel:
         session.add(c)
         session.flush()
         p2 = Project(
-            name="Other Project", code="2026002", client_id=c.canonical_id,
+            name="Other Project",
+            code="2026002",
+            client_id=c.canonical_id,
             status=ProjectStatus.ACTIVE,
         )
         session.add(p2)
@@ -86,8 +91,10 @@ class TestDocumentBindingColumns:
         session.add(ctx)
         session.flush()
         d = Document(
-            name="SOW 923 Rockland", url="drive://y",
-            scope_context_id=ctx.canonical_id, context_resolution_state="RESOLVED",
+            name="SOW 923 Rockland",
+            url="drive://y",
+            scope_context_id=ctx.canonical_id,
+            context_resolution_state="RESOLVED",
         )
         session.add(d)
         session.commit()

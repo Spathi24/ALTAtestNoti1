@@ -16,7 +16,7 @@ Coverage:
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -124,13 +124,23 @@ def patched_default_provider(monkeypatch):
     from project_db.ai import providers as providers_pkg
     from project_db.ai.providers import mock as mock_mod
 
+    # Dates MUST be relative to today: _persist_timeline_items rejects a
+    # timeline entirely in the past (proposals are forward-looking). Hardcoded
+    # dates turn this into a time bomb that passes on the day it is written and
+    # fails weeks later -- which is exactly what happened here (written
+    # 2026-07-07 with 2026-07-01/10, red by 2026-07-11).
+    # test_proposals.py solves the same trap by freezing `today` instead; this
+    # file goes through the web route, so relative dates keep the real
+    # past-date guard exercised rather than monkeypatched away.
+    start = date.today() + timedelta(days=7)
+    end = start + timedelta(days=9)
     timeline_payload = json.dumps(
         {
             "proposals": [
                 {
                     "task_index": 0,
-                    "proposed_start": "2026-07-01",
-                    "proposed_end": "2026-07-10",
+                    "proposed_start": start.isoformat(),
+                    "proposed_end": end.isoformat(),
                     "confidence": 0.9,
                     "reasoning": "test mock",
                     "source_documents": ["SOW.pdf"],

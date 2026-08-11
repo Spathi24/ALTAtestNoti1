@@ -451,8 +451,7 @@ CREATE TABLE scope_context (
 """
 
 SQLITE_SCOPE_CONTEXT_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS ix_scope_context_project_id "
-    "ON scope_context (project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_scope_context_project_id ON scope_context (project_id)",
 )
 
 SQLITE_SOW_PACKAGE_DDL = """

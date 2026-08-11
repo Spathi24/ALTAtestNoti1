@@ -88,9 +88,7 @@ class Document(Base, CanonicalMixin):
         ForeignKey("scope_context.canonical_id"),
         nullable=True,
     )
-    context_resolution_state = Column(
-        String, nullable=False, default="LEGACY_UNSCOPED"
-    )
+    context_resolution_state = Column(String, nullable=False, default="LEGACY_UNSCOPED")
     deal_id = Column(
         UUID(as_uuid=True),
         ForeignKey("deal.canonical_id"),

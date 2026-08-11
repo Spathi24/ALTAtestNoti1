@@ -49,7 +49,9 @@ def pilot(session, org: Organization):
     session.add(c)
     session.flush()
     p = Project(
-        name="923-927 Rockland", code="2026001", client_id=c.canonical_id,
+        name="923-927 Rockland",
+        code="2026001",
+        client_id=c.canonical_id,
         status=ProjectStatus.ACTIVE,
     )
     session.add(p)
@@ -62,8 +64,9 @@ def pilot(session, org: Organization):
         ("root only doc", _BASE),
     ]
     for name, fp in docs:
-        session.add(Document(name=name, url=f"drive://{name}", folder_path=fp,
-                             project_id=p.canonical_id))
+        session.add(
+            Document(name=name, url=f"drive://{name}", folder_path=fp, project_id=p.canonical_id)
+        )
     session.commit()
     return p
 
@@ -100,16 +103,21 @@ class TestBackfill:
         session.add(c)
         session.flush()
         p2 = Project(
-            name="Other", code="2026002", client_id=c.canonical_id,
+            name="Other",
+            code="2026002",
+            client_id=c.canonical_id,
             status=ProjectStatus.ACTIVE,
         )
         session.add(p2)
         session.flush()
-        session.add(Document(
-            name="other doc", url="drive://other",
-            folder_path="01. PROJECTS/ACTIVE/Other/923 Rockland/x",  # same segment name!
-            project_id=p2.canonical_id,
-        ))
+        session.add(
+            Document(
+                name="other doc",
+                url="drive://other",
+                folder_path="01. PROJECTS/ACTIVE/Other/923 Rockland/x",  # same segment name!
+                project_id=p2.canonical_id,
+            )
+        )
         session.commit()
 
         backfill.backfill_pilot_scope_contexts(session)
